@@ -21,11 +21,15 @@ import EquityChart from './EquityChart';
 import LogViewer from './LogViewer';
 import PositionsPanel from './PositionsPanel';
 import StrategySignals from './StrategySignals';
-import { getDashboardSnapshot, BotApiError } from '../services/api';
+import { getDashboardSnapshot, describeError, BotApiError } from '../services/api';
 import { getMarketAnalysis } from '../services/geminiService';
 import { cn } from '../lib/utils';
 
 const POLL_INTERVAL_MS = 10_000;
+// After a fully-failed tick, retry sooner so the dashboard recovers
+// quickly when the bot comes back rather than waiting the full poll
+// interval. Capped at the regular cadence.
+const POLL_RETRY_MS = 3_000;
 const EQUITY_BUFFER_MAX = 60;
 
 const NAV_SECTIONS = [
@@ -60,11 +64,12 @@ function formatTime(date: Date): string {
 interface SectionErr {
   httpStatus: number;
   message: string;
+  label: string;
 }
 
 function toErr(e: BotApiError | null): SectionErr | null {
   if (!e) return null;
-  return { httpStatus: e.httpStatus, message: e.message };
+  return { httpStatus: e.httpStatus, message: e.message, label: describeError(e) };
 }
 
 export default function Dashboard() {
@@ -84,6 +89,8 @@ export default function Dashboard() {
   // True when the bot is fully unreachable (every endpoint failed this tick).
   const [allFailed, setAllFailed] = useState(false);
 
+  const [lastSuccessAt, setLastSuccessAt] = useState<Date | null>(null);
+
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [showAiModal, setShowAiModal] = useState(false);
@@ -95,6 +102,7 @@ export default function Dashboard() {
   const [desktopNavCollapsed, setDesktopNavCollapsed] = useState(false);
 
   const lastEquitySampleRef = useRef<number | null>(null);
+  const lastFailedRef = useRef<boolean>(false);
 
   const fetchData = useCallback(async () => {
     setIsRefreshing(true);
@@ -113,6 +121,11 @@ export default function Dashboard() {
       setPositionsErr(toErr(snap.positions.error));
       setSignalsErr(toErr(snap.signals.error));
       setAllFailed(snap.allFailed);
+      lastFailedRef.current = snap.allFailed;
+
+      if (!snap.allFailed) {
+        setLastSuccessAt(new Date());
+      }
 
       const totalPnL = snap.stats.data?.totalPnL;
       if (totalPnL !== undefined && lastEquitySampleRef.current !== totalPnL) {
@@ -126,15 +139,31 @@ export default function Dashboard() {
       // getDashboardSnapshot uses allSettled and never throws, but guard anyway.
       console.error('Unexpected error fetching dashboard snapshot:', error);
       setAllFailed(true);
+      lastFailedRef.current = true;
     } finally {
       setIsRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const tick = async () => {
+      await fetchData();
+      if (cancelled) return;
+      // After a full-blackout tick, retry sooner so the dashboard
+      // recovers quickly when the bot comes back; otherwise stay on the
+      // regular cadence.
+      const delay = lastFailedRef.current ? POLL_RETRY_MS : POLL_INTERVAL_MS;
+      timer = setTimeout(tick, delay);
+    };
+
+    tick();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [fetchData]);
 
   const handleAiAnalysis = async () => {
@@ -329,6 +358,14 @@ export default function Dashboard() {
           </div>
 
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {lastSuccessAt && (
+              <span
+                className="hidden md:inline text-[10px] text-gray-500"
+                title={`Last successful update at ${lastSuccessAt.toLocaleTimeString()}`}
+              >
+                updated {formatTime(lastSuccessAt)}
+              </span>
+            )}
             {stats && (
               <span
                 className={cn(

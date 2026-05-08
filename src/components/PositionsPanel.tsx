@@ -3,7 +3,7 @@ import { cn } from '../lib/utils';
 
 interface PositionsPanelProps {
   positions: Position[] | null;
-  error?: { httpStatus: number } | null;
+  error?: { httpStatus: number; label?: string } | null;
 }
 
 function isShort(side: string) {
@@ -19,12 +19,11 @@ function formatQty(qty: number) {
 export default function PositionsPanel({ positions, error }: PositionsPanelProps) {
   if (positions === null) {
     if (error) {
+      const hint = error.label || (error.httpStatus ? `HTTP ${error.httpStatus}` : 'Network error');
       return (
         <div className="metric-card">
           <h3 className="text-sm font-semibold text-gray-200 mb-3">Open Positions</h3>
-          <p className="text-xs text-red-300 py-4 text-center">
-            Positions unavailable{error.httpStatus ? ` (HTTP ${error.httpStatus})` : ' (network error)'}
-          </p>
+          <p className="text-xs text-red-300 py-4 text-center">Positions unavailable ({hint})</p>
         </div>
       );
     }
