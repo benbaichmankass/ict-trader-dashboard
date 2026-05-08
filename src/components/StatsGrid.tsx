@@ -4,6 +4,7 @@ import { cn } from '../lib/utils';
 
 interface StatsGridProps {
   stats: BotStats | null;
+  error?: { httpStatus: number; message: string } | null;
 }
 
 function StatCard({
@@ -31,8 +32,21 @@ function StatCard({
   );
 }
 
-export default function StatsGrid({ stats }: StatsGridProps) {
+export default function StatsGrid({ stats, error }: StatsGridProps) {
   if (!stats) {
+    if (error) {
+      return (
+        <div className="metric-card border-red-500/30 bg-red-500/5">
+          <div className="flex items-center gap-2 text-red-300 text-xs">
+            <AlertCircle size={14} />
+            <span>
+              Stats unavailable
+              {error.httpStatus ? ` (HTTP ${error.httpStatus})` : ' (network error)'}
+            </span>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[0, 1, 2, 3].map((i) => (
