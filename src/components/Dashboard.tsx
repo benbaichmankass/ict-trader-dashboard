@@ -15,6 +15,7 @@ import {
   CloudOff,
   Sparkles,
   Menu,
+  Workflow,
   X,
 } from 'lucide-react';
 import { BotStats, LogEntry, Position, Signal, EquityPoint } from '../types';
@@ -30,6 +31,7 @@ import TimePriceTab from './TimePriceTab';
 import PerformanceTab from './PerformanceTab';
 import LiquidityMapsTab from './LiquidityMapsTab';
 import SettingsTab from './SettingsTab';
+import TradeProcessTab from './TradeProcessTab';
 import Diagnostics from './Diagnostics';
 import { getDashboardSnapshot, describeError, BotApiError } from '../services/api';
 import { getMarketAnalysis } from '../services/geminiService';
@@ -85,6 +87,7 @@ const NAV_SECTIONS = [
       { id: 'models', label: 'Models', icon: Layers },
       { id: 'liquidity', label: 'Liquidity Maps', icon: Droplets },
       { id: 'time-price', label: 'Time & Price', icon: Clock },
+      { id: 'trade-process', label: 'Trade Process', icon: Workflow },
     ],
   },
   {
@@ -568,6 +571,8 @@ export default function Dashboard() {
             <LiquidityMapsTab />
           ) : activeNav === 'time-price' ? (
             <TimePriceTab signals={signals} />
+          ) : activeNav === 'trade-process' ? (
+            <TradeProcessTab />
           ) : activeNav === 'performance' ? (
             <PerformanceTab fallbackEquity={equityHistory} />
           ) : activeNav === 'settings' ? (
