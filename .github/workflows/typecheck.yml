@@ -1,12 +1,10 @@
 name: typecheck
 
-# Gate every PR on `npm run typecheck`. The dashboard ran 12 PRs without
-# any typecheck gate; the M6 correctness pass shipped a contract that
-# would have caught (e.g. a number-vs-string `id` lie) statically.
-#
-# Out of scope here: a full test suite (Vitest + a handful of api.ts
-# smoke tests) is queued as a follow-up sprint — the no-tests gap is
-# real but adding the runner deserves its own PR.
+# Gate every PR on typecheck + the api.ts contract suite + build. The
+# dashboard ran 12 PRs without any gate; today's BacktestRun wire-shape
+# drift across two repos cost three PRs to converge. The contract
+# tests in src/services/api.test.ts pin exactly that kind of drift on
+# PR open.
 
 on:
   pull_request:
@@ -36,8 +34,13 @@ jobs:
       - name: Type-check
         run: npm run typecheck
 
+      - name: Test
+        # api.ts contract suite (Vitest + happy-dom). Pins wire shapes
+        # that have actually broken between bot ↔ dashboard.
+        run: npm test
+
       - name: Build
-        # The build is the second-best gate after typecheck — catches
-        # `import.meta.env` issues, missing assets, and bundler-time
-        # regressions that the typecheck doesn't.
+        # The build is the third-best gate after typecheck + tests —
+        # catches `import.meta.env` issues, missing assets, and bundler-
+        # time regressions that the earlier gates don't.
         run: npm run build
