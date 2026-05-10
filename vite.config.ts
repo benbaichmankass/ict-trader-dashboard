@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
@@ -17,6 +18,14 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       hmr: process.env.DISABLE_HMR !== 'true',
+    },
+    test: {
+      // happy-dom provides the WHATWG fetch + Headers + Response shims
+      // we need for the api.ts contract suite. No DOM rendering here —
+      // the contract tests stub `globalThis.fetch` directly.
+      environment: 'happy-dom',
+      include: ['src/**/*.test.ts'],
+      testTimeout: 10_000,
     },
     build: {
       // Vendor-level code splitting. Each split bumps cache efficiency
