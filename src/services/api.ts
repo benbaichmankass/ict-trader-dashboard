@@ -10,6 +10,9 @@ import {
   LogEntry,
   PnlHistoryPoint,
   Position,
+  ShadowDriftResponse,
+  ShadowPredictionsResponse,
+  ShadowStatsResponse,
   Signal,
   TradeScoresResponse,
 } from '../types';
@@ -192,6 +195,75 @@ export const getTradeScores = (
   fetchJson<TradeScoresResponse>(
     `/api/bot/trades/scores?limit=${limit}&include_open=${includeOpen}`,
   );
+
+/**
+ * /api/bot/shadow/predictions — newest-N shadow-model invocations from
+ * the WS7 audit log (S-AI-WS8-PART-2). Envelope distinguishes "no records
+ * yet" (records: []) from "log file missing" (log_present: false) so the
+ * dashboard can show the right empty state.
+ */
+export const getShadowPredictions = (
+  limit = 100,
+  modelId?: string,
+  stage?: string,
+  sinceIso?: string,
+): Promise<ShadowPredictionsResponse> => {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (modelId) params.set('model_id', modelId);
+  if (stage) params.set('stage', stage);
+  if (sinceIso) params.set('since', sinceIso);
+  return fetchJson<ShadowPredictionsResponse>(
+    `/api/bot/shadow/predictions?${params.toString()}`,
+  );
+};
+
+/** /api/bot/shadow/stats — per-(model_id, stage) aggregate (S-AI-WS8-PART-2). */
+export const getShadowStats = (
+  modelId?: string,
+  stage?: string,
+  sinceIso?: string,
+): Promise<ShadowStatsResponse> => {
+  const params = new URLSearchParams();
+  if (modelId) params.set('model_id', modelId);
+  if (stage) params.set('stage', stage);
+  if (sinceIso) params.set('since', sinceIso);
+  const qs = params.toString();
+  return fetchJson<ShadowStatsResponse>(
+    `/api/bot/shadow/stats${qs ? `?${qs}` : ''}`,
+  );
+};
+
+/**
+ * /api/bot/shadow/drift?model_id=X — window-over-window score-distribution
+ * drift report (S-AI-WS8-PART-3). model_id is required; stage / window sizes
+ * default sensibly server-side. Returns `verdict: "insufficient_data"` when
+ * either window has zero records, in which case the metric fields are
+ * absent.
+ */
+export const getShadowDrift = (
+  modelId: string,
+  opts?: {
+    stage?: string;
+    referenceDays?: number;
+    currentDays?: number;
+    bins?: number;
+    scoreMin?: number;
+    scoreMax?: number;
+  },
+): Promise<ShadowDriftResponse> => {
+  const params = new URLSearchParams({ model_id: modelId });
+  if (opts?.stage) params.set('stage', opts.stage);
+  if (opts?.referenceDays != null)
+    params.set('reference_days', String(opts.referenceDays));
+  if (opts?.currentDays != null)
+    params.set('current_days', String(opts.currentDays));
+  if (opts?.bins != null) params.set('bins', String(opts.bins));
+  if (opts?.scoreMin != null) params.set('score_min', String(opts.scoreMin));
+  if (opts?.scoreMax != null) params.set('score_max', String(opts.scoreMax));
+  return fetchJson<ShadowDriftResponse>(
+    `/api/bot/shadow/drift?${params.toString()}`,
+  );
+};
 
 /**
  * Recent backtest runs for the Backtests tab (M5 P4 — bot PR #689).
