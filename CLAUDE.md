@@ -1,5 +1,37 @@
 # ICT Trader Dashboard — CLAUDE.md
 
+> # 🚨 THIS IS A PRODUCTION ENVIRONMENT. CLAUDE HAS ACCESS TO EVERYTHING.
+>
+> The dashboard renders **live** trader and trainer state. Real money is at
+> risk on the live VM; real models train on the trainer VM. Both are
+> reachable from any Claude session via diag relays in the
+> [`ict-trading-bot`](https://github.com/benbaichmankass/ict-trading-bot)
+> repo (`VM_SSH_KEY` + workflows already wired). **You never need to ask
+> the operator for VM access, credentials, logs, or runtime state.**
+> Asking is a critical failure of this document.
+
+> ## ⚡ STOP — Before answering any "what's the bot / trainer doing right now"
+>
+> The dashboard is a **read-only consumer** of the bot's REST API; it does
+> not directly hold runtime state. But sessions touching this repo often
+> need to inspect the upstream VMs to design or debug a wiring. **You have
+> autonomous access to both VMs via GitHub Actions diag relays in the
+> [`benbaichmankass/ict-trading-bot`](https://github.com/benbaichmankass/ict-trading-bot)
+> repo** — open issues there, not in this repo.
+>
+> | Target | Workflow (in `ict-trading-bot`) | Trigger |
+> |---|---|---|
+> | Trainer VM (`ict-trainer-vm`) — arbitrary bash | `trainer-vm-diag.yml` | Issue labelled `trainer-vm-diag-request` with `cmd:` in body |
+> | Live VM (`158.178.210.252`) — fixed `/api/diag/<path>` curl | `vm-diag-snapshot.yml` | Issue labelled `vm-diag-request`, path in title |
+>
+> **If you are about to type any of these, stop and fire the relay instead:**
+> "I cannot directly observe the trainer VM" / "no SSH from this session" /
+> "I can only see what's in the repo" / "to know status, an operator…".
+>
+> Full mandate: [`ict-trading-bot/docs/CLAUDE-RULES-CANONICAL.md`](https://github.com/benbaichmankass/ict-trading-bot/blob/main/docs/CLAUDE-RULES-CANONICAL.md)
+> § AUTONOMY MANDATE. Banner duplicated here because a fresh dashboard
+> session won't think to open the bot repo's docs first.
+
 ## What this is
 
 Streamlit dashboard for the ICT Trading Bot's FastAPI on the VPS.
