@@ -1,0 +1,58 @@
+# Basic CI for the ICT Trader Dashboard (Streamlit app on Streamlit Community Cloud).
+#
+# Goal: stop a broken merge from crashing the live dashboard. Two fast,
+# blocking jobs run on every PR to main and on push to main (the deploy
+# trigger), so a syntax/import/dependency regression is caught before
+# Streamlit Cloud auto-redeploys from main.
+#
+# Python version: 3.12 (NOT 3.11). streamlit_app.py uses PEP 701 syntax
+# (a backslash escape inside an f-string expression part, line ~1364),
+# which is a hard SyntaxError on Python <= 3.11 but valid on 3.12+.
+# Streamlit Community Cloud runs Python 3.12+, so CI mirrors the real
+# runtime. Pinning 3.11 would falsely fail CI for code that deploys fine.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ruff-lint:
+    # Full `ruff check .` (default rule set). The codebase is clean under
+    # the default rules on 3.12, so no need to scope down to the
+    # crash-class subset (E9,F63,F7,F82). If a future change introduces a
+    # flood of pre-existing style hits, narrow this to
+    # `ruff check --select E9,F63,F7,F82 .` to keep it green while still
+    # catching syntax/undefined-name errors.
+    name: ruff-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check .
+
+  import-smoke:
+    # Byte-compile the entry point with py_compile (NOT `import streamlit_app`).
+    # The module runs Streamlit calls at import time (st.set_page_config and
+    # st.html at module top level), which require a Streamlit ScriptRunContext;
+    # a bare `python -c "import streamlit_app"` would warn/error outside the
+    # streamlit runtime. py_compile validates syntax + import structure (and
+    # the 3.12 PEP 701 f-string) without executing those module-level calls.
+    # Installing requirements.txt first still catches missing-dependency drift.
+    name: import-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m py_compile streamlit_app.py
