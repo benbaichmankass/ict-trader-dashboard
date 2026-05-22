@@ -135,6 +135,7 @@ docs/                  — ad-hoc design notes
 | Signals | `/api/bot/signals` |
 | Closed Trades | `/api/bot/trades/closed?limit=50` |
 | Models | `/api/bot/ml/*` |
+| Promotion | `/api/bot/shadow/stats`, `/api/bot/shadow/drift`, `/api/bot/trades/scores`, `/api/bot/trades/closed` — 🚦 shadow-model promotion-readiness tracker (per-model volume, days-in-shadow, score range, "wired" check, KS/PSI drift, win/loss score edge) |
 | Backtesting | `/api/bot/backtests` |
 | Strategies | `/api/bot/strategies` |
 | Health | `/api/bot/health/services`, `/api/bot/health/latest` |
