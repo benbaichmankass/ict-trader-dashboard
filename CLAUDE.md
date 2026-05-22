@@ -128,14 +128,25 @@ docs/                  — ad-hoc design notes
 
 | Tab | Endpoints |
 |---|---|
-| Overview | `/api/bot/stats`, `/api/pnl/history?days=30` |
-| BTCUSDT Chart | `/api/bot/candles/BTCUSDT`, `/api/bot/signals`, `/api/bot/positions` |
+| Overview | `/api/bot/stats`, `/api/pnl/history?days=30`, candles (Yahoo Finance) |
+| Performance | candles (Yahoo Finance), `/api/bot/signals`, `/api/bot/positions`, `/api/bot/trades/closed` — two sub-tabs (BTCUSDT, MES); per-symbol price chart with strategy-signal markers, open-trade entry/TP/SL price-lines, and live PnL |
+| Live Chart | candles (Yahoo Finance), `/api/bot/signals`, `/api/bot/trades/closed` |
 | Positions | `/api/bot/positions` |
 | Signals | `/api/bot/signals` |
-| Closed trades | `/api/bot/trades/closed?limit=50` |
-| Logs | `/api/bot/logs` |
-| Health | `/api/bot/health/services`, `/api/bot/health/latest` |
+| Closed Trades | `/api/bot/trades/closed?limit=50` |
+| Models | `/api/bot/ml/*` |
+| Backtesting | `/api/bot/backtests` |
 | Strategies | `/api/bot/strategies` |
+| Health | `/api/bot/health/services`, `/api/bot/health/latest` |
+| Logs | `/api/bot/logs` |
+| Demo | `/api/bot/positions`, `/api/bot/trades/closed`, `/api/pnl/history` |
+
+**Candles come from Yahoo Finance**, not a bot endpoint — `_fetch_candles`
+maps the bot symbol to a Yahoo ticker (`BTCUSDT`→`BTC-USD`, `MES`→`ES=F`;
+`ES=F` shares MES's S&P index level with deeper history than `MES=F`).
+There is no `/api/bot/candles/*` route on the bot. The bot endpoints supply
+the **trade context** overlaid on those candles (signals, open positions
+with stop-loss/take-profit, closed trades).
 
 **Not (yet) ported from the old React app:** TradingView candle chart
 with Bybit-WS per-tick updates, Backtests, Models / ShadowModels (ML
