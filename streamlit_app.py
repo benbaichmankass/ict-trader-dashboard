@@ -197,15 +197,15 @@ def fmt_num(x: float | None) -> str:
 
 PAGES = [
     "Overview", "Performance", "Live Chart", "Positions", "Signals",
-    "Closed Trades", "Models", "Backtesting", "Strategies",
+    "Closed Trades", "Models", "Promotion", "Backtesting", "Strategies",
     "Health", "Logs", "Demo",
 ]
 
 PAGE_ICONS = {
     "Overview": "\U0001f3e0", "Performance": "\U0001f4c8", "Live Chart": "\U0001f4ca",
     "Positions": "\U0001f4cb", "Signals": "⚡", "Closed Trades": "✅",
-    "Models": "\U0001f9e0", "Backtesting": "\U0001f52c", "Strategies": "♟️",
-    "Health": "\U0001f48a", "Logs": "\U0001f4dc", "Demo": "\U0001f9ea",
+    "Models": "\U0001f9e0", "Promotion": "\U0001f6a6", "Backtesting": "\U0001f52c",
+    "Strategies": "♟️", "Health": "\U0001f48a", "Logs": "\U0001f4dc", "Demo": "\U0001f9ea",
 }
 
 
@@ -235,7 +235,7 @@ def render_sidebar() -> str:
         # Deploy marker — bump on each release so a stale Streamlit Cloud
         # instance is obvious at a glance. If this date is old, the app
         # needs a reboot/redeploy.
-        st.caption("build 2026-05-22 · Performance tabs (BTCUSDT + MES)")
+        st.caption("build 2026-05-22 · Promotion Readiness tracker")
 
     return page  # type: ignore[return-value]
 
@@ -1509,6 +1509,253 @@ def page_models() -> None:
     _render_registry((registry_payload or {}).get("rows", []))
 
 
+# ── Promotion Readiness (shadow tracker) ──────────────────────────────────────────
+
+# Promotion rubric thresholds — a shadow model is "ready to evaluate" only
+# once it has logged enough informative predictions over enough calendar
+# time that drift + outcome signal are meaningful. Tunable here.
+PROMO_MIN_DAYS = 7        # calendar days a model must shadow before evaluation
+PROMO_MIN_PREDS = 200     # prediction volume floor over its lifetime
+PROMO_FRESH_HOURS = 24    # last prediction must be within this window to be "live"
+PROMO_FLAT_EPS = 1e-6     # score range below this = a constant (no information)
+
+
+def _parse_iso(s: str | None) -> dt.datetime | None:
+    if not s:
+        return None
+    try:
+        d = dt.datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=dt.timezone.utc)
+    return d
+
+
+def _is_regime_model(model_id: str) -> bool:
+    return "regime" in (model_id or "").lower()
+
+
+def _promotion_verdict(s: dict) -> tuple[str, str, dict]:
+    """Grade one shadow/stats row → (emoji_label, severity, facts).
+
+    severity ∈ {ok, warn, bad, idle} drives ordering + colour. `facts`
+    carries the derived numbers the table renders so they're computed once.
+    """
+    now = dt.datetime.now(dt.timezone.utc)
+    count = int(s.get("count") or 0)
+    first = _parse_iso(s.get("first_seen"))
+    last = _parse_iso(s.get("last_seen"))
+    smin = s.get("score_min")
+    smax = s.get("score_max")
+    row_keys = s.get("row_keys_seen") or []
+    days = (now - first).total_seconds() / 86400 if first else 0.0
+    fresh_h = (now - last).total_seconds() / 3600 if last else None
+    rng = (
+        float(smax) - float(smin)
+        if smin is not None and smax is not None else None
+    )
+    regime = _is_regime_model(s.get("model_id", ""))
+    wired = (not regime) or ("vol_bucket" in row_keys)
+    live = fresh_h is not None and fresh_h <= PROMO_FRESH_HOURS
+    informative = rng is not None and rng > PROMO_FLAT_EPS
+    mature = days >= PROMO_MIN_DAYS and count >= PROMO_MIN_PREDS
+
+    facts = {
+        "count": count, "days": days, "fresh_h": fresh_h, "range": rng,
+        "wired": wired, "informative": informative, "mature": mature,
+        "live": live, "regime": regime, "score_mean": s.get("score_mean"),
+    }
+
+    if count == 0 or not live:
+        return "⚪ No recent predictions", "idle", facts
+    if regime and not wired:
+        return "🔴 Not wired — no vol_bucket (retrain+deploy)", "bad", facts
+    if not informative:
+        return "🔴 Constant score — not informative", "bad", facts
+    if not mature:
+        return f"🟡 Maturing ({days:.0f}d · {count} preds)", "warn", facts
+    return "🟢 Ready to evaluate for promotion", "ok", facts
+
+
+_SEVERITY_ORDER = {"ok": 0, "warn": 1, "bad": 2, "idle": 3}
+
+
+def _render_outcome_coverage() -> None:
+    """Per-model coverage from /api/bot/trades/scores — how many trades each
+    shadow model has scored, split winners vs losers where the closed-trades
+    join supplies a realised PnL. Sparse by design until trades accrue."""
+    scores_payload, err = _fetch("/api/bot/trades/scores?limit=200&include_open=false")
+    if err:
+        st.caption(f"Outcome coverage unavailable: {err}")
+        return
+    trades = (scores_payload or {}).get("trades") or []
+    if not trades:
+        st.caption(
+            "No closed trades carry shadow scores yet — the prediction↔outcome "
+            "correlation lights up as live trades accrue."
+        )
+        return
+    # Win/loss lookup from closed trades (realisedPnl sign).
+    closed, _ = _fetch("/api/bot/trades/closed?limit=200")
+    pnl_by_id: dict[str, float] = {}
+    for t in (closed or []):
+        tid = str(t.get("id") or t.get("trade_id") or "")
+        pnl = t.get("realizedPnl")
+        if tid and pnl is not None:
+            try:
+                pnl_by_id[tid] = float(pnl)
+            except (TypeError, ValueError):
+                pass
+    agg: dict[str, dict] = {}
+    for tr in trades:
+        tid = str(tr.get("trade_id") or "")
+        pnl = pnl_by_id.get(tid)
+        for sc in tr.get("scores") or []:
+            mid = sc.get("model_id") or "?"
+            a = agg.setdefault(mid, {"n": 0, "win_s": [], "loss_s": []})
+            a["n"] += 1
+            mean = sc.get("score_mean")
+            if pnl is not None and mean is not None:
+                (a["win_s"] if pnl > 0 else a["loss_s"]).append(float(mean))
+    if not agg:
+        st.caption("Shadow scores present but not yet joined to a closed trade.")
+        return
+    rows = []
+    for mid, a in sorted(agg.items()):
+        win_m = sum(a["win_s"]) / len(a["win_s"]) if a["win_s"] else None
+        loss_m = sum(a["loss_s"]) / len(a["loss_s"]) if a["loss_s"] else None
+        edge = (
+            win_m - loss_m if win_m is not None and loss_m is not None else None
+        )
+        rows.append({
+            "Model": mid,
+            "Trades scored": a["n"],
+            "Winners": len(a["win_s"]),
+            "Losers": len(a["loss_s"]),
+            "Mean score · win": fmt_num(win_m),
+            "Mean score · loss": fmt_num(loss_m),
+            "Score edge (win−loss)": fmt_num(edge),
+        })
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.caption(
+        "“Score edge” > 0 means the model scored eventual winners higher than "
+        "losers — the basic signal that its predictions track real outcomes. "
+        "Needs a meaningful sample before it's trustworthy."
+    )
+
+
+def page_promotion() -> None:
+    st.header("🚦 Promotion Readiness")
+    st.caption(
+        "Shadow models log predictions against the live trader but never "
+        "influence orders. This page tracks whether each is producing "
+        "**real, informative** predictions and is mature enough to evaluate "
+        "for the operator-gated shadow → advisory promotion."
+    )
+
+    payload, err = _fetch("/api/bot/shadow/stats")
+    if err:
+        st.error(f"⚠️ Shadow stats unavailable: {err}")
+        return
+    if not (payload or {}).get("log_present"):
+        st.info(
+            "No shadow-prediction log on the live VM yet. Once shadow models "
+            "are deployed and the trader ticks, predictions accrue here."
+        )
+        return
+    records = (payload or {}).get("records") or []
+    if not records:
+        st.info("Shadow log present but empty — no predictions recorded yet.")
+        return
+
+    graded = []
+    for s in records:
+        label, sev, facts = _promotion_verdict(s)
+        graded.append((s, label, sev, facts))
+    graded.sort(key=lambda g: (_SEVERITY_ORDER.get(g[2], 9), g[0].get("model_id", "")))
+
+    ready = sum(1 for _, _, sev, _ in graded if sev == "ok")
+    broken = sum(1 for _, _, sev, _ in graded if sev == "bad")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Shadow models", len(graded))
+    c2.metric("Ready to evaluate", ready)
+    c3.metric("Needs attention", broken)
+
+    if broken:
+        st.warning(
+            "Models flagged 🔴 are logging a **constant** score (no live "
+            "`vol_bucket`) — they carry no information until the regime "
+            "feature-wiring fix is deployed to the live trader and the model "
+            "is retrained with frozen bucket edges."
+        )
+
+    table = []
+    for s, label, _sev, f in graded:
+        table.append({
+            "Model": s.get("model_id", "?"),
+            "Stage": s.get("stage", "?"),
+            "Readiness": label,
+            "Predictions": f["count"],
+            "Days in shadow": f"{f['days']:.1f}",
+            "Last seen": (
+                _fmt_age(f["fresh_h"] * 3600) if f["fresh_h"] is not None else "—"
+            ),
+            "Score range": fmt_num(f["range"]),
+            "Score mean": fmt_num(f["score_mean"]),
+            "Wired": "✅" if f["wired"] else "❌",
+        })
+    st.dataframe(pd.DataFrame(table), use_container_width=True, hide_index=True)
+    st.caption(
+        f"Ready rubric: ≥ {PROMO_MIN_DAYS} days in shadow, ≥ {PROMO_MIN_PREDS} "
+        "predictions, a non-constant score range, and (for regime models) a "
+        "live `vol_bucket` feature. “Wired” ❌ on a regime model is the "
+        "constant-score bug signature."
+    )
+
+    st.divider()
+    st.subheader("Score drift (recent vs reference window)")
+    model_ids = [s.get("model_id", "") for s, *_ in graded if s.get("model_id")]
+    if model_ids:
+        sel = st.selectbox("Model", model_ids, key="promo_drift_model")
+        d, derr = _fetch(f"/api/bot/shadow/drift?model_id={sel}")
+        if derr:
+            st.caption(f"Drift unavailable: {derr}")
+        elif d:
+            verdict = d.get("verdict", "?")
+            if verdict == "insufficient_data":
+                st.caption(
+                    f"Not enough data in both windows yet "
+                    f"(ref={d.get('reference_count', 0)}, "
+                    f"cur={d.get('current_count', 0)})."
+                )
+            else:
+                vcol = {"stable": "🟢", "watch": "🟡", "drift": "🔴"}.get(
+                    str(verdict).lower(), "⚪"
+                )
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Verdict", f"{vcol} {verdict}")
+                m2.metric("KS", fmt_num(d.get("ks")))
+                m3.metric("PSI", fmt_num(d.get("psi")))
+                m4.metric(
+                    "Mean shift",
+                    fmt_num(
+                        (d.get("current_mean") or 0) - (d.get("reference_mean") or 0)
+                    ),
+                )
+                st.caption(
+                    f"Reference {fmt_num(d.get('reference_mean'))}±"
+                    f"{fmt_num(d.get('reference_stdev'))} "
+                    f"→ current {fmt_num(d.get('current_mean'))}±"
+                    f"{fmt_num(d.get('current_stdev'))}. A near-zero current "
+                    "stdev means the model is emitting a constant."
+                )
+
+    st.divider()
+    st.subheader("Prediction ↔ outcome coverage")
+    _render_outcome_coverage()
+
+
 # ── Backtesting ──────────────────────────────────────────────────────────────────
 
 def page_backtesting() -> None:
@@ -1795,6 +2042,7 @@ def main() -> None:
         "Signals":       page_signals,
         "Closed Trades": page_trades,
         "Models":        page_models,
+        "Promotion":     page_promotion,
         "Backtesting":   page_backtesting,
         "Strategies":    page_strategies,
         "Health":        page_health,
