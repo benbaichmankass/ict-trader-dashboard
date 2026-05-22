@@ -33,13 +33,17 @@ TIMEOUT_S = 10.0
 POLL_INTERVAL_S = 10
 DEFAULT_LIMIT = 50
 
-# Yahoo Finance ticker mapping (dashboard uses BTCUSDT style for signal matching)
+# Yahoo Finance ticker mapping (dashboard uses bot symbol style for signal matching).
+# MES (Micro E-mini S&P 500, IBKR) maps to the full-size continuous E-mini
+# front-month `ES=F`, which tracks the identical S&P index level as MES and
+# carries far deeper Yahoo history than the micro contract `MES=F`.
 _YF_SYMBOL: dict[str, str] = {
     "BTCUSDT": "BTC-USD",
     "ETHUSDT": "ETH-USD",
     "SOLUSDT": "SOL-USD",
     "BNBUSDT": "BNB-USD",
     "XRPUSDT": "XRP-USD",
+    "MES": "ES=F",
 }
 
 # yfinance interval + download period that yields ~200 bars per interval label
@@ -178,19 +182,30 @@ def fmt_usd(x: float | None) -> str:
     return "—" if x is None else f"${x:,.2f}"
 
 
+def fmt_num(x: float | None) -> str:
+    """Plain price formatter (no currency) — BTCUSDT and MES live on very
+    different scales, so keep it generic and let the value speak."""
+    if x is None:
+        return "—"
+    try:
+        return f"{float(x):,.2f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 PAGES = [
-    "Overview", "Live Chart", "Positions", "Signals",
+    "Overview", "Performance", "Live Chart", "Positions", "Signals",
     "Closed Trades", "Models", "Backtesting", "Strategies",
     "Health", "Logs", "Demo",
 ]
 
 PAGE_ICONS = {
-    "Overview": "\U0001f3e0", "Live Chart": "\U0001f4ca", "Positions": "\U0001f4cb",
-    "Signals": "⚡", "Closed Trades": "✅", "Models": "\U0001f9e0",
-    "Backtesting": "\U0001f52c", "Strategies": "♟️", "Health": "\U0001f48a",
-    "Logs": "\U0001f4dc", "Demo": "\U0001f9ea",
+    "Overview": "\U0001f3e0", "Performance": "\U0001f4c8", "Live Chart": "\U0001f4ca",
+    "Positions": "\U0001f4cb", "Signals": "⚡", "Closed Trades": "✅",
+    "Models": "\U0001f9e0", "Backtesting": "\U0001f52c", "Strategies": "♟️",
+    "Health": "\U0001f48a", "Logs": "\U0001f4dc", "Demo": "\U0001f9ea",
 }
 
 
@@ -688,6 +703,242 @@ def page_chart() -> None:
         f"Yahoo Finance · {_YF_SYMBOL.get(symbol, symbol)} · {interval} · "
         f"EMA 20/50 · up to 200 candles"
     )
+
+
+# ── Performance Overview (per-symbol live trade context) ──────────────────────────
+#
+# Two tabs (BTCUSDT, MES). Each renders the live price chart for that symbol
+# with TradingView-style trade context overlaid:
+#   * strategy signal entry markers          (/api/bot/signals, symbol-filtered)
+#   * live/open trade entry + TP + SL lines  (/api/bot/positions, symbol-filtered)
+#   * live PnL for the open position(s)       (Position.unrealizedPnl)
+#   * recent closed-trade entry/exit markers  (/api/bot/trades/closed)
+# Candles come from Yahoo Finance (BTCUSDT -> BTC-USD, MES -> ES=F).
+
+PERF_SYMBOLS   = ["BTCUSDT", "MES"]
+PERF_INTERVALS = ["5m", "15m", "1h", "4h", "1d"]
+
+
+def _positions_for_symbol(symbol: str) -> tuple[list[dict], str | None]:
+    rows, err = _fetch("/api/bot/positions")
+    if err:
+        return [], err
+    return [p for p in (rows or []) if str(p.get("symbol")) == symbol], None
+
+
+def _render_open_trade_header(symbol: str, positions: list[dict]) -> None:
+    if not positions:
+        st.info(
+            f"No open {symbol} position right now — the chart below still shows "
+            "strategy signals and recent closed-trade context."
+        )
+        return
+    net_pnl = sum((p.get("unrealizedPnl") or 0) for p in positions)
+    p = positions[0]  # primary leg for the detail metrics
+    side = str(p.get("side", "")).upper() or "—"
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Open legs", len(positions))
+    c2.metric(
+        "Live PnL", fmt_usd(net_pnl),
+        delta=round(net_pnl, 2) if net_pnl else None,
+    )
+    c3.metric("Side · Qty", f"{side} · {p.get('qty', '—')}")
+    c4.metric("Entry", fmt_num(p.get("entryPrice")))
+    c5.metric("SL · TP", f"{fmt_num(p.get('stopLoss'))} · {fmt_num(p.get('takeProfit'))}")
+    pat = p.get("pattern")
+    if pat:
+        st.caption(f"Active strategy on primary leg: **{pat}**")
+
+
+def _add_signal_markers(fig: go.Figure, symbol: str, last_price: float) -> None:
+    signals, sig_err = _fetch("/api/bot/signals")
+    if sig_err or not signals:
+        return
+    sdf = pd.DataFrame(signals)
+    if "symbol" in sdf.columns:
+        sdf = sdf[sdf["symbol"] == symbol]
+    if sdf.empty or "timestamp" not in sdf.columns:
+        return
+    sdf = sdf.copy()
+    sdf["timestamp"] = pd.to_datetime(sdf["timestamp"], errors="coerce", utc=True)
+    sdf["timestamp"] = sdf["timestamp"].dt.tz_localize(None)
+    sdf = sdf.dropna(subset=["timestamp"])
+    for side_val, marker_sym, color, label in [
+        ("buy",  "triangle-up",   _TV_GREEN, "Long signal"),
+        ("sell", "triangle-down", _TV_RED,   "Short signal"),
+    ]:
+        sub = sdf[sdf["side"] == side_val] if "side" in sdf.columns else pd.DataFrame()
+        if sub.empty:
+            continue
+        prices = (
+            sub["price"].fillna(last_price)
+            if "price" in sub.columns else pd.Series([last_price] * len(sub))
+        )
+        hover = (
+            sub["pattern"].fillna("").astype(str)
+            if "pattern" in sub.columns else pd.Series([""] * len(sub))
+        )
+        fig.add_trace(go.Scatter(
+            x=sub["timestamp"], y=prices, mode="markers", name=label, text=hover,
+            marker=dict(symbol=marker_sym, size=13, color=color,
+                        line=dict(width=1, color="white")),
+            hovertemplate=f"{label} %{{text}}: %{{y:.4g}}<extra></extra>",
+        ))
+
+
+def _add_closed_trade_markers(fig: go.Figure, symbol: str) -> None:
+    trades, tr_err = _fetch(f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}")
+    if tr_err or not trades:
+        return
+    tdf = pd.DataFrame(trades)
+    if "symbol" in tdf.columns:
+        tdf = tdf[tdf["symbol"] == symbol]
+    if tdf.empty:
+        return
+    pnl_col = "realizedPnl" if "realizedPnl" in tdf.columns else None
+    if "openedAt" in tdf.columns and "entryPrice" in tdf.columns:
+        sub = tdf.copy()
+        sub["openedAt"] = pd.to_datetime(sub["openedAt"], errors="coerce", utc=True).dt.tz_localize(None)
+        sub = sub.dropna(subset=["openedAt", "entryPrice"])
+        if not sub.empty:
+            fig.add_trace(go.Scatter(
+                x=sub["openedAt"], y=sub["entryPrice"], mode="markers", name="Trade entry",
+                marker=dict(symbol="circle", size=8, color=_TV_ENTRY,
+                            line=dict(width=1, color="white")),
+                hovertemplate="Entry: %{y:.4g}<extra></extra>",
+            ))
+    if "closedAt" in tdf.columns and "exitPrice" in tdf.columns:
+        sub = tdf.copy()
+        sub["closedAt"] = pd.to_datetime(sub["closedAt"], errors="coerce", utc=True).dt.tz_localize(None)
+        sub = sub.dropna(subset=["closedAt", "exitPrice"])
+        if not sub.empty:
+            colors = [
+                _TV_GREEN if (pnl_col and (r.get(pnl_col) or 0) > 0) else _TV_RED
+                for _, r in sub.iterrows()
+            ]
+            fig.add_trace(go.Scatter(
+                x=sub["closedAt"], y=sub["exitPrice"], mode="markers", name="Trade exit",
+                marker=dict(symbol="x", size=9, color=colors, line=dict(width=2)),
+                hovertemplate="Exit: %{y:.4g}<extra></extra>",
+            ))
+
+
+def _add_open_trade_lines(fig: go.Figure, positions: list[dict]) -> None:
+    """Draw entry / TP / SL price-lines for each open position leg."""
+    for p in positions:
+        entry = p.get("entryPrice")
+        tp    = p.get("takeProfit")
+        sl    = p.get("stopLoss")
+        side  = str(p.get("side", "")).upper()
+        if entry is not None:
+            fig.add_hline(
+                y=float(entry), line_dash="solid", line_width=1.5, line_color=_TV_ENTRY,
+                annotation_text=f"Entry {fmt_num(entry)} ({side})",
+                annotation_position="top left",
+                annotation_font_color=_TV_ENTRY,
+            )
+        if tp is not None:
+            fig.add_hline(
+                y=float(tp), line_dash="dash", line_width=1.5, line_color=_TV_GREEN,
+                annotation_text=f"TP {fmt_num(tp)}",
+                annotation_position="top left",
+                annotation_font_color=_TV_GREEN,
+            )
+        if sl is not None:
+            fig.add_hline(
+                y=float(sl), line_dash="dash", line_width=1.5, line_color=_TV_RED,
+                annotation_text=f"SL {fmt_num(sl)}",
+                annotation_position="bottom left",
+                annotation_font_color=_TV_RED,
+            )
+
+
+def render_performance_tab(symbol: str) -> None:
+    cc1, cc2, cc3 = st.columns([2, 1, 1])
+    with cc1:
+        interval = st.selectbox(
+            "Interval", PERF_INTERVALS, index=1, key=f"perf_int_{symbol}"
+        )
+    with cc2:
+        show_signals = st.toggle("Signals", value=True, key=f"perf_sig_{symbol}")
+    with cc3:
+        show_trades = st.toggle("Closed trades", value=True, key=f"perf_tr_{symbol}")
+
+    positions, pos_err = _positions_for_symbol(symbol)
+    if pos_err:
+        st.warning(f"Positions unavailable: {pos_err}")
+    _render_open_trade_header(symbol, positions)
+
+    df, candles_err = _fetch_candles(symbol, interval)
+    if candles_err:
+        st.warning(f"Candles unavailable: {candles_err}")
+        return
+    if df is None or df.empty:
+        st.caption("No candle data.")
+        return
+
+    last_price = float(df["close"].iloc[-1])
+
+    fig = go.Figure()
+    fig.add_trace(go.Candlestick(
+        x=df["timestamp"],
+        open=df["open"], high=df["high"], low=df["low"], close=df["close"],
+        name=symbol,
+        increasing=dict(line=dict(color=_TV_GREEN, width=1), fillcolor=_TV_GREEN),
+        decreasing=dict(line=dict(color=_TV_RED, width=1), fillcolor=_TV_RED),
+    ))
+
+    if show_signals:
+        _add_signal_markers(fig, symbol, last_price)
+    if show_trades:
+        _add_closed_trade_markers(fig, symbol)
+    # Live/open trade context (entry + TP + SL) always overlaid when present.
+    _add_open_trade_lines(fig, positions)
+
+    _axis = dict(
+        gridcolor=_TV_GRID, gridwidth=1, color=_TV_TEXT,
+        tickfont=dict(color=_TV_TEXT, size=10),
+        linecolor=_TV_GRID, zerolinecolor=_TV_GRID,
+        showspikes=True, spikemode="across", spikesnap="cursor",
+        spikecolor=_TV_TEXT, spikethickness=1, spikedash="dot",
+    )
+    fig.update_layout(
+        template="plotly_dark",
+        plot_bgcolor=_TV_BG, paper_bgcolor=_TV_BG,
+        hovermode="x unified", height=620,
+        margin=dict(l=0, r=70, t=10, b=0),
+        dragmode="pan", xaxis_rangeslider_visible=False,
+        legend=dict(orientation="h", y=1.02, x=0,
+                    font=dict(size=11, color=_TV_TEXT), bgcolor="rgba(0,0,0,0)"),
+        font=dict(color=_TV_TEXT, size=11),
+        hoverlabel=dict(bgcolor="#1e2634", bordercolor=_TV_GRID,
+                        font=dict(color=_TV_TEXT, size=12)),
+    )
+    fig.update_xaxes(**_axis)
+    fig.update_yaxes(**_axis, side="right")
+
+    st.plotly_chart(
+        fig, use_container_width=True, config=_CHART_CONFIG,
+        key=f"perf_chart_{symbol}",
+    )
+    st.caption(
+        f"Yahoo Finance · {_YF_SYMBOL.get(symbol, symbol)} · {interval} · "
+        f"signals + open-trade entry/TP/SL + live PnL · auto-refreshes every "
+        f"{POLL_INTERVAL_S}s"
+    )
+
+
+def page_performance() -> None:
+    st.header("Performance Overview")
+    st.caption(
+        "Live price + trade context per symbol. BTCUSDT (Bybit) and "
+        "MES (IBKR paper) trade side by side through the same strategies."
+    )
+    tab_btc, tab_mes = st.tabs(["📈 BTCUSDT", "📊 MES"])
+    with tab_btc:
+        render_performance_tab("BTCUSDT")
+    with tab_mes:
+        render_performance_tab("MES")
 
 
 # ── Positions ───────────────────────────────────────────────────────────────────
@@ -1534,6 +1785,7 @@ def main() -> None:
 
     dispatch = {
         "Overview":      lambda: page_overview(stats, stats_err),
+        "Performance":   page_performance,
         "Live Chart":    page_chart,
         "Positions":     page_positions,
         "Signals":       page_signals,
