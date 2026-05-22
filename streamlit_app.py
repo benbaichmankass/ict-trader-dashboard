@@ -232,6 +232,10 @@ def render_sidebar() -> str:
         )
         st.divider()
         st.caption(f"Auto-refresh every {POLL_INTERVAL_S}s")
+        # Deploy marker — bump on each release so a stale Streamlit Cloud
+        # instance is obvious at a glance. If this date is old, the app
+        # needs a reboot/redeploy.
+        st.caption("build 2026-05-22 · Performance tabs (BTCUSDT + MES)")
 
     return page  # type: ignore[return-value]
 
