@@ -1113,10 +1113,31 @@ def _trainer_status_banner(payload: dict) -> None:
     waiting_for_next_cycle = timer_running and cycles_24h == 0 and not last_failed
     truly_idle = (not timer_running) and cycles_24h == 0
 
+    # The trainer service is a *oneshot* run by ict-trainer.timer, so its
+    # steady state between scheduled cycles is `inactive` — that is healthy,
+    # not stopped. Showing the raw "inactive / enabled" alarmed at a glance
+    # (it reads like the trainer is down when it's just waiting for its
+    # timer). Relabel to a self-explanatory value and keep the raw systemd
+    # state in the tooltip.
+    if svc_active == "active":
+        svc_display = "running"
+    elif svc_active == "inactive" and timer_running:
+        svc_display = "idle · scheduled"
+    else:
+        svc_display = svc_active or "?"
+
     cols = st.columns(4)
     cols[0].metric("Mirror age", age_str)
     cols[1].metric("Cycles (24 h)", cycles_24h)
-    cols[2].metric("Service", f"{svc_active or '?'} / {svc_enabled or '?'}")
+    cols[2].metric(
+        "Service",
+        svc_display,
+        help=(
+            f"systemd `ict-trainer.service`: {svc_active or '?'} / {svc_enabled or '?'}. "
+            "It's a oneshot launched by `ict-trainer.timer`, so `inactive` between "
+            "scheduled cycles is the normal resting state — not a fault."
+        ),
+    )
     cols[3].metric("Timer", f"{timer_state or '?'} / {timer_enabled or '?'}")
 
     if last_failed:
