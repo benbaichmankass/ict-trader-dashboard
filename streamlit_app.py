@@ -1917,14 +1917,33 @@ def page_strategies() -> None:
     if err:
         st.warning(err)
         return
-    strategies = (data or {}).get("strategies") or []
+    data = data or {}
+    strategies = data.get("strategies") or []
+    runtime = data.get("runtime") or {}
     if not strategies:
         st.caption("No strategy data available.")
         return
 
+    # Live-runtime banner — what the VM is actually running right now,
+    # not just what the YAML enables.
+    tick_age = runtime.get("tick_age_seconds")
+    if runtime.get("bot_running"):
+        loaded = ", ".join(runtime.get("loaded_strategies") or []) or "—"
+        st.success(f"\U0001f7e2 Pipeline running · last tick {_fmt_age(tick_age)} ago · loaded: {loaded}")
+    else:
+        last = runtime.get("last_tick_utc") or "unknown"
+        st.warning(
+            f"\U0001f7e1 Pipeline not confirmed running · last tick {last}"
+            f"{f' ({_fmt_age(tick_age)} ago)' if tick_age is not None else ''}. "
+            "Per-strategy status below reflects config; the bot may be between restarts."
+        )
+
     for strat in strategies:
         name      = strat.get("name", "")
         enabled   = strat.get("enabled", True)
+        loaded    = strat.get("loaded", False)
+        running   = strat.get("running", False)
+        accounts  = strat.get("accounts") or []
         risk_pct  = strat.get("risk_pct")
         timeframe = strat.get("timeframe", "—")
         symbols   = ", ".join(strat.get("symbols") or []) or "—"
@@ -1932,8 +1951,27 @@ def page_strategies() -> None:
         desc      = strat.get("description") or {}
         changelog = strat.get("changelog") or []
 
-        st.subheader(f"{'\U0001f7e2' if enabled else '\U0001f534'} {name}")
+        if not enabled:
+            badge = "\U0001f534 Disabled"
+        elif running:
+            badge = "\U0001f7e2 Running"
+        elif loaded:
+            badge = "\U0001f7e1 Loaded · tick stale"
+        else:
+            badge = "⚪ Configured · not loaded"
+
+        st.subheader(f"{name}  ·  {badge}")
         st.caption(desc.get("short", ""))
+
+        # Account routing — which accounts run this strategy + live/dry.
+        if accounts:
+            chips = []
+            for a in accounts:
+                dot = "\U0001f7e2" if a.get("live") else "⚫"
+                chips.append(f"{dot} {a.get('id')}")
+            st.caption("Routes to: " + " · ".join(chips))
+        else:
+            st.caption("Routes to: — (no account routes this strategy)")
 
         m1, m2, m3, m4, m5, m6 = st.columns(6)
         m1.metric("Timeframe",    timeframe)

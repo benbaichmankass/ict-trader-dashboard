@@ -137,7 +137,7 @@ docs/                  — ad-hoc design notes
 | Models | `/api/bot/ml/*` |
 | Promotion | `/api/bot/shadow/stats`, `/api/bot/shadow/drift`, `/api/bot/trades/scores`, `/api/bot/trades/closed` — 🚦 shadow-model promotion-readiness tracker (per-model volume, days-in-shadow, score range, "wired" check, KS/PSI drift, win/loss score edge) |
 | Backtesting | `/api/bot/backtests/sweeps` (strategy-improvement / validation sweeps mirrored from the trainer VM — renders each run's `SUMMARY.md` table + raw per-variant metrics), `/api/bot/backtests` (on-demand `/test` runs) |
-| Strategies | `/api/bot/strategies` |
+| Strategies | `/api/bot/strategies` — live-runtime view: pipeline-running banner + per-strategy status (Running / Loaded·stale / Configured·not-loaded / Disabled) and account routing (which accounts run it, live/dry), plus stats, config, changelog |
 | Health | `/api/bot/health/services`, `/api/bot/health/latest` |
 | Logs | `/api/bot/logs` |
 | Demo | `/api/bot/positions`, `/api/bot/trades/closed`, `/api/pnl/history` |
