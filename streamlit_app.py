@@ -65,6 +65,8 @@ _TV_TEXT   = "#b2b5be"
 _TV_EMA20  = "#f5a623"
 _TV_EMA50  = "#9b59b6"
 _TV_ENTRY  = "#3d7aed"
+_TV_FVG    = "#9c6ade"   # fair-value-gap zone band
+_TV_SWEEP  = "#e0a030"   # liquidity-sweep level
 
 # Lightweight Charts overview chart tuning — change these to adjust look/feel
 _LC_HEIGHT = 520           # chart height in pixels
@@ -389,6 +391,41 @@ def _lc_price_lines(
     return lines
 
 
+def _lc_zone_lines(signals: list[dict] | None, symbol: str, limit: int = 1) -> list[dict]:
+    """Price lines for the latest signal's ICT zones (FVG band + sweep).
+
+    Draws only what the strategy itself recorded for its decision (the
+    `zones` the bot's /api/bot/signals returns) — never a separately
+    computed indicator. Limited to the most-recent `limit` signals so
+    the chart shows the current setup rather than every historical zone.
+    The lightweight-charts package can't fill boxes, so an FVG renders
+    as its two bounding lines; a sweep as a single level.
+    """
+    if not signals:
+        return []
+    rows = [
+        s for s in signals
+        if (not s.get("symbol") or s.get("symbol") == symbol) and s.get("zones")
+    ]
+    rows.sort(key=lambda s: s.get("timestamp") or "", reverse=True)
+    lines: list[dict] = []
+    for s in rows[:limit]:
+        for z in (s.get("zones") or []):
+            kind = z.get("kind")
+            if kind == "fvg" and z.get("low") is not None and z.get("high") is not None:
+                for price, title in ((z["low"], "FVG ▾"), (z["high"], "FVG ▴")):
+                    lines.append({
+                        "price": float(price), "color": _TV_FVG, "lineWidth": 1,
+                        "lineStyle": 2, "axisLabelVisible": True, "title": title,
+                    })
+            elif kind == "sweep" and z.get("price") is not None:
+                lines.append({
+                    "price": float(z["price"]), "color": _TV_SWEEP, "lineWidth": 1,
+                    "lineStyle": 1, "axisLabelVisible": True, "title": "sweep",
+                })
+    return lines
+
+
 def render_overview_chart(
     df: pd.DataFrame,
     signals:   list[dict] | None,
@@ -397,15 +434,17 @@ def render_overview_chart(
     positions: list[dict] | None = None,
     height:    int = _LC_HEIGHT,
     key:       str = "overview_lc_chart",
+    show_zones: bool = False,
 ) -> None:
     """Render the single TradingView Lightweight Charts candlestick.
 
     Overlays live-trade context like TradingView: signal/trade markers,
-    plus entry/SL/TP/current-price horizontal lines for open positions.
+    entry/SL/TP/current-price lines for open positions, and (when
+    show_zones) the latest signal's ICT zones the strategy traded on.
 
     Extending:
       - Marker tweaks: edit _lc_markers() above.
-      - Price-line tweaks: edit _lc_price_lines() above.
+      - Price-line tweaks: edit _lc_price_lines() / _lc_zone_lines() above.
       - Theme: change _TV_BG / _LC_GRID_* at the top.
     """
     if not _LC_AVAILABLE:
@@ -418,6 +457,8 @@ def render_overview_chart(
     candle_data = _lc_candle_data(df)
     markers     = _lc_markers(signals, trades, symbol)
     price_lines = _lc_price_lines(positions, df, symbol)
+    if show_zones:
+        price_lines = price_lines + _lc_zone_lines(signals, symbol)
 
     chart_opts = [{
         "chart": {
@@ -505,7 +546,7 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             index=CHART_INTERVALS.index("1m") if "1m" in CHART_INTERVALS else 0,
             key="ov_interval",
         )
-    tg1, tg2, tg3, tg4 = st.columns(4)
+    tg1, tg2, tg3, tg4, tg5 = st.columns(5)
     with tg1:
         ov_live = st.toggle(
             "Live trades", value=True, key="ov_live",
@@ -514,11 +555,17 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     with tg2:
         ov_signals = st.toggle("Signals", value=True, key="ov_signals")
     with tg3:
+        ov_zones = st.toggle(
+            "Zones", value=True, key="ov_zones",
+            help="Draw the latest signal's ICT zones (FVG band + liquidity sweep) "
+                 "that the strategy actually traded on",
+        )
+    with tg4:
         ov_trades = st.toggle(
             "Closed", value=False, key="ov_trades",
             help="Recent closed-trade entry/exit markers",
         )
-    with tg4:
+    with tg5:
         ov_wide = st.toggle(
             "Widescreen", value=False, key="ov_wide",
             help="Near-fullscreen view — hides the sidebar so the chart fills the screen",
@@ -578,6 +625,7 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             df, sig_data, trade_data, ov_symbol,
             positions=sym_positions if ov_live else None,
             height=chart_height,
+            show_zones=ov_zones,
         )
         st.caption(
             f"Yahoo Finance · {_YF_SYMBOL.get(ov_symbol, ov_symbol)} · {ov_interval} · "
