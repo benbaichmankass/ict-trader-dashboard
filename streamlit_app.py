@@ -14,6 +14,7 @@ import datetime as dt
 import os
 import time
 from typing import Any
+from urllib.parse import quote, urlencode
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -197,14 +198,15 @@ def fmt_num(x: float | None) -> str:
 PAGES = [
     "Overview", "Performance", "Accounts", "Positions", "Signals",
     "Closed Trades", "Models", "Promotion", "Backtesting", "Strategies",
-    "Health", "Logs", "Demo",
+    "Data Explorer", "Health", "Logs", "Demo",
 ]
 
 PAGE_ICONS = {
     "Overview": "\U0001f3e0", "Performance": "\U0001f4c8", "Accounts": "\U0001f4b3",
     "Positions": "\U0001f4cb", "Signals": "⚡", "Closed Trades": "✅",
     "Models": "\U0001f9e0", "Promotion": "\U0001f6a6", "Backtesting": "\U0001f52c",
-    "Strategies": "♟️", "Health": "\U0001f48a", "Logs": "\U0001f4dc", "Demo": "\U0001f9ea",
+    "Strategies": "♟️", "Data Explorer": "\U0001f5c3", "Health": "\U0001f48a",
+    "Logs": "\U0001f4dc", "Demo": "\U0001f9ea",
 }
 
 
@@ -2000,6 +2002,91 @@ def page_strategies() -> None:
         st.divider()
 
 
+# ── Data Explorer ─────────────────────────────────────────────────────────────
+
+def page_data_explorer() -> None:
+    st.header("Data Explorer")
+    st.caption(
+        "Read-only browse of the bot's `trade_journal.db`. Pick a table, "
+        "filter by a column, and page through rows. Nothing here can write."
+    )
+
+    meta, err = _fetch("/api/bot/db/tables")
+    if err:
+        st.warning(f"DB tables endpoint error: {err}")
+        return
+    meta = meta or {}
+    if not meta.get("present"):
+        st.info("Database not available.")
+        return
+    tables = meta.get("tables") or []
+    if not tables:
+        st.caption("No tables found.")
+        return
+
+    with st.expander("Schema overview", expanded=False):
+        st.dataframe(
+            pd.DataFrame([
+                {"Table": t["name"], "Rows": t.get("rows"),
+                 "Columns": len(t.get("columns") or [])}
+                for t in tables
+            ]),
+            hide_index=True, use_container_width=True,
+        )
+
+    names = [t["name"] for t in tables]
+    sel = st.selectbox("Table", names, key="dx_table")
+    tinfo = next((t for t in tables if t["name"] == sel), {})
+    cols = [c["name"] for c in (tinfo.get("columns") or [])]
+    st.caption(
+        f"{tinfo.get('rows', '?')} rows · "
+        + ", ".join(f"{c['name']} `{c['type']}`" for c in (tinfo.get("columns") or []))
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        order_by = st.selectbox("Order by", ["(none)"] + cols, key="dx_order")
+    with c2:
+        order_dir = st.selectbox("Direction", ["desc", "asc"], key="dx_dir")
+    with c3:
+        limit = st.selectbox("Rows/page", [25, 50, 100, 200, 500], index=2, key="dx_limit")
+
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        filter_col = st.selectbox("Filter column", ["(none)"] + cols, key="dx_fcol")
+    with f2:
+        filter_op = st.selectbox(
+            "Op", ["eq", "ne", "gt", "lt", "gte", "lte", "like"], key="dx_fop",
+        )
+    with f3:
+        filter_val = st.text_input("Value", key="dx_fval")
+
+    page = int(st.number_input("Page", min_value=1, value=1, step=1, key="dx_page"))
+    offset = (page - 1) * int(limit)
+
+    params: dict[str, Any] = {"limit": limit, "offset": offset}
+    if order_by != "(none)":
+        params["order_by"] = order_by
+        params["order_dir"] = order_dir
+    if filter_col != "(none)" and filter_val.strip():
+        params["filter_col"] = filter_col
+        params["filter_op"] = filter_op
+        params["filter_val"] = filter_val.strip()
+
+    data, derr = _fetch(f"/api/bot/db/table/{quote(sel)}?{urlencode(params)}")
+    if derr:
+        st.warning(derr)
+        return
+    data = data or {}
+    rows = data.get("rows") or []
+    total = data.get("total", 0)
+    st.caption(f"Showing {len(rows)} of {total} rows · page {page}")
+    if rows:
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    else:
+        st.caption("No rows match.")
+
+
 # ── Health ────────────────────────────────────────────────────────────────────
 
 def page_health() -> None:
@@ -2152,6 +2239,7 @@ def main() -> None:
         "Promotion":     page_promotion,
         "Backtesting":   page_backtesting,
         "Strategies":    page_strategies,
+        "Data Explorer": page_data_explorer,
         "Health":        page_health,
         "Logs":          page_logs,
         "Demo":          page_demo,
