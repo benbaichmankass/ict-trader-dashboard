@@ -20,7 +20,6 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 import yfinance as yf
-from plotly.subplots import make_subplots
 
 try:
     from streamlit_lightweight_charts import renderLightweightCharts as _render_lc
@@ -196,13 +195,13 @@ def fmt_num(x: float | None) -> str:
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 PAGES = [
-    "Overview", "Performance", "Live Chart", "Positions", "Signals",
+    "Overview", "Performance", "Positions", "Signals",
     "Closed Trades", "Models", "Promotion", "Backtesting", "Strategies",
     "Health", "Logs", "Demo",
 ]
 
 PAGE_ICONS = {
-    "Overview": "\U0001f3e0", "Performance": "\U0001f4c8", "Live Chart": "\U0001f4ca",
+    "Overview": "\U0001f3e0", "Performance": "\U0001f4c8",
     "Positions": "\U0001f4cb", "Signals": "⚡", "Closed Trades": "✅",
     "Models": "\U0001f9e0", "Promotion": "\U0001f6a6", "Backtesting": "\U0001f52c",
     "Strategies": "♟️", "Health": "\U0001f48a", "Logs": "\U0001f4dc", "Demo": "\U0001f9ea",
@@ -337,33 +336,90 @@ def _lc_markers(
     return markers
 
 
+def _lc_price_lines(
+    positions: list[dict] | None,
+    df:        pd.DataFrame,
+    symbol:    str,
+) -> list[dict]:
+    """TradingView-style horizontal price lines for the overview chart.
+
+    Draws the current price (last candle close) plus, for every OPEN
+    position on *symbol*, its entry / stop-loss / take-profit levels —
+    the same overlay TradingView shows for a live position. Each is
+    nullable on the bot side (older rows), so missing levels are simply
+    skipped rather than drawn at 0.
+    """
+    lines: list[dict] = []
+
+    # Current price — subtle dashed reference line.
+    try:
+        last_close = float(df["close"].iloc[-1])
+        lines.append({
+            "price": last_close, "color": "#7f8da3", "lineWidth": 1,
+            "lineStyle": 2, "axisLabelVisible": True, "title": "last",
+        })
+    except (KeyError, IndexError, ValueError, TypeError):
+        pass
+
+    for p in positions or []:
+        if p.get("symbol") and p.get("symbol") != symbol:
+            continue
+        side  = str(p.get("side", "")).upper()
+        entry = p.get("entryPrice")
+        sl    = p.get("stopLoss")
+        tp    = p.get("takeProfit")
+        if entry is not None:
+            lines.append({
+                "price": float(entry), "color": _TV_ENTRY, "lineWidth": 2,
+                "lineStyle": 0, "axisLabelVisible": True,
+                "title": f"{side or 'ENTRY'} entry",
+            })
+        if sl is not None:
+            lines.append({
+                "price": float(sl), "color": _TV_RED, "lineWidth": 1,
+                "lineStyle": 2, "axisLabelVisible": True, "title": "SL",
+            })
+        if tp is not None:
+            lines.append({
+                "price": float(tp), "color": _TV_GREEN, "lineWidth": 1,
+                "lineStyle": 2, "axisLabelVisible": True, "title": "TP",
+            })
+    return lines
+
+
 def render_overview_chart(
     df: pd.DataFrame,
-    signals: list[dict] | None,
-    trades:  list[dict] | None,
-    symbol:  str,
+    signals:   list[dict] | None,
+    trades:    list[dict] | None,
+    symbol:    str,
+    positions: list[dict] | None = None,
+    height:    int = _LC_HEIGHT,
+    key:       str = "overview_lc_chart",
 ) -> None:
-    """Render a TradingView Lightweight Charts candlestick on the overview tab.
+    """Render the single TradingView Lightweight Charts candlestick.
+
+    Overlays live-trade context like TradingView: signal/trade markers,
+    plus entry/SL/TP/current-price horizontal lines for open positions.
 
     Extending:
-      - Second series (e.g. equity curve): append a second dict to the
-        "series" list with type "Line" and its own "data" list.
       - Marker tweaks: edit _lc_markers() above.
-      - Height / theme: change _LC_HEIGHT / _TV_BG / _LC_GRID_* at the top.
+      - Price-line tweaks: edit _lc_price_lines() above.
+      - Theme: change _TV_BG / _LC_GRID_* at the top.
     """
     if not _LC_AVAILABLE:
         st.warning(
-            "Install `streamlit-lightweight-charts` to enable the overview chart.\n"
+            "Install `streamlit-lightweight-charts` to enable the chart.\n"
             "`pip install streamlit-lightweight-charts`"
         )
         return
 
     candle_data = _lc_candle_data(df)
     markers     = _lc_markers(signals, trades, symbol)
+    price_lines = _lc_price_lines(positions, df, symbol)
 
     chart_opts = [{
         "chart": {
-            "height": _LC_HEIGHT,
+            "height": height,
             "layout": {
                 "background": {"type": "solid", "color": _TV_BG},
                 "textColor":  _TV_TEXT,
@@ -404,11 +460,12 @@ def render_overview_chart(
                 "wickUpColor":   _TV_GREEN,
                 "wickDownColor": _TV_RED,
             },
-            "markers": markers,
+            "markers":    markers,
+            "priceLines": price_lines,
         }],
     }]
 
-    _render_lc(chart_opts, key="overview_lc_chart")
+    _render_lc(chart_opts, key=key)
 
 
 # ── Overview ──────────────────────────────────────────────────────────────────
@@ -434,19 +491,58 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         h2.metric("Memory", fmt_pct(vm.get("memory")))
         h3.metric("Disk",   fmt_pct(vm.get("disk")))
 
-    # ── Price chart ─────────────────────────────────────────────────────────────
-    st.subheader("Price Overview")
-    # Two rows of two so controls stack cleanly on narrow / mobile screens
+    # ── Live price chart (single TradingView-style chart) ───────────────────────
+    st.subheader("Price Chart")
+    # Controls stack full-width on mobile (see the <640px CSS rule).
     oc1, oc2 = st.columns(2)
     with oc1:
-        ov_symbol   = st.selectbox("Symbol",   CHART_SYMBOLS,   key="ov_symbol")
+        ov_symbol = st.selectbox("Symbol", CHART_SYMBOLS, key="ov_symbol")
     with oc2:
-        ov_interval = st.selectbox("Interval", CHART_INTERVALS, index=2, key="ov_interval")
-    oc3, oc4, _ = st.columns([1, 1, 4])
-    with oc3:
-        ov_signals  = st.toggle("Signals", value=True, key="ov_signals")
-    with oc4:
-        ov_trades   = st.toggle("Trades",  value=True, key="ov_trades")
+        ov_interval = st.selectbox(
+            "Interval", CHART_INTERVALS,
+            index=CHART_INTERVALS.index("1m") if "1m" in CHART_INTERVALS else 0,
+            key="ov_interval",
+        )
+    tg1, tg2, tg3, tg4 = st.columns(4)
+    with tg1:
+        ov_live = st.toggle(
+            "Live trades", value=True, key="ov_live",
+            help="Overlay open-position entry / SL / TP / current-price lines",
+        )
+    with tg2:
+        ov_signals = st.toggle("Signals", value=True, key="ov_signals")
+    with tg3:
+        ov_trades = st.toggle(
+            "Closed", value=False, key="ov_trades",
+            help="Recent closed-trade entry/exit markers",
+        )
+    with tg4:
+        ov_wide = st.toggle(
+            "Widescreen", value=False, key="ov_wide",
+            help="Near-fullscreen view — hides the sidebar so the chart fills the screen",
+        )
+
+    # Open positions drive both the live-trade overlay and the live-PnL readout.
+    positions, _ = _fetch("/api/bot/positions")
+    sym_positions = [p for p in (positions or []) if p.get("symbol") == ov_symbol]
+    if sym_positions:
+        net_pnl = sum((p.get("unrealizedPnl") or 0) for p in sym_positions)
+        pc1, pc2 = st.columns([1, 3])
+        pc1.metric(f"Live PnL · {ov_symbol}", fmt_usd(net_pnl), delta=round(net_pnl, 2))
+        pc2.caption(" · ".join(
+            f"{str(p.get('side', '')).upper()} {p.get('qty', '?')} @ {p.get('entryPrice', '?')}"
+            for p in sym_positions
+        ))
+
+    if ov_wide:
+        # Near-fullscreen: hide the sidebar + strip page padding so the chart
+        # fills the viewport. Pure CSS (mobile-safe); re-evaluated each run, so
+        # untoggling restores the sidebar on the next interaction.
+        st.html(
+            "<style>[data-testid='stSidebar']{display:none;}"
+            ".main .block-container{padding:0.4rem 0.6rem;max-width:100%;}</style>"
+        )
+    chart_height = 820 if ov_wide else _LC_HEIGHT
 
     df, candles_err = _fetch_candles(ov_symbol, ov_interval)
     if candles_err:
@@ -457,14 +553,33 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         sig_data = None
         if ov_signals:
             sig_data, _ = _fetch("/api/bot/signals")
+            # Per-strategy signal filter — only when the endpoint tags signals
+            # with their strategy (added in the bot's /api/bot/signals route).
+            strategies = sorted({
+                s.get("strategy") for s in (sig_data or []) if s.get("strategy")
+            })
+            if strategies:
+                chosen = st.multiselect(
+                    "Signal strategies", strategies, default=strategies,
+                    key="ov_sig_strats",
+                    help="Toggle which strategies' entry signals are drawn",
+                )
+                sig_data = [
+                    s for s in sig_data
+                    if not s.get("strategy") or s.get("strategy") in chosen
+                ]
         trade_data = None
         if ov_trades:
             trade_data, _ = _fetch(f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}")
 
-        render_overview_chart(df, sig_data, trade_data, ov_symbol)
+        render_overview_chart(
+            df, sig_data, trade_data, ov_symbol,
+            positions=sym_positions if ov_live else None,
+            height=chart_height,
+        )
         st.caption(
             f"Yahoo Finance · {_YF_SYMBOL.get(ov_symbol, ov_symbol)} · {ov_interval} · "
-            f"up to 200 candles · auto-refreshes every {POLL_INTERVAL_S}s"
+            f"up to 200 candles · pinch to zoom · auto-refreshes every {POLL_INTERVAL_S}s"
         )
 
     # ── PnL history (secondary) ─────────────────────────────────────────────────
@@ -482,231 +597,12 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
                 st.json(pnl)
 
 
-# ── Live Chart ─────────────────────────────────────────────────────────────────
+# ── Chart symbol / interval choices (shared by the Overview chart) ──────────────
 
 CHART_SYMBOLS   = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
 CHART_INTERVALS = list(_YF_PARAMS.keys())
 
 
-def page_chart() -> None:
-    st.header("Live Chart")
-
-    # ── Controls ─────────────────────────────────────────────────────────────
-    r1c1, r1c2 = st.columns([3, 2])
-    with r1c1:
-        symbol = st.selectbox("Symbol", CHART_SYMBOLS)
-    with r1c2:
-        interval = st.selectbox("Interval", CHART_INTERVALS, index=2)
-
-    t1, t2, t3, t4 = st.columns(4)
-    show_ema20   = t1.toggle("EMA 20",  value=True)
-    show_ema50   = t2.toggle("EMA 50",  value=True)
-    show_signals = t3.toggle("Signals", value=False)
-    show_trades  = t4.toggle("Trades",  value=False)
-
-    # ── Fetch candles ─────────────────────────────────────────────────────────────
-    df, candles_err = _fetch_candles(symbol, interval)
-    if candles_err:
-        st.warning(f"Candles unavailable: {candles_err}")
-        return
-    if df is None or df.empty:
-        st.caption("No candle data.")
-        return
-
-    df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
-    df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
-    vol_colors = [
-        _TV_GREEN if c >= o else _TV_RED
-        for c, o in zip(df["close"], df["open"])
-    ]
-
-    # ── Build figure ─────────────────────────────────────────────────────────────
-    fig = make_subplots(
-        rows=2, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.02,
-        row_heights=[0.75, 0.25],
-    )
-
-    fig.add_trace(go.Candlestick(
-        x=df["timestamp"],
-        open=df["open"], high=df["high"],
-        low=df["low"],   close=df["close"],
-        name=symbol,
-        increasing=dict(line=dict(color=_TV_GREEN, width=1), fillcolor=_TV_GREEN),
-        decreasing=dict(line=dict(color=_TV_RED,   width=1), fillcolor=_TV_RED),
-    ), row=1, col=1)
-
-    if show_ema20:
-        fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["ema20"],
-            name="EMA 20",
-            line=dict(color=_TV_EMA20, width=1.5),
-            hovertemplate="EMA 20: %{y:.4g}<extra></extra>",
-        ), row=1, col=1)
-
-    if show_ema50:
-        fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["ema50"],
-            name="EMA 50",
-            line=dict(color=_TV_EMA50, width=1.5),
-            hovertemplate="EMA 50: %{y:.4g}<extra></extra>",
-        ), row=1, col=1)
-
-    # ── Signals layer ─────────────────────────────────────────────────────────────
-    # API shape: {timestamp, symbol, side ("buy"/"sell"), price, pattern, confidence}
-    if show_signals:
-        signals, sig_err = _fetch("/api/bot/signals")
-        if sig_err:
-            st.caption(f"Signals: {sig_err}")
-        elif signals:
-            sdf = pd.DataFrame(signals)
-            if "symbol" in sdf.columns:
-                sdf = sdf[sdf["symbol"] == symbol]
-            if not sdf.empty and "timestamp" in sdf.columns:
-                sdf["timestamp"] = pd.to_datetime(sdf["timestamp"], errors="coerce", utc=True)
-                sdf["timestamp"] = sdf["timestamp"].dt.tz_localize(None)
-                sdf = sdf.dropna(subset=["timestamp"])
-            if not sdf.empty:
-                last_price = float(df["close"].iloc[-1])
-                for side_val, marker_sym, color, label in [
-                    ("buy",  "triangle-up",   _TV_GREEN, "Long"),
-                    ("sell", "triangle-down",  _TV_RED,   "Short"),
-                ]:
-                    subset = sdf[sdf["side"] == side_val] if "side" in sdf.columns else pd.DataFrame()
-                    if not subset.empty:
-                        prices = (
-                            subset["price"].fillna(last_price)
-                            if "price" in subset.columns
-                            else pd.Series([last_price] * len(subset))
-                        )
-                        hover = (
-                            subset["pattern"].fillna("").astype(str)
-                            if "pattern" in subset.columns
-                            else pd.Series([""] * len(subset))
-                        )
-                        fig.add_trace(go.Scatter(
-                            x=subset["timestamp"],
-                            y=prices,
-                            mode="markers",
-                            name=label,
-                            text=hover,
-                            marker=dict(
-                                symbol=marker_sym, size=14, color=color,
-                                line=dict(width=1, color="white"),
-                            ),
-                            hovertemplate=f"{label} %{{text}}: %{{y:.4g}}<extra></extra>",
-                        ), row=1, col=1)
-
-    # ── Trades layer ─────────────────────────────────────────────────────────────
-    # API shape: {openedAt, closedAt, entryPrice, exitPrice, realizedPnl,
-    #             side ("buy"/"sell"), symbol, closeReason, qty}
-    if show_trades:
-        trades, tr_err = _fetch(f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}")
-        if tr_err:
-            st.caption(f"Trades: {tr_err}")
-        elif trades:
-            tdf = pd.DataFrame(trades)
-            if "symbol" in tdf.columns:
-                tdf = tdf[tdf["symbol"] == symbol]
-
-            if not tdf.empty:
-                pnl_col = "realizedPnl" if "realizedPnl" in tdf.columns else None
-
-                # Entry markers
-                if "openedAt" in tdf.columns and "entryPrice" in tdf.columns:
-                    tdf["openedAt"] = pd.to_datetime(tdf["openedAt"], errors="coerce", utc=True)
-                    tdf["openedAt"] = tdf["openedAt"].dt.tz_localize(None)
-                    sub = tdf.dropna(subset=["openedAt", "entryPrice"])
-                    if not sub.empty:
-                        close_reasons = sub["closeReason"].fillna("") if "closeReason" in sub.columns else pd.Series([""] * len(sub))
-                        fig.add_trace(go.Scatter(
-                            x=sub["openedAt"],
-                            y=sub["entryPrice"],
-                            mode="markers",
-                            name="Entry",
-                            text=close_reasons,
-                            marker=dict(
-                                symbol="circle", size=9, color=_TV_ENTRY,
-                                line=dict(width=1, color="white"),
-                            ),
-                            hovertemplate="Entry: %{y:.4g}<extra></extra>",
-                        ), row=1, col=1)
-
-                # Exit markers
-                if "closedAt" in tdf.columns and "exitPrice" in tdf.columns:
-                    tdf["closedAt"] = pd.to_datetime(tdf["closedAt"], errors="coerce", utc=True)
-                    tdf["closedAt"] = tdf["closedAt"].dt.tz_localize(None)
-                    sub = tdf.dropna(subset=["closedAt", "exitPrice"])
-                    if not sub.empty:
-                        exit_colors = [
-                            _TV_GREEN if (pnl_col and (row.get(pnl_col) or 0) > 0) else _TV_RED
-                            for _, row in sub.iterrows()
-                        ]
-                        reasons = sub["closeReason"].fillna("") if "closeReason" in sub.columns else pd.Series([""] * len(sub))
-                        fig.add_trace(go.Scatter(
-                            x=sub["closedAt"],
-                            y=sub["exitPrice"],
-                            mode="markers",
-                            name="Exit",
-                            text=reasons,
-                            marker=dict(
-                                symbol="x", size=10, color=exit_colors,
-                                line=dict(width=2),
-                            ),
-                            hovertemplate="Exit (%{text}): %{y:.4g}<extra></extra>",
-                        ), row=1, col=1)
-
-    # Volume bars
-    fig.add_trace(go.Bar(
-        x=df["timestamp"], y=df["volume"],
-        name="Volume",
-        marker_color=vol_colors,
-        opacity=0.7,
-        showlegend=False,
-        hovertemplate="Vol: %{y:.4s}<extra></extra>",
-    ), row=2, col=1)
-
-    # ── Styling ─────────────────────────────────────────────────────────────
-    _axis = dict(
-        gridcolor=_TV_GRID, gridwidth=1,
-        color=_TV_TEXT, tickfont=dict(color=_TV_TEXT, size=10),
-        linecolor=_TV_GRID, zerolinecolor=_TV_GRID,
-        showspikes=True, spikemode="across", spikesnap="cursor",
-        spikecolor=_TV_TEXT, spikethickness=1, spikedash="dot",
-    )
-
-    fig.update_layout(
-        template="plotly_dark",
-        plot_bgcolor=_TV_BG,
-        paper_bgcolor=_TV_BG,
-        hovermode="x unified",
-        height=700,
-        margin=dict(l=0, r=70, t=10, b=0),
-        dragmode="pan",
-        xaxis_rangeslider_visible=False,
-        legend=dict(
-            orientation="h", y=1.02, x=0,
-            font=dict(size=11, color=_TV_TEXT),
-            bgcolor="rgba(0,0,0,0)",
-        ),
-        font=dict(color=_TV_TEXT, size=11),
-        hoverlabel=dict(
-            bgcolor="#1e2634", bordercolor=_TV_GRID,
-            font=dict(color=_TV_TEXT, size=12),
-        ),
-    )
-
-    fig.update_xaxes(**_axis)
-    fig.update_yaxes(**_axis)
-    fig.update_yaxes(side="right", row=1, col=1)
-    fig.update_yaxes(side="right", showgrid=False, tickformat=".4s", row=2, col=1)
-
-    st.plotly_chart(fig, use_container_width=True, config=_CHART_CONFIG)
-    st.caption(
-        f"Yahoo Finance · {_YF_SYMBOL.get(symbol, symbol)} · {interval} · "
-        f"EMA 20/50 · up to 200 candles"
-    )
 
 
 # ── Performance Overview (per-symbol live trade context) ──────────────────────────
@@ -2118,7 +2014,6 @@ def main() -> None:
     dispatch = {
         "Overview":      lambda: page_overview(stats, stats_err),
         "Performance":   page_performance,
-        "Live Chart":    page_chart,
         "Positions":     page_positions,
         "Signals":       page_signals,
         "Closed Trades": page_trades,

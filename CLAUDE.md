@@ -128,9 +128,8 @@ docs/                  — ad-hoc design notes
 
 | Tab | Endpoints |
 |---|---|
-| Overview | `/api/bot/stats`, `/api/pnl/history?days=30`, candles (Yahoo Finance) |
+| Overview | `/api/bot/stats`, `/api/bot/positions`, `/api/bot/signals`, `/api/bot/trades/closed`, `/api/pnl/history?days=30`, candles (Yahoo Finance) — **the single live chart** (TradingView Lightweight Charts): 1m default, live-trade overlay (entry/SL/TP/current-price lines + live PnL), signal/closed-trade markers, per-strategy signal toggle, and a Widescreen mode. Keeps native pinch-to-zoom. |
 | Performance | candles (Yahoo Finance), `/api/bot/signals`, `/api/bot/positions`, `/api/bot/trades/closed` — two sub-tabs (BTCUSDT, MES); per-symbol price chart with strategy-signal markers, open-trade entry/TP/SL price-lines, and live PnL |
-| Live Chart | candles (Yahoo Finance), `/api/bot/signals`, `/api/bot/trades/closed` |
 | Positions | `/api/bot/positions` |
 | Signals | `/api/bot/signals` |
 | Closed Trades | `/api/bot/trades/closed?limit=50` |
@@ -167,8 +166,9 @@ Important nullability notes for renderers:
 - `BotStats` returns **HTTP 503** on structural DB failure (S-067).
   The Streamlit `_fetch` helper surfaces this as a per-endpoint warning
   banner rather than crashing the page.
-- `Signal.{pattern,confidence,price}` are **nullable**. Skip rows with
-  null `pattern` rather than aggregating them under "unknown".
+- `Signal.{strategy,pattern,confidence,price}` are **nullable**. Skip rows with
+  null `pattern` rather than aggregating them under "unknown". The Overview
+  chart's per-strategy signal toggle treats a null `strategy` as "always show".
 - `ClosedTrade.{realizedPnlPct,closeReason,pattern}` are **nullable**.
 - `Position.{stopLoss,takeProfit,pattern}` are **nullable**.
 - `BacktestRun.{totalTrades,winningTrades,losingTrades}` are **nullable**
