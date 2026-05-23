@@ -1758,8 +1758,68 @@ def page_promotion() -> None:
 
 # ── Backtesting ──────────────────────────────────────────────────────────────────
 
+def _render_backtest_sweeps() -> None:
+    """Strategy-improvement / validation sweeps mirrored from the trainer VM.
+
+    These are the real backtests the operator runs (`run_backtest_sweep.sh`
+    on the trainer → `all_metrics.json` + `SUMMARY.md` per UTC date,
+    published to the live VM via the trainer mirror). SUMMARY.md is a
+    schema-stable comparable table, so it is the primary render; the raw
+    per-variant metrics sit behind a drill-down expander.
+    """
+    data, err = _fetch("/api/bot/backtests/sweeps")
+    if err:
+        st.warning(f"Backtest sweeps endpoint error: {err}")
+        return
+
+    env = data or {}
+    sweeps = env.get("sweeps") or []
+    if not env.get("present") or not sweeps:
+        st.info(
+            "No backtest sweeps mirrored yet. The strategy-improvement harness "
+            "(`scripts/ops/run_backtest_sweep.sh`) runs on the trainer VM and "
+            "publishes results to the dashboard via the trainer mirror — they "
+            "appear here once the next mirror cycle lands."
+        )
+        return
+
+    age = env.get("mirror_age_seconds")
+    if age is not None:
+        st.caption(f"Trainer mirror · updated {_fmt_age(age)} ago · {len(sweeps)} sweep(s)")
+
+    for i, sw in enumerate(sweeps):
+        date = sw.get("date", "—")
+        gen = sw.get("generated_at") or ""
+        label = f"\U0001f4ca  {date}" + (f"  ·  generated {gen}" if gen else "")
+        with st.expander(label, expanded=(i == 0)):
+            summary = sw.get("summary_md")
+            if summary:
+                st.markdown(summary)
+            else:
+                st.caption("No SUMMARY.md in this sweep.")
+
+            metrics = sw.get("metrics")
+            extra = sw.get("extra_metrics") or {}
+            if metrics is not None or extra:
+                with st.expander("Raw metrics (per-variant)"):
+                    if metrics is not None:
+                        st.json(metrics)
+                    for name, payload in extra.items():
+                        st.caption(name)
+                        st.json(payload)
+
+
 def page_backtesting() -> None:
     st.header("Backtesting")
+
+    _render_backtest_sweeps()
+
+    st.divider()
+    st.subheader("On-demand `/test` runs")
+    st.caption(
+        "Ad-hoc Telegram `/test <strategy>` backtests (the M5 consumer). "
+        "Empty unless the on-demand consumer is enabled on the live VM."
+    )
 
     col_f, col_l = st.columns([3, 1])
     with col_f:
@@ -1776,7 +1836,7 @@ def page_backtesting() -> None:
         st.warning(f"Backtests endpoint error: {err}")
         return
     if not rows:
-        st.info("No backtest results yet. Run `python -m src.backtest.run_backtest` to populate.")
+        st.caption("No on-demand `/test` runs recorded.")
         return
 
     df = pd.DataFrame(rows)
