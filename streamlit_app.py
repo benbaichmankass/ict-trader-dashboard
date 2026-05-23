@@ -2072,15 +2072,25 @@ def page_data_explorer() -> None:
         st.caption("No tables found.")
         return
 
-    with st.expander("Schema overview", expanded=False):
-        st.dataframe(
-            pd.DataFrame([
-                {"Table": t["name"], "Rows": t.get("rows"),
-                 "Columns": len(t.get("columns") or [])}
-                for t in tables
-            ]),
-            hide_index=True, use_container_width=True,
-        )
+    st.subheader("Schema")
+    st.caption(
+        f"{len(tables)} tables in `{meta.get('db', 'trade_journal.db')}` · "
+        "expand a table to see its exact columns. ⚠️ marks empty tables."
+    )
+    for t in tables:
+        rows = t.get("rows")
+        tcols = t.get("columns") or []
+        flag = "  ⚠️ empty" if rows == 0 else ""
+        with st.expander(
+            f"{t['name']} — {rows if rows is not None else '?'} rows · {len(tcols)} cols{flag}"
+        ):
+            st.dataframe(
+                pd.DataFrame([
+                    {"Column": c.get("name"), "Type": c.get("type")} for c in tcols
+                ]),
+                hide_index=True, use_container_width=True,
+            )
+    st.divider()
 
     names = [t["name"] for t in tables]
     sel = st.selectbox("Table", names, key="dx_table")
