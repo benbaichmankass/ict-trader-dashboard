@@ -138,7 +138,7 @@ docs/                  — ad-hoc design notes
 | Promotion | `/api/bot/shadow/stats`, `/api/bot/shadow/drift`, `/api/bot/trades/scores`, `/api/bot/trades/closed` — 🚦 shadow-model promotion-readiness tracker (per-model volume, days-in-shadow, score range, "wired" check, KS/PSI drift, win/loss score edge) |
 | Backtesting | `/api/bot/backtests/sweeps` (strategy-improvement / validation sweeps mirrored from the trainer VM — renders each run's `SUMMARY.md` table + raw per-variant metrics), `/api/bot/backtests` (on-demand `/test` runs) |
 | Strategies | `/api/bot/strategies` — live-runtime view: pipeline-running banner + per-strategy status (Running / Loaded·stale / Configured·not-loaded / Disabled) and account routing (which accounts run it, live/dry), plus stats, config, changelog |
-| Data Explorer | `/api/bot/db/tables`, `/api/bot/db/table/{name}` — read-only browse of `trade_journal.db`: schema overview, table picker, per-column filter (eq/ne/gt/lt/gte/lte/like), ordering, and pagination |
+| Data Explorer | `/api/bot/db/tables`, `/api/bot/db/table/{name}` — read-only browse of the **federated canonical store**: the live trader's `trade_journal.db` AND the trainer-store sidecar `trainer_store.db` (trainer/ML lifecycle data: training_cycle, dataset_builds, db_pulls, model_registry, experiment_runs, backtest_sweeps). Each table is tagged with its owning `db`; reads pass `?db=` so the API routes to the right DB. Schema overview, table picker, per-column filter (eq/ne/gt/lt/gte/lte/like), ordering, and pagination |
 | Health | `/api/bot/health/services`, `/api/bot/health/latest` |
 | Logs | `/api/bot/logs` |
 | Demo | `/api/bot/positions`, `/api/bot/trades/closed`, `/api/pnl/history` |

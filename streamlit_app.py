@@ -2055,8 +2055,10 @@ def page_strategies() -> None:
 def page_data_explorer() -> None:
     st.header("Data Explorer")
     st.caption(
-        "Read-only browse of the bot's `trade_journal.db`. Pick a table, "
-        "filter by a column, and page through rows. Nothing here can write."
+        "Read-only browse of the **federated canonical store** — the live "
+        "trader's `trade_journal.db` and the trainer-store sidecar "
+        "`trainer_store.db` (trainer/ML lifecycle data). Pick a table, filter "
+        "by a column, and page through rows. Nothing here can write."
     )
 
     meta, err = _fetch("/api/bot/db/tables")
@@ -2073,16 +2075,19 @@ def page_data_explorer() -> None:
         return
 
     st.subheader("Schema")
+    dbs = meta.get("dbs") or [meta.get("db", "trade_journal")]
     st.caption(
-        f"{len(tables)} tables in `{meta.get('db', 'trade_journal.db')}` · "
-        "expand a table to see its exact columns. ⚠️ marks empty tables."
+        f"{len(tables)} tables across {len(dbs)} DB(s) ({', '.join(dbs)}) · "
+        "the `[db]` tag shows which DB owns each table · expand a table to "
+        "see its exact columns. ⚠️ marks empty tables."
     )
     for t in tables:
         rows = t.get("rows")
         tcols = t.get("columns") or []
         flag = "  ⚠️ empty" if rows == 0 else ""
+        db_tag = t.get("db", "trade_journal")
         with st.expander(
-            f"{t['name']} — {rows if rows is not None else '?'} rows · {len(tcols)} cols{flag}"
+            f"{t['name']}  `[{db_tag}]` — {rows if rows is not None else '?'} rows · {len(tcols)} cols{flag}"
         ):
             st.dataframe(
                 pd.DataFrame([
@@ -2123,6 +2128,9 @@ def page_data_explorer() -> None:
     offset = (page - 1) * int(limit)
 
     params: dict[str, Any] = {"limit": limit, "offset": offset}
+    # Route the read to the DB that owns the selected table (federation).
+    if tinfo.get("db"):
+        params["db"] = tinfo["db"]
     if order_by != "(none)":
         params["order_by"] = order_by
         params["order_dir"] = order_dir
