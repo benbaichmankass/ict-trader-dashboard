@@ -195,13 +195,13 @@ def fmt_num(x: float | None) -> str:
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 PAGES = [
-    "Overview", "Performance", "Positions", "Signals",
+    "Overview", "Performance", "Accounts", "Positions", "Signals",
     "Closed Trades", "Models", "Promotion", "Backtesting", "Strategies",
     "Health", "Logs", "Demo",
 ]
 
 PAGE_ICONS = {
-    "Overview": "\U0001f3e0", "Performance": "\U0001f4c8",
+    "Overview": "\U0001f3e0", "Performance": "\U0001f4c8", "Accounts": "\U0001f4b3",
     "Positions": "\U0001f4cb", "Signals": "⚡", "Closed Trades": "✅",
     "Models": "\U0001f9e0", "Promotion": "\U0001f6a6", "Backtesting": "\U0001f52c",
     "Strategies": "♟️", "Health": "\U0001f48a", "Logs": "\U0001f4dc", "Demo": "\U0001f9ea",
@@ -839,6 +839,98 @@ def page_performance() -> None:
         render_performance_tab("BTCUSDT")
     with tab_mes:
         render_performance_tab("MES")
+
+
+# ── Accounts ────────────────────────────────────────────────────────────────────
+
+def page_accounts() -> None:
+    st.header("Accounts")
+    st.caption(
+        "Every configured account — live/dry status, balance, PnL, and a "
+        "recent-trades log. All values are read live from the bot; nothing here "
+        "is hardcoded."
+    )
+
+    cfg, cfg_err = _fetch("/api/bot/config")
+    if cfg_err:
+        st.warning(f"Config endpoint error: {cfg_err}")
+        return
+    cfg = cfg or {}
+    accounts = cfg.get("accounts") or []
+    trading_mode = cfg.get("trading_mode") or {}
+    live_map = trading_mode.get("live_per_account") or {}
+    if trading_mode.get("halted"):
+        st.error("⛔ Trading halted — a halt flag is present on the VM.")
+    if not accounts:
+        st.info("No accounts configured.")
+        return
+
+    bal_env, _ = _fetch("/api/bot/accounts/balances")
+    bal_env = bal_env or {}
+    balances = bal_env.get("balances") or {}
+    if bal_env.get("as_of"):
+        st.caption(f"Balances tracked by the bot · snapshot as of {bal_env['as_of']}")
+
+    positions, _ = _fetch("/api/bot/positions")
+    positions = positions or []
+
+    since_7d = (dt.datetime.utcnow() - dt.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    for acc in accounts:
+        aid       = acc.get("id", "?")
+        is_live   = bool(live_map.get(aid, False))
+        exchange  = acc.get("exchange", "—")
+        market    = acc.get("market_type", "—")
+        strategies = acc.get("strategies") or []
+
+        pill = "\U0001f7e2 LIVE" if is_live else "⚫ DRY"
+        st.subheader(f"{pill} · {aid}")
+        st.caption(
+            f"{exchange} · {market} · "
+            f"strategies: {', '.join(strategies) if strategies else '— (none assigned)'}"
+        )
+
+        bal_val = (balances.get(aid) or {}).get("balance")
+        acc_positions = [p for p in positions if p.get("account") == aid]
+        unrealized = sum((p.get("unrealizedPnl") or 0) for p in acc_positions)
+
+        # Realized PnL (30d) via the no-session, account-filtered history endpoint.
+        realized = None
+        ph, _ = _fetch(f"/api/pnl/history?days=30&account_id={aid}")
+        if ph:
+            try:
+                realized = sum(float(r.get("realizedPnl") or 0) for r in ph)
+            except (TypeError, ValueError):
+                realized = None
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Balance",        fmt_usd(bal_val) if bal_val is not None else "—")
+        m2.metric("Realized (30d)", fmt_usd(realized))
+        m3.metric("Unrealized",     fmt_usd(unrealized) if acc_positions else "—")
+        m4.metric("Open trades",    len(acc_positions))
+
+        with st.expander("Recent trades (last 7 days)"):
+            trades, terr = _fetch(
+                f"/api/bot/trades/closed?limit=100&account_id={aid}&since={since_7d}"
+            )
+            if terr:
+                st.warning(terr)
+            elif not trades:
+                st.caption("No closed trades in the last 7 days.")
+            else:
+                tdf = pd.DataFrame(trades)
+                col_map = {
+                    "symbol": "Symbol", "side": "Side", "pattern": "Strategy",
+                    "entryPrice": "Entry", "exitPrice": "Exit",
+                    "realizedPnl": "PnL", "realizedPnlPct": "PnL %",
+                    "closeReason": "Close", "openedAt": "Opened", "closedAt": "Closed",
+                }
+                cols = [c for c in col_map if c in tdf.columns]
+                st.dataframe(
+                    tdf[cols].rename(columns=col_map) if cols else tdf,
+                    hide_index=True, use_container_width=True,
+                )
+        st.divider()
 
 
 # ── Positions ───────────────────────────────────────────────────────────────────
@@ -2014,6 +2106,7 @@ def main() -> None:
     dispatch = {
         "Overview":      lambda: page_overview(stats, stats_err),
         "Performance":   page_performance,
+        "Accounts":      page_accounts,
         "Positions":     page_positions,
         "Signals":       page_signals,
         "Closed Trades": page_trades,

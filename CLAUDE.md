@@ -130,6 +130,7 @@ docs/                  — ad-hoc design notes
 |---|---|
 | Overview | `/api/bot/stats`, `/api/bot/positions`, `/api/bot/signals`, `/api/bot/trades/closed`, `/api/pnl/history?days=30`, candles (Yahoo Finance) — **the single live chart** (TradingView Lightweight Charts): 1m default, live-trade overlay (entry/SL/TP/current-price lines + live PnL), signal/closed-trade markers, per-strategy signal toggle, and a Widescreen mode. Keeps native pinch-to-zoom. |
 | Performance | candles (Yahoo Finance), `/api/bot/signals`, `/api/bot/positions`, `/api/bot/trades/closed` — two sub-tabs (BTCUSDT, MES); per-symbol price chart with strategy-signal markers, open-trade entry/TP/SL price-lines, and live PnL |
+| Accounts | `/api/bot/config`, `/api/bot/accounts/balances`, `/api/pnl/history?account_id=`, `/api/bot/positions`, `/api/bot/trades/closed?account_id=` — one card per account: live/dry status, tracked balance (snapshot), realized (30d) + unrealized PnL, open-trade count, and an expandable 7-day trade log. Uses the **no-session** `/api/pnl/history` (not the session-gated `/api/pnl`). |
 | Positions | `/api/bot/positions` |
 | Signals | `/api/bot/signals` |
 | Closed Trades | `/api/bot/trades/closed?limit=50` |
