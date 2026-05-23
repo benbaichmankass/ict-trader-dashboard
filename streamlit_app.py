@@ -14,13 +14,13 @@ import datetime as dt
 import os
 import time
 from typing import Any
+from urllib.parse import quote, urlencode
 
 import pandas as pd
 import plotly.graph_objects as go
 import requests
 import streamlit as st
 import yfinance as yf
-from plotly.subplots import make_subplots
 
 try:
     from streamlit_lightweight_charts import renderLightweightCharts as _render_lc
@@ -196,16 +196,17 @@ def fmt_num(x: float | None) -> str:
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 PAGES = [
-    "Overview", "Performance", "Live Chart", "Positions", "Signals",
+    "Overview", "Performance", "Accounts", "Positions", "Signals",
     "Closed Trades", "Models", "Promotion", "Backtesting", "Strategies",
-    "Health", "Logs", "Demo",
+    "Data Explorer", "Health", "Logs", "Demo",
 ]
 
 PAGE_ICONS = {
-    "Overview": "\U0001f3e0", "Performance": "\U0001f4c8", "Live Chart": "\U0001f4ca",
+    "Overview": "\U0001f3e0", "Performance": "\U0001f4c8", "Accounts": "\U0001f4b3",
     "Positions": "\U0001f4cb", "Signals": "⚡", "Closed Trades": "✅",
     "Models": "\U0001f9e0", "Promotion": "\U0001f6a6", "Backtesting": "\U0001f52c",
-    "Strategies": "♟️", "Health": "\U0001f48a", "Logs": "\U0001f4dc", "Demo": "\U0001f9ea",
+    "Strategies": "♟️", "Data Explorer": "\U0001f5c3", "Health": "\U0001f48a",
+    "Logs": "\U0001f4dc", "Demo": "\U0001f9ea",
 }
 
 
@@ -337,33 +338,90 @@ def _lc_markers(
     return markers
 
 
+def _lc_price_lines(
+    positions: list[dict] | None,
+    df:        pd.DataFrame,
+    symbol:    str,
+) -> list[dict]:
+    """TradingView-style horizontal price lines for the overview chart.
+
+    Draws the current price (last candle close) plus, for every OPEN
+    position on *symbol*, its entry / stop-loss / take-profit levels —
+    the same overlay TradingView shows for a live position. Each is
+    nullable on the bot side (older rows), so missing levels are simply
+    skipped rather than drawn at 0.
+    """
+    lines: list[dict] = []
+
+    # Current price — subtle dashed reference line.
+    try:
+        last_close = float(df["close"].iloc[-1])
+        lines.append({
+            "price": last_close, "color": "#7f8da3", "lineWidth": 1,
+            "lineStyle": 2, "axisLabelVisible": True, "title": "last",
+        })
+    except (KeyError, IndexError, ValueError, TypeError):
+        pass
+
+    for p in positions or []:
+        if p.get("symbol") and p.get("symbol") != symbol:
+            continue
+        side  = str(p.get("side", "")).upper()
+        entry = p.get("entryPrice")
+        sl    = p.get("stopLoss")
+        tp    = p.get("takeProfit")
+        if entry is not None:
+            lines.append({
+                "price": float(entry), "color": _TV_ENTRY, "lineWidth": 2,
+                "lineStyle": 0, "axisLabelVisible": True,
+                "title": f"{side or 'ENTRY'} entry",
+            })
+        if sl is not None:
+            lines.append({
+                "price": float(sl), "color": _TV_RED, "lineWidth": 1,
+                "lineStyle": 2, "axisLabelVisible": True, "title": "SL",
+            })
+        if tp is not None:
+            lines.append({
+                "price": float(tp), "color": _TV_GREEN, "lineWidth": 1,
+                "lineStyle": 2, "axisLabelVisible": True, "title": "TP",
+            })
+    return lines
+
+
 def render_overview_chart(
     df: pd.DataFrame,
-    signals: list[dict] | None,
-    trades:  list[dict] | None,
-    symbol:  str,
+    signals:   list[dict] | None,
+    trades:    list[dict] | None,
+    symbol:    str,
+    positions: list[dict] | None = None,
+    height:    int = _LC_HEIGHT,
+    key:       str = "overview_lc_chart",
 ) -> None:
-    """Render a TradingView Lightweight Charts candlestick on the overview tab.
+    """Render the single TradingView Lightweight Charts candlestick.
+
+    Overlays live-trade context like TradingView: signal/trade markers,
+    plus entry/SL/TP/current-price horizontal lines for open positions.
 
     Extending:
-      - Second series (e.g. equity curve): append a second dict to the
-        "series" list with type "Line" and its own "data" list.
       - Marker tweaks: edit _lc_markers() above.
-      - Height / theme: change _LC_HEIGHT / _TV_BG / _LC_GRID_* at the top.
+      - Price-line tweaks: edit _lc_price_lines() above.
+      - Theme: change _TV_BG / _LC_GRID_* at the top.
     """
     if not _LC_AVAILABLE:
         st.warning(
-            "Install `streamlit-lightweight-charts` to enable the overview chart.\n"
+            "Install `streamlit-lightweight-charts` to enable the chart.\n"
             "`pip install streamlit-lightweight-charts`"
         )
         return
 
     candle_data = _lc_candle_data(df)
     markers     = _lc_markers(signals, trades, symbol)
+    price_lines = _lc_price_lines(positions, df, symbol)
 
     chart_opts = [{
         "chart": {
-            "height": _LC_HEIGHT,
+            "height": height,
             "layout": {
                 "background": {"type": "solid", "color": _TV_BG},
                 "textColor":  _TV_TEXT,
@@ -404,11 +462,12 @@ def render_overview_chart(
                 "wickUpColor":   _TV_GREEN,
                 "wickDownColor": _TV_RED,
             },
-            "markers": markers,
+            "markers":    markers,
+            "priceLines": price_lines,
         }],
     }]
 
-    _render_lc(chart_opts, key="overview_lc_chart")
+    _render_lc(chart_opts, key=key)
 
 
 # ── Overview ──────────────────────────────────────────────────────────────────
@@ -434,19 +493,58 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         h2.metric("Memory", fmt_pct(vm.get("memory")))
         h3.metric("Disk",   fmt_pct(vm.get("disk")))
 
-    # ── Price chart ─────────────────────────────────────────────────────────────
-    st.subheader("Price Overview")
-    # Two rows of two so controls stack cleanly on narrow / mobile screens
+    # ── Live price chart (single TradingView-style chart) ───────────────────────
+    st.subheader("Price Chart")
+    # Controls stack full-width on mobile (see the <640px CSS rule).
     oc1, oc2 = st.columns(2)
     with oc1:
-        ov_symbol   = st.selectbox("Symbol",   CHART_SYMBOLS,   key="ov_symbol")
+        ov_symbol = st.selectbox("Symbol", CHART_SYMBOLS, key="ov_symbol")
     with oc2:
-        ov_interval = st.selectbox("Interval", CHART_INTERVALS, index=2, key="ov_interval")
-    oc3, oc4, _ = st.columns([1, 1, 4])
-    with oc3:
-        ov_signals  = st.toggle("Signals", value=True, key="ov_signals")
-    with oc4:
-        ov_trades   = st.toggle("Trades",  value=True, key="ov_trades")
+        ov_interval = st.selectbox(
+            "Interval", CHART_INTERVALS,
+            index=CHART_INTERVALS.index("1m") if "1m" in CHART_INTERVALS else 0,
+            key="ov_interval",
+        )
+    tg1, tg2, tg3, tg4 = st.columns(4)
+    with tg1:
+        ov_live = st.toggle(
+            "Live trades", value=True, key="ov_live",
+            help="Overlay open-position entry / SL / TP / current-price lines",
+        )
+    with tg2:
+        ov_signals = st.toggle("Signals", value=True, key="ov_signals")
+    with tg3:
+        ov_trades = st.toggle(
+            "Closed", value=False, key="ov_trades",
+            help="Recent closed-trade entry/exit markers",
+        )
+    with tg4:
+        ov_wide = st.toggle(
+            "Widescreen", value=False, key="ov_wide",
+            help="Near-fullscreen view — hides the sidebar so the chart fills the screen",
+        )
+
+    # Open positions drive both the live-trade overlay and the live-PnL readout.
+    positions, _ = _fetch("/api/bot/positions")
+    sym_positions = [p for p in (positions or []) if p.get("symbol") == ov_symbol]
+    if sym_positions:
+        net_pnl = sum((p.get("unrealizedPnl") or 0) for p in sym_positions)
+        pc1, pc2 = st.columns([1, 3])
+        pc1.metric(f"Live PnL · {ov_symbol}", fmt_usd(net_pnl), delta=round(net_pnl, 2))
+        pc2.caption(" · ".join(
+            f"{str(p.get('side', '')).upper()} {p.get('qty', '?')} @ {p.get('entryPrice', '?')}"
+            for p in sym_positions
+        ))
+
+    if ov_wide:
+        # Near-fullscreen: hide the sidebar + strip page padding so the chart
+        # fills the viewport. Pure CSS (mobile-safe); re-evaluated each run, so
+        # untoggling restores the sidebar on the next interaction.
+        st.html(
+            "<style>[data-testid='stSidebar']{display:none;}"
+            ".main .block-container{padding:0.4rem 0.6rem;max-width:100%;}</style>"
+        )
+    chart_height = 820 if ov_wide else _LC_HEIGHT
 
     df, candles_err = _fetch_candles(ov_symbol, ov_interval)
     if candles_err:
@@ -457,14 +555,33 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         sig_data = None
         if ov_signals:
             sig_data, _ = _fetch("/api/bot/signals")
+            # Per-strategy signal filter — only when the endpoint tags signals
+            # with their strategy (added in the bot's /api/bot/signals route).
+            strategies = sorted({
+                s.get("strategy") for s in (sig_data or []) if s.get("strategy")
+            })
+            if strategies:
+                chosen = st.multiselect(
+                    "Signal strategies", strategies, default=strategies,
+                    key="ov_sig_strats",
+                    help="Toggle which strategies' entry signals are drawn",
+                )
+                sig_data = [
+                    s for s in sig_data
+                    if not s.get("strategy") or s.get("strategy") in chosen
+                ]
         trade_data = None
         if ov_trades:
             trade_data, _ = _fetch(f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}")
 
-        render_overview_chart(df, sig_data, trade_data, ov_symbol)
+        render_overview_chart(
+            df, sig_data, trade_data, ov_symbol,
+            positions=sym_positions if ov_live else None,
+            height=chart_height,
+        )
         st.caption(
             f"Yahoo Finance · {_YF_SYMBOL.get(ov_symbol, ov_symbol)} · {ov_interval} · "
-            f"up to 200 candles · auto-refreshes every {POLL_INTERVAL_S}s"
+            f"up to 200 candles · pinch to zoom · auto-refreshes every {POLL_INTERVAL_S}s"
         )
 
     # ── PnL history (secondary) ─────────────────────────────────────────────────
@@ -482,231 +599,12 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
                 st.json(pnl)
 
 
-# ── Live Chart ─────────────────────────────────────────────────────────────────
+# ── Chart symbol / interval choices (shared by the Overview chart) ──────────────
 
 CHART_SYMBOLS   = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
 CHART_INTERVALS = list(_YF_PARAMS.keys())
 
 
-def page_chart() -> None:
-    st.header("Live Chart")
-
-    # ── Controls ─────────────────────────────────────────────────────────────
-    r1c1, r1c2 = st.columns([3, 2])
-    with r1c1:
-        symbol = st.selectbox("Symbol", CHART_SYMBOLS)
-    with r1c2:
-        interval = st.selectbox("Interval", CHART_INTERVALS, index=2)
-
-    t1, t2, t3, t4 = st.columns(4)
-    show_ema20   = t1.toggle("EMA 20",  value=True)
-    show_ema50   = t2.toggle("EMA 50",  value=True)
-    show_signals = t3.toggle("Signals", value=False)
-    show_trades  = t4.toggle("Trades",  value=False)
-
-    # ── Fetch candles ─────────────────────────────────────────────────────────────
-    df, candles_err = _fetch_candles(symbol, interval)
-    if candles_err:
-        st.warning(f"Candles unavailable: {candles_err}")
-        return
-    if df is None or df.empty:
-        st.caption("No candle data.")
-        return
-
-    df["ema20"] = df["close"].ewm(span=20, adjust=False).mean()
-    df["ema50"] = df["close"].ewm(span=50, adjust=False).mean()
-    vol_colors = [
-        _TV_GREEN if c >= o else _TV_RED
-        for c, o in zip(df["close"], df["open"])
-    ]
-
-    # ── Build figure ─────────────────────────────────────────────────────────────
-    fig = make_subplots(
-        rows=2, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.02,
-        row_heights=[0.75, 0.25],
-    )
-
-    fig.add_trace(go.Candlestick(
-        x=df["timestamp"],
-        open=df["open"], high=df["high"],
-        low=df["low"],   close=df["close"],
-        name=symbol,
-        increasing=dict(line=dict(color=_TV_GREEN, width=1), fillcolor=_TV_GREEN),
-        decreasing=dict(line=dict(color=_TV_RED,   width=1), fillcolor=_TV_RED),
-    ), row=1, col=1)
-
-    if show_ema20:
-        fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["ema20"],
-            name="EMA 20",
-            line=dict(color=_TV_EMA20, width=1.5),
-            hovertemplate="EMA 20: %{y:.4g}<extra></extra>",
-        ), row=1, col=1)
-
-    if show_ema50:
-        fig.add_trace(go.Scatter(
-            x=df["timestamp"], y=df["ema50"],
-            name="EMA 50",
-            line=dict(color=_TV_EMA50, width=1.5),
-            hovertemplate="EMA 50: %{y:.4g}<extra></extra>",
-        ), row=1, col=1)
-
-    # ── Signals layer ─────────────────────────────────────────────────────────────
-    # API shape: {timestamp, symbol, side ("buy"/"sell"), price, pattern, confidence}
-    if show_signals:
-        signals, sig_err = _fetch("/api/bot/signals")
-        if sig_err:
-            st.caption(f"Signals: {sig_err}")
-        elif signals:
-            sdf = pd.DataFrame(signals)
-            if "symbol" in sdf.columns:
-                sdf = sdf[sdf["symbol"] == symbol]
-            if not sdf.empty and "timestamp" in sdf.columns:
-                sdf["timestamp"] = pd.to_datetime(sdf["timestamp"], errors="coerce", utc=True)
-                sdf["timestamp"] = sdf["timestamp"].dt.tz_localize(None)
-                sdf = sdf.dropna(subset=["timestamp"])
-            if not sdf.empty:
-                last_price = float(df["close"].iloc[-1])
-                for side_val, marker_sym, color, label in [
-                    ("buy",  "triangle-up",   _TV_GREEN, "Long"),
-                    ("sell", "triangle-down",  _TV_RED,   "Short"),
-                ]:
-                    subset = sdf[sdf["side"] == side_val] if "side" in sdf.columns else pd.DataFrame()
-                    if not subset.empty:
-                        prices = (
-                            subset["price"].fillna(last_price)
-                            if "price" in subset.columns
-                            else pd.Series([last_price] * len(subset))
-                        )
-                        hover = (
-                            subset["pattern"].fillna("").astype(str)
-                            if "pattern" in subset.columns
-                            else pd.Series([""] * len(subset))
-                        )
-                        fig.add_trace(go.Scatter(
-                            x=subset["timestamp"],
-                            y=prices,
-                            mode="markers",
-                            name=label,
-                            text=hover,
-                            marker=dict(
-                                symbol=marker_sym, size=14, color=color,
-                                line=dict(width=1, color="white"),
-                            ),
-                            hovertemplate=f"{label} %{{text}}: %{{y:.4g}}<extra></extra>",
-                        ), row=1, col=1)
-
-    # ── Trades layer ─────────────────────────────────────────────────────────────
-    # API shape: {openedAt, closedAt, entryPrice, exitPrice, realizedPnl,
-    #             side ("buy"/"sell"), symbol, closeReason, qty}
-    if show_trades:
-        trades, tr_err = _fetch(f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}")
-        if tr_err:
-            st.caption(f"Trades: {tr_err}")
-        elif trades:
-            tdf = pd.DataFrame(trades)
-            if "symbol" in tdf.columns:
-                tdf = tdf[tdf["symbol"] == symbol]
-
-            if not tdf.empty:
-                pnl_col = "realizedPnl" if "realizedPnl" in tdf.columns else None
-
-                # Entry markers
-                if "openedAt" in tdf.columns and "entryPrice" in tdf.columns:
-                    tdf["openedAt"] = pd.to_datetime(tdf["openedAt"], errors="coerce", utc=True)
-                    tdf["openedAt"] = tdf["openedAt"].dt.tz_localize(None)
-                    sub = tdf.dropna(subset=["openedAt", "entryPrice"])
-                    if not sub.empty:
-                        close_reasons = sub["closeReason"].fillna("") if "closeReason" in sub.columns else pd.Series([""] * len(sub))
-                        fig.add_trace(go.Scatter(
-                            x=sub["openedAt"],
-                            y=sub["entryPrice"],
-                            mode="markers",
-                            name="Entry",
-                            text=close_reasons,
-                            marker=dict(
-                                symbol="circle", size=9, color=_TV_ENTRY,
-                                line=dict(width=1, color="white"),
-                            ),
-                            hovertemplate="Entry: %{y:.4g}<extra></extra>",
-                        ), row=1, col=1)
-
-                # Exit markers
-                if "closedAt" in tdf.columns and "exitPrice" in tdf.columns:
-                    tdf["closedAt"] = pd.to_datetime(tdf["closedAt"], errors="coerce", utc=True)
-                    tdf["closedAt"] = tdf["closedAt"].dt.tz_localize(None)
-                    sub = tdf.dropna(subset=["closedAt", "exitPrice"])
-                    if not sub.empty:
-                        exit_colors = [
-                            _TV_GREEN if (pnl_col and (row.get(pnl_col) or 0) > 0) else _TV_RED
-                            for _, row in sub.iterrows()
-                        ]
-                        reasons = sub["closeReason"].fillna("") if "closeReason" in sub.columns else pd.Series([""] * len(sub))
-                        fig.add_trace(go.Scatter(
-                            x=sub["closedAt"],
-                            y=sub["exitPrice"],
-                            mode="markers",
-                            name="Exit",
-                            text=reasons,
-                            marker=dict(
-                                symbol="x", size=10, color=exit_colors,
-                                line=dict(width=2),
-                            ),
-                            hovertemplate="Exit (%{text}): %{y:.4g}<extra></extra>",
-                        ), row=1, col=1)
-
-    # Volume bars
-    fig.add_trace(go.Bar(
-        x=df["timestamp"], y=df["volume"],
-        name="Volume",
-        marker_color=vol_colors,
-        opacity=0.7,
-        showlegend=False,
-        hovertemplate="Vol: %{y:.4s}<extra></extra>",
-    ), row=2, col=1)
-
-    # ── Styling ─────────────────────────────────────────────────────────────
-    _axis = dict(
-        gridcolor=_TV_GRID, gridwidth=1,
-        color=_TV_TEXT, tickfont=dict(color=_TV_TEXT, size=10),
-        linecolor=_TV_GRID, zerolinecolor=_TV_GRID,
-        showspikes=True, spikemode="across", spikesnap="cursor",
-        spikecolor=_TV_TEXT, spikethickness=1, spikedash="dot",
-    )
-
-    fig.update_layout(
-        template="plotly_dark",
-        plot_bgcolor=_TV_BG,
-        paper_bgcolor=_TV_BG,
-        hovermode="x unified",
-        height=700,
-        margin=dict(l=0, r=70, t=10, b=0),
-        dragmode="pan",
-        xaxis_rangeslider_visible=False,
-        legend=dict(
-            orientation="h", y=1.02, x=0,
-            font=dict(size=11, color=_TV_TEXT),
-            bgcolor="rgba(0,0,0,0)",
-        ),
-        font=dict(color=_TV_TEXT, size=11),
-        hoverlabel=dict(
-            bgcolor="#1e2634", bordercolor=_TV_GRID,
-            font=dict(color=_TV_TEXT, size=12),
-        ),
-    )
-
-    fig.update_xaxes(**_axis)
-    fig.update_yaxes(**_axis)
-    fig.update_yaxes(side="right", row=1, col=1)
-    fig.update_yaxes(side="right", showgrid=False, tickformat=".4s", row=2, col=1)
-
-    st.plotly_chart(fig, use_container_width=True, config=_CHART_CONFIG)
-    st.caption(
-        f"Yahoo Finance · {_YF_SYMBOL.get(symbol, symbol)} · {interval} · "
-        f"EMA 20/50 · up to 200 candles"
-    )
 
 
 # ── Performance Overview (per-symbol live trade context) ──────────────────────────
@@ -945,6 +843,98 @@ def page_performance() -> None:
         render_performance_tab("MES")
 
 
+# ── Accounts ────────────────────────────────────────────────────────────────────
+
+def page_accounts() -> None:
+    st.header("Accounts")
+    st.caption(
+        "Every configured account — live/dry status, balance, PnL, and a "
+        "recent-trades log. All values are read live from the bot; nothing here "
+        "is hardcoded."
+    )
+
+    cfg, cfg_err = _fetch("/api/bot/config")
+    if cfg_err:
+        st.warning(f"Config endpoint error: {cfg_err}")
+        return
+    cfg = cfg or {}
+    accounts = cfg.get("accounts") or []
+    trading_mode = cfg.get("trading_mode") or {}
+    live_map = trading_mode.get("live_per_account") or {}
+    if trading_mode.get("halted"):
+        st.error("⛔ Trading halted — a halt flag is present on the VM.")
+    if not accounts:
+        st.info("No accounts configured.")
+        return
+
+    bal_env, _ = _fetch("/api/bot/accounts/balances")
+    bal_env = bal_env or {}
+    balances = bal_env.get("balances") or {}
+    if bal_env.get("as_of"):
+        st.caption(f"Balances tracked by the bot · snapshot as of {bal_env['as_of']}")
+
+    positions, _ = _fetch("/api/bot/positions")
+    positions = positions or []
+
+    since_7d = (dt.datetime.utcnow() - dt.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    for acc in accounts:
+        aid       = acc.get("id", "?")
+        is_live   = bool(live_map.get(aid, False))
+        exchange  = acc.get("exchange", "—")
+        market    = acc.get("market_type", "—")
+        strategies = acc.get("strategies") or []
+
+        pill = "\U0001f7e2 LIVE" if is_live else "⚫ DRY"
+        st.subheader(f"{pill} · {aid}")
+        st.caption(
+            f"{exchange} · {market} · "
+            f"strategies: {', '.join(strategies) if strategies else '— (none assigned)'}"
+        )
+
+        bal_val = (balances.get(aid) or {}).get("balance")
+        acc_positions = [p for p in positions if p.get("account") == aid]
+        unrealized = sum((p.get("unrealizedPnl") or 0) for p in acc_positions)
+
+        # Realized PnL (30d) via the no-session, account-filtered history endpoint.
+        realized = None
+        ph, _ = _fetch(f"/api/pnl/history?days=30&account_id={aid}")
+        if ph:
+            try:
+                realized = sum(float(r.get("realizedPnl") or 0) for r in ph)
+            except (TypeError, ValueError):
+                realized = None
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Balance",        fmt_usd(bal_val) if bal_val is not None else "—")
+        m2.metric("Realized (30d)", fmt_usd(realized))
+        m3.metric("Unrealized",     fmt_usd(unrealized) if acc_positions else "—")
+        m4.metric("Open trades",    len(acc_positions))
+
+        with st.expander("Recent trades (last 7 days)"):
+            trades, terr = _fetch(
+                f"/api/bot/trades/closed?limit=100&account_id={aid}&since={since_7d}"
+            )
+            if terr:
+                st.warning(terr)
+            elif not trades:
+                st.caption("No closed trades in the last 7 days.")
+            else:
+                tdf = pd.DataFrame(trades)
+                col_map = {
+                    "symbol": "Symbol", "side": "Side", "pattern": "Strategy",
+                    "entryPrice": "Entry", "exitPrice": "Exit",
+                    "realizedPnl": "PnL", "realizedPnlPct": "PnL %",
+                    "closeReason": "Close", "openedAt": "Opened", "closedAt": "Closed",
+                }
+                cols = [c for c in col_map if c in tdf.columns]
+                st.dataframe(
+                    tdf[cols].rename(columns=col_map) if cols else tdf,
+                    hide_index=True, use_container_width=True,
+                )
+        st.divider()
+
+
 # ── Positions ───────────────────────────────────────────────────────────────────
 
 def page_positions() -> None:
@@ -1113,10 +1103,31 @@ def _trainer_status_banner(payload: dict) -> None:
     waiting_for_next_cycle = timer_running and cycles_24h == 0 and not last_failed
     truly_idle = (not timer_running) and cycles_24h == 0
 
+    # The trainer service is a *oneshot* run by ict-trainer.timer, so its
+    # steady state between scheduled cycles is `inactive` — that is healthy,
+    # not stopped. Showing the raw "inactive / enabled" alarmed at a glance
+    # (it reads like the trainer is down when it's just waiting for its
+    # timer). Relabel to a self-explanatory value and keep the raw systemd
+    # state in the tooltip.
+    if svc_active == "active":
+        svc_display = "running"
+    elif svc_active == "inactive" and timer_running:
+        svc_display = "idle · scheduled"
+    else:
+        svc_display = svc_active or "?"
+
     cols = st.columns(4)
     cols[0].metric("Mirror age", age_str)
     cols[1].metric("Cycles (24 h)", cycles_24h)
-    cols[2].metric("Service", f"{svc_active or '?'} / {svc_enabled or '?'}")
+    cols[2].metric(
+        "Service",
+        svc_display,
+        help=(
+            f"systemd `ict-trainer.service`: {svc_active or '?'} / {svc_enabled or '?'}. "
+            "It's a oneshot launched by `ict-trainer.timer`, so `inactive` between "
+            "scheduled cycles is the normal resting state — not a fault."
+        ),
+    )
     cols[3].metric("Timer", f"{timer_state or '?'} / {timer_enabled or '?'}")
 
     if last_failed:
@@ -1758,8 +1769,68 @@ def page_promotion() -> None:
 
 # ── Backtesting ──────────────────────────────────────────────────────────────────
 
+def _render_backtest_sweeps() -> None:
+    """Strategy-improvement / validation sweeps mirrored from the trainer VM.
+
+    These are the real backtests the operator runs (`run_backtest_sweep.sh`
+    on the trainer → `all_metrics.json` + `SUMMARY.md` per UTC date,
+    published to the live VM via the trainer mirror). SUMMARY.md is a
+    schema-stable comparable table, so it is the primary render; the raw
+    per-variant metrics sit behind a drill-down expander.
+    """
+    data, err = _fetch("/api/bot/backtests/sweeps")
+    if err:
+        st.warning(f"Backtest sweeps endpoint error: {err}")
+        return
+
+    env = data or {}
+    sweeps = env.get("sweeps") or []
+    if not env.get("present") or not sweeps:
+        st.info(
+            "No backtest sweeps mirrored yet. The strategy-improvement harness "
+            "(`scripts/ops/run_backtest_sweep.sh`) runs on the trainer VM and "
+            "publishes results to the dashboard via the trainer mirror — they "
+            "appear here once the next mirror cycle lands."
+        )
+        return
+
+    age = env.get("mirror_age_seconds")
+    if age is not None:
+        st.caption(f"Trainer mirror · updated {_fmt_age(age)} ago · {len(sweeps)} sweep(s)")
+
+    for i, sw in enumerate(sweeps):
+        date = sw.get("date", "—")
+        gen = sw.get("generated_at") or ""
+        label = f"\U0001f4ca  {date}" + (f"  ·  generated {gen}" if gen else "")
+        with st.expander(label, expanded=(i == 0)):
+            summary = sw.get("summary_md")
+            if summary:
+                st.markdown(summary)
+            else:
+                st.caption("No SUMMARY.md in this sweep.")
+
+            metrics = sw.get("metrics")
+            extra = sw.get("extra_metrics") or {}
+            if metrics is not None or extra:
+                with st.expander("Raw metrics (per-variant)"):
+                    if metrics is not None:
+                        st.json(metrics)
+                    for name, payload in extra.items():
+                        st.caption(name)
+                        st.json(payload)
+
+
 def page_backtesting() -> None:
     st.header("Backtesting")
+
+    _render_backtest_sweeps()
+
+    st.divider()
+    st.subheader("On-demand `/test` runs")
+    st.caption(
+        "Ad-hoc Telegram `/test <strategy>` backtests (the M5 consumer). "
+        "Empty unless the on-demand consumer is enabled on the live VM."
+    )
 
     col_f, col_l = st.columns([3, 1])
     with col_f:
@@ -1776,7 +1847,7 @@ def page_backtesting() -> None:
         st.warning(f"Backtests endpoint error: {err}")
         return
     if not rows:
-        st.info("No backtest results yet. Run `python -m src.backtest.run_backtest` to populate.")
+        st.caption("No on-demand `/test` runs recorded.")
         return
 
     df = pd.DataFrame(rows)
@@ -1848,14 +1919,33 @@ def page_strategies() -> None:
     if err:
         st.warning(err)
         return
-    strategies = (data or {}).get("strategies") or []
+    data = data or {}
+    strategies = data.get("strategies") or []
+    runtime = data.get("runtime") or {}
     if not strategies:
         st.caption("No strategy data available.")
         return
 
+    # Live-runtime banner — what the VM is actually running right now,
+    # not just what the YAML enables.
+    tick_age = runtime.get("tick_age_seconds")
+    if runtime.get("bot_running"):
+        loaded = ", ".join(runtime.get("loaded_strategies") or []) or "—"
+        st.success(f"\U0001f7e2 Pipeline running · last tick {_fmt_age(tick_age)} ago · loaded: {loaded}")
+    else:
+        last = runtime.get("last_tick_utc") or "unknown"
+        st.warning(
+            f"\U0001f7e1 Pipeline not confirmed running · last tick {last}"
+            f"{f' ({_fmt_age(tick_age)} ago)' if tick_age is not None else ''}. "
+            "Per-strategy status below reflects config; the bot may be between restarts."
+        )
+
     for strat in strategies:
         name      = strat.get("name", "")
         enabled   = strat.get("enabled", True)
+        loaded    = strat.get("loaded", False)
+        running   = strat.get("running", False)
+        accounts  = strat.get("accounts") or []
         risk_pct  = strat.get("risk_pct")
         timeframe = strat.get("timeframe", "—")
         symbols   = ", ".join(strat.get("symbols") or []) or "—"
@@ -1863,8 +1953,27 @@ def page_strategies() -> None:
         desc      = strat.get("description") or {}
         changelog = strat.get("changelog") or []
 
-        st.subheader(f"{'\U0001f7e2' if enabled else '\U0001f534'} {name}")
+        if not enabled:
+            badge = "\U0001f534 Disabled"
+        elif running:
+            badge = "\U0001f7e2 Running"
+        elif loaded:
+            badge = "\U0001f7e1 Loaded · tick stale"
+        else:
+            badge = "⚪ Configured · not loaded"
+
+        st.subheader(f"{name}  ·  {badge}")
         st.caption(desc.get("short", ""))
+
+        # Account routing — which accounts run this strategy + live/dry.
+        if accounts:
+            chips = []
+            for a in accounts:
+                dot = "\U0001f7e2" if a.get("live") else "⚫"
+                chips.append(f"{dot} {a.get('id')}")
+            st.caption("Routes to: " + " · ".join(chips))
+        else:
+            st.caption("Routes to: — (no account routes this strategy)")
 
         m1, m2, m3, m4, m5, m6 = st.columns(6)
         m1.metric("Timeframe",    timeframe)
@@ -1891,6 +2000,91 @@ def page_strategies() -> None:
             with st.expander(f"Update log ({len(changelog)} entries)"):
                 st.dataframe(pd.DataFrame(changelog), hide_index=True, use_container_width=True)
         st.divider()
+
+
+# ── Data Explorer ─────────────────────────────────────────────────────────────
+
+def page_data_explorer() -> None:
+    st.header("Data Explorer")
+    st.caption(
+        "Read-only browse of the bot's `trade_journal.db`. Pick a table, "
+        "filter by a column, and page through rows. Nothing here can write."
+    )
+
+    meta, err = _fetch("/api/bot/db/tables")
+    if err:
+        st.warning(f"DB tables endpoint error: {err}")
+        return
+    meta = meta or {}
+    if not meta.get("present"):
+        st.info("Database not available.")
+        return
+    tables = meta.get("tables") or []
+    if not tables:
+        st.caption("No tables found.")
+        return
+
+    with st.expander("Schema overview", expanded=False):
+        st.dataframe(
+            pd.DataFrame([
+                {"Table": t["name"], "Rows": t.get("rows"),
+                 "Columns": len(t.get("columns") or [])}
+                for t in tables
+            ]),
+            hide_index=True, use_container_width=True,
+        )
+
+    names = [t["name"] for t in tables]
+    sel = st.selectbox("Table", names, key="dx_table")
+    tinfo = next((t for t in tables if t["name"] == sel), {})
+    cols = [c["name"] for c in (tinfo.get("columns") or [])]
+    st.caption(
+        f"{tinfo.get('rows', '?')} rows · "
+        + ", ".join(f"{c['name']} `{c['type']}`" for c in (tinfo.get("columns") or []))
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        order_by = st.selectbox("Order by", ["(none)"] + cols, key="dx_order")
+    with c2:
+        order_dir = st.selectbox("Direction", ["desc", "asc"], key="dx_dir")
+    with c3:
+        limit = st.selectbox("Rows/page", [25, 50, 100, 200, 500], index=2, key="dx_limit")
+
+    f1, f2, f3 = st.columns(3)
+    with f1:
+        filter_col = st.selectbox("Filter column", ["(none)"] + cols, key="dx_fcol")
+    with f2:
+        filter_op = st.selectbox(
+            "Op", ["eq", "ne", "gt", "lt", "gte", "lte", "like"], key="dx_fop",
+        )
+    with f3:
+        filter_val = st.text_input("Value", key="dx_fval")
+
+    page = int(st.number_input("Page", min_value=1, value=1, step=1, key="dx_page"))
+    offset = (page - 1) * int(limit)
+
+    params: dict[str, Any] = {"limit": limit, "offset": offset}
+    if order_by != "(none)":
+        params["order_by"] = order_by
+        params["order_dir"] = order_dir
+    if filter_col != "(none)" and filter_val.strip():
+        params["filter_col"] = filter_col
+        params["filter_op"] = filter_op
+        params["filter_val"] = filter_val.strip()
+
+    data, derr = _fetch(f"/api/bot/db/table/{quote(sel)}?{urlencode(params)}")
+    if derr:
+        st.warning(derr)
+        return
+    data = data or {}
+    rows = data.get("rows") or []
+    total = data.get("total", 0)
+    st.caption(f"Showing {len(rows)} of {total} rows · page {page}")
+    if rows:
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    else:
+        st.caption("No rows match.")
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
@@ -2037,7 +2231,7 @@ def main() -> None:
     dispatch = {
         "Overview":      lambda: page_overview(stats, stats_err),
         "Performance":   page_performance,
-        "Live Chart":    page_chart,
+        "Accounts":      page_accounts,
         "Positions":     page_positions,
         "Signals":       page_signals,
         "Closed Trades": page_trades,
@@ -2045,6 +2239,7 @@ def main() -> None:
         "Promotion":     page_promotion,
         "Backtesting":   page_backtesting,
         "Strategies":    page_strategies,
+        "Data Explorer": page_data_explorer,
         "Health":        page_health,
         "Logs":          page_logs,
         "Demo":          page_demo,

@@ -128,16 +128,17 @@ docs/                  — ad-hoc design notes
 
 | Tab | Endpoints |
 |---|---|
-| Overview | `/api/bot/stats`, `/api/pnl/history?days=30`, candles (Yahoo Finance) |
+| Overview | `/api/bot/stats`, `/api/bot/positions`, `/api/bot/signals`, `/api/bot/trades/closed`, `/api/pnl/history?days=30`, candles (Yahoo Finance) — **the single live chart** (TradingView Lightweight Charts): 1m default, live-trade overlay (entry/SL/TP/current-price lines + live PnL), signal/closed-trade markers, per-strategy signal toggle, and a Widescreen mode. Keeps native pinch-to-zoom. |
 | Performance | candles (Yahoo Finance), `/api/bot/signals`, `/api/bot/positions`, `/api/bot/trades/closed` — two sub-tabs (BTCUSDT, MES); per-symbol price chart with strategy-signal markers, open-trade entry/TP/SL price-lines, and live PnL |
-| Live Chart | candles (Yahoo Finance), `/api/bot/signals`, `/api/bot/trades/closed` |
+| Accounts | `/api/bot/config`, `/api/bot/accounts/balances`, `/api/pnl/history?account_id=`, `/api/bot/positions`, `/api/bot/trades/closed?account_id=` — one card per account: live/dry status, tracked balance (snapshot), realized (30d) + unrealized PnL, open-trade count, and an expandable 7-day trade log. Uses the **no-session** `/api/pnl/history` (not the session-gated `/api/pnl`). |
 | Positions | `/api/bot/positions` |
 | Signals | `/api/bot/signals` |
 | Closed Trades | `/api/bot/trades/closed?limit=50` |
 | Models | `/api/bot/ml/*` |
 | Promotion | `/api/bot/shadow/stats`, `/api/bot/shadow/drift`, `/api/bot/trades/scores`, `/api/bot/trades/closed` — 🚦 shadow-model promotion-readiness tracker (per-model volume, days-in-shadow, score range, "wired" check, KS/PSI drift, win/loss score edge) |
-| Backtesting | `/api/bot/backtests` |
-| Strategies | `/api/bot/strategies` |
+| Backtesting | `/api/bot/backtests/sweeps` (strategy-improvement / validation sweeps mirrored from the trainer VM — renders each run's `SUMMARY.md` table + raw per-variant metrics), `/api/bot/backtests` (on-demand `/test` runs) |
+| Strategies | `/api/bot/strategies` — live-runtime view: pipeline-running banner + per-strategy status (Running / Loaded·stale / Configured·not-loaded / Disabled) and account routing (which accounts run it, live/dry), plus stats, config, changelog |
+| Data Explorer | `/api/bot/db/tables`, `/api/bot/db/table/{name}` — read-only browse of `trade_journal.db`: schema overview, table picker, per-column filter (eq/ne/gt/lt/gte/lte/like), ordering, and pagination |
 | Health | `/api/bot/health/services`, `/api/bot/health/latest` |
 | Logs | `/api/bot/logs` |
 | Demo | `/api/bot/positions`, `/api/bot/trades/closed`, `/api/pnl/history` |
@@ -167,8 +168,9 @@ Important nullability notes for renderers:
 - `BotStats` returns **HTTP 503** on structural DB failure (S-067).
   The Streamlit `_fetch` helper surfaces this as a per-endpoint warning
   banner rather than crashing the page.
-- `Signal.{pattern,confidence,price}` are **nullable**. Skip rows with
-  null `pattern` rather than aggregating them under "unknown".
+- `Signal.{strategy,pattern,confidence,price}` are **nullable**. Skip rows with
+  null `pattern` rather than aggregating them under "unknown". The Overview
+  chart's per-strategy signal toggle treats a null `strategy` as "always show".
 - `ClosedTrade.{realizedPnlPct,closeReason,pattern}` are **nullable**.
 - `Position.{stopLoss,takeProfit,pattern}` are **nullable**.
 - `BacktestRun.{totalTrades,winningTrades,losingTrades}` are **nullable**
