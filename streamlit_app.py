@@ -734,7 +734,20 @@ _TV_CHART_HTML = """<!doctype html>
     vol = chart.addHistogramSeries({ priceFormat: {type:'volume'}, priceScaleId: '' });
     vol.priceScale().applyOptions({ scaleMargins: {top: 0.82, bottom: 0} });
     vol.setData(D.volume || []);
-    chart.timeScale().fitContent();
+    // Show the most-recent ~150 bars by default but keep the full history
+    // scrollable; persist the scroll position across the 10s auto-refresh so
+    // scrolling back doesn't snap to "now" on every reload.
+    var TS = chart.timeScale();
+    var saved = localStorage.getItem('tvc_lrange');
+    var applied = false;
+    if (saved) { try { TS.setVisibleLogicalRange(JSON.parse(saved)); applied = true; } catch (e) {} }
+    if (!applied) {
+      var n = (D.candles || []).length;
+      if (n) TS.setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 2 });
+    }
+    TS.subscribeVisibleLogicalRangeChange(function(r){
+      if (r) { try { localStorage.setItem('tvc_lrange', JSON.stringify(r)); } catch (e) {} }
+    });
   } catch (e) {
     document.getElementById('err').textContent = 'Chart error: ' + e;
     return;
@@ -1263,7 +1276,7 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             key="ov_interval",
         )
 
-    df, candles_err = _fetch_candles(ov_symbol, ov_interval)
+    df, candles_err = _fetch_candles(ov_symbol, ov_interval, limit=1000)
     positions, _ = _fetch("/api/bot/positions")
     sym_positions = [p for p in (positions or []) if p.get("symbol") == ov_symbol]
     last_price = None
