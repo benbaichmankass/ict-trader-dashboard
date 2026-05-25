@@ -161,8 +161,44 @@ def _fetch(path: str) -> tuple[Any, str | None]:
         return None, f"Bad JSON from {path}: {e}"
 
 
-@st.cache_data(ttl=30, show_spinner=False)
 def _fetch_candles(
+    symbol: str, interval: str, limit: int = 200
+) -> tuple[pd.DataFrame | None, str | None]:
+    """Candles for the chart. Prefer the bot's own exchange feed
+    (`/api/bot/candles` — matches what the strategies see); fall back to
+    Yahoo Finance when that endpoint is unavailable/empty (e.g. not deployed
+    yet, or MES without an IB feed)."""
+    bot_df = _fetch_candles_bot(symbol, interval, limit)
+    if bot_df is not None and not bot_df.empty:
+        return bot_df, None
+    return _fetch_candles_yf(symbol, interval, limit)
+
+
+def _fetch_candles_bot(
+    symbol: str, interval: str, limit: int
+) -> pd.DataFrame | None:
+    """OHLCV from the bot's `/api/bot/candles` endpoint, or None on any miss."""
+    data, err = _fetch(
+        "/api/bot/candles?" + urlencode(
+            {"symbol": symbol, "interval": interval, "limit": limit}
+        )
+    )
+    if err or not isinstance(data, dict):
+        return None
+    rows = data.get("candles") or []
+    if not rows:
+        return None
+    df = pd.DataFrame(rows)
+    if not {"time", "open", "high", "low", "close"}.issubset(df.columns):
+        return None
+    df["timestamp"] = pd.to_datetime(df["time"], unit="s")
+    if "volume" not in df.columns:
+        df["volume"] = 0.0
+    return df[["timestamp", "open", "high", "low", "close", "volume"]]
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _fetch_candles_yf(
     symbol: str, interval: str, limit: int = 200
 ) -> tuple[pd.DataFrame | None, str | None]:
     try:
@@ -497,6 +533,31 @@ def _lc_zone_lines(signals: list[dict] | None, symbol: str, limit: int = 1) -> l
     return lines
 
 
+def _lc_ema_data(df: pd.DataFrame, period: int) -> list[dict]:
+    """EMA(period) over close as a Lightweight Charts line series."""
+    ema = df["close"].astype(float).ewm(span=period, adjust=False).mean()
+    out = []
+    for ts, v in zip(df["timestamp"], ema):
+        t = ts if isinstance(ts, pd.Timestamp) else pd.Timestamp(ts)
+        out.append({"time": int(t.timestamp()), "value": float(v)})
+    return out
+
+
+def _lc_volume_data(df: pd.DataFrame) -> list[dict]:
+    """Per-bar volume as a Lightweight Charts histogram (green up / red down)."""
+    out = []
+    for _, row in df.iterrows():
+        ts = row["timestamp"]
+        t = ts if isinstance(ts, pd.Timestamp) else pd.Timestamp(ts)
+        up = float(row["close"]) >= float(row["open"])
+        out.append({
+            "time": int(t.timestamp()),
+            "value": float(row.get("volume") or 0.0),
+            "color": "rgba(38,166,154,0.5)" if up else "rgba(239,83,80,0.5)",
+        })
+    return out
+
+
 def render_overview_chart(
     df: pd.DataFrame,
     signals:   list[dict] | None,
@@ -506,6 +567,9 @@ def render_overview_chart(
     height:    int = _LC_HEIGHT,
     key:       str = "overview_lc_chart",
     show_zones: bool = False,
+    show_ema:   bool = False,
+    show_volume: bool = False,
+    ema_period: int = 20,
 ) -> None:
     """Render the single TradingView Lightweight Charts candlestick.
 
@@ -578,6 +642,27 @@ def render_overview_chart(
             "priceLines": price_lines,
         }],
     }]
+
+    if show_ema and len(candle_data) >= 2:
+        chart_opts[0]["series"].append({
+            "type": "Line",
+            "data": _lc_ema_data(df, ema_period),
+            "options": {
+                "color": _TV_EMA20, "lineWidth": 2,
+                "priceLineVisible": False, "lastValueVisible": False,
+            },
+        })
+    if show_volume:
+        chart_opts[0]["series"].append({
+            "type": "Histogram",
+            "data": _lc_volume_data(df),
+            "options": {
+                "priceFormat": {"type": "volume"},
+                "priceScaleId": "",          # overlay on the main pane
+            },
+            # Pin the volume bars to the bottom 20% of the pane.
+            "priceScale": {"scaleMargins": {"top": 0.8, "bottom": 0.0}},
+        })
 
     _render_lc(chart_opts, key=key)
 
@@ -1045,26 +1130,32 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             index=CHART_INTERVALS.index("1m") if "1m" in CHART_INTERVALS else 0,
             key="ov_interval",
         )
-    tg1, tg2, tg3, tg4, tg5 = st.columns(5)
-    with tg1:
+    tg = st.columns(7)
+    with tg[0]:
         ov_live = st.toggle(
             "Live trades", value=True, key="ov_live",
             help="Overlay open-position entry / SL / TP / current-price lines",
         )
-    with tg2:
+    with tg[1]:
         ov_signals = st.toggle("Signals", value=True, key="ov_signals")
-    with tg3:
+    with tg[2]:
         ov_zones = st.toggle(
             "Zones", value=True, key="ov_zones",
             help="Draw the latest signal's ICT zones (FVG band + liquidity sweep) "
                  "that the strategy actually traded on",
         )
-    with tg4:
+    with tg[3]:
         ov_trades = st.toggle(
             "Closed", value=False, key="ov_trades",
             help="Recent closed-trade entry/exit markers",
         )
-    with tg5:
+    with tg[4]:
+        ov_ema = st.toggle("EMA", value=True, key="ov_ema",
+                           help="20-period EMA on close")
+    with tg[5]:
+        ov_volume = st.toggle("Volume", value=True, key="ov_volume",
+                              help="Per-bar volume histogram (bottom of the pane)")
+    with tg[6]:
         ov_wide = st.toggle(
             "Widescreen", value=False, key="ov_wide",
             help="Near-fullscreen view — hides the sidebar so the chart fills the screen",
@@ -1125,10 +1216,13 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             positions=sym_positions if ov_live else None,
             height=chart_height,
             show_zones=ov_zones,
+            show_ema=ov_ema,
+            show_volume=ov_volume,
         )
         st.caption(
-            f"Yahoo Finance · {_YF_SYMBOL.get(ov_symbol, ov_symbol)} · {ov_interval} · "
-            f"up to 200 candles · pinch to zoom · auto-refreshes every {POLL_INTERVAL_S}s"
+            f"{ov_symbol} · {ov_interval} · candles from the bot's exchange feed "
+            "(Yahoo Finance fallback) · pinch to zoom · "
+            f"auto-refreshes every {POLL_INTERVAL_S}s"
         )
 
 
