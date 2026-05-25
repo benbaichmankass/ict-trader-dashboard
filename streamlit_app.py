@@ -161,8 +161,44 @@ def _fetch(path: str) -> tuple[Any, str | None]:
         return None, f"Bad JSON from {path}: {e}"
 
 
-@st.cache_data(ttl=30, show_spinner=False)
 def _fetch_candles(
+    symbol: str, interval: str, limit: int = 200
+) -> tuple[pd.DataFrame | None, str | None]:
+    """Candles for the chart. Prefer the bot's own exchange feed
+    (`/api/bot/candles` — matches what the strategies see); fall back to
+    Yahoo Finance when that endpoint is unavailable/empty (e.g. not deployed
+    yet, or MES without an IB feed)."""
+    bot_df = _fetch_candles_bot(symbol, interval, limit)
+    if bot_df is not None and not bot_df.empty:
+        return bot_df, None
+    return _fetch_candles_yf(symbol, interval, limit)
+
+
+def _fetch_candles_bot(
+    symbol: str, interval: str, limit: int
+) -> pd.DataFrame | None:
+    """OHLCV from the bot's `/api/bot/candles` endpoint, or None on any miss."""
+    data, err = _fetch(
+        "/api/bot/candles?" + urlencode(
+            {"symbol": symbol, "interval": interval, "limit": limit}
+        )
+    )
+    if err or not isinstance(data, dict):
+        return None
+    rows = data.get("candles") or []
+    if not rows:
+        return None
+    df = pd.DataFrame(rows)
+    if not {"time", "open", "high", "low", "close"}.issubset(df.columns):
+        return None
+    df["timestamp"] = pd.to_datetime(df["time"], unit="s")
+    if "volume" not in df.columns:
+        df["volume"] = 0.0
+    return df[["timestamp", "open", "high", "low", "close", "volume"]]
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _fetch_candles_yf(
     symbol: str, interval: str, limit: int = 200
 ) -> tuple[pd.DataFrame | None, str | None]:
     try:
@@ -256,6 +292,18 @@ _ROW_DOTS = {
 
 def _row_dot(state: str) -> str:
     return _ROW_DOTS.get(state, "⚪")
+
+
+def _capped_table(df: pd.DataFrame, key: str, cap: int = 10) -> None:
+    """Render up to `cap` rows of `df` open by default, with a 'Show all'
+    toggle that reveals the rest. `df` should already be ordered newest-first."""
+    n = len(df)
+    if n == 0:
+        return
+    if n > cap:
+        if not st.checkbox(f"Show all {n} rows", key=key):
+            df = df.head(cap)
+    st.dataframe(df, hide_index=True, use_container_width=True)
 
 
 def render_sidebar() -> str:
@@ -485,6 +533,31 @@ def _lc_zone_lines(signals: list[dict] | None, symbol: str, limit: int = 1) -> l
     return lines
 
 
+def _lc_ema_data(df: pd.DataFrame, period: int) -> list[dict]:
+    """EMA(period) over close as a Lightweight Charts line series."""
+    ema = df["close"].astype(float).ewm(span=period, adjust=False).mean()
+    out = []
+    for ts, v in zip(df["timestamp"], ema):
+        t = ts if isinstance(ts, pd.Timestamp) else pd.Timestamp(ts)
+        out.append({"time": int(t.timestamp()), "value": float(v)})
+    return out
+
+
+def _lc_volume_data(df: pd.DataFrame) -> list[dict]:
+    """Per-bar volume as a Lightweight Charts histogram (green up / red down)."""
+    out = []
+    for _, row in df.iterrows():
+        ts = row["timestamp"]
+        t = ts if isinstance(ts, pd.Timestamp) else pd.Timestamp(ts)
+        up = float(row["close"]) >= float(row["open"])
+        out.append({
+            "time": int(t.timestamp()),
+            "value": float(row.get("volume") or 0.0),
+            "color": "rgba(38,166,154,0.5)" if up else "rgba(239,83,80,0.5)",
+        })
+    return out
+
+
 def render_overview_chart(
     df: pd.DataFrame,
     signals:   list[dict] | None,
@@ -494,6 +567,9 @@ def render_overview_chart(
     height:    int = _LC_HEIGHT,
     key:       str = "overview_lc_chart",
     show_zones: bool = False,
+    show_ema:   bool = False,
+    show_volume: bool = False,
+    ema_period: int = 20,
 ) -> None:
     """Render the single TradingView Lightweight Charts candlestick.
 
@@ -566,6 +642,27 @@ def render_overview_chart(
             "priceLines": price_lines,
         }],
     }]
+
+    if show_ema and len(candle_data) >= 2:
+        chart_opts[0]["series"].append({
+            "type": "Line",
+            "data": _lc_ema_data(df, ema_period),
+            "options": {
+                "color": _TV_EMA20, "lineWidth": 2,
+                "priceLineVisible": False, "lastValueVisible": False,
+            },
+        })
+    if show_volume:
+        chart_opts[0]["series"].append({
+            "type": "Histogram",
+            "data": _lc_volume_data(df),
+            "options": {
+                "priceFormat": {"type": "volume"},
+                "priceScaleId": "",          # overlay on the main pane
+            },
+            # Pin the volume bars to the bottom 20% of the pane.
+            "priceScale": {"scaleMargins": {"top": 0.8, "bottom": 0.0}},
+        })
 
     _render_lc(chart_opts, key=key)
 
@@ -1033,26 +1130,32 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             index=CHART_INTERVALS.index("1m") if "1m" in CHART_INTERVALS else 0,
             key="ov_interval",
         )
-    tg1, tg2, tg3, tg4, tg5 = st.columns(5)
-    with tg1:
+    tg = st.columns(7)
+    with tg[0]:
         ov_live = st.toggle(
             "Live trades", value=True, key="ov_live",
             help="Overlay open-position entry / SL / TP / current-price lines",
         )
-    with tg2:
+    with tg[1]:
         ov_signals = st.toggle("Signals", value=True, key="ov_signals")
-    with tg3:
+    with tg[2]:
         ov_zones = st.toggle(
             "Zones", value=True, key="ov_zones",
             help="Draw the latest signal's ICT zones (FVG band + liquidity sweep) "
                  "that the strategy actually traded on",
         )
-    with tg4:
+    with tg[3]:
         ov_trades = st.toggle(
             "Closed", value=False, key="ov_trades",
             help="Recent closed-trade entry/exit markers",
         )
-    with tg5:
+    with tg[4]:
+        ov_ema = st.toggle("EMA", value=True, key="ov_ema",
+                           help="20-period EMA on close")
+    with tg[5]:
+        ov_volume = st.toggle("Volume", value=True, key="ov_volume",
+                              help="Per-bar volume histogram (bottom of the pane)")
+    with tg[6]:
         ov_wide = st.toggle(
             "Widescreen", value=False, key="ov_wide",
             help="Near-fullscreen view — hides the sidebar so the chart fills the screen",
@@ -1113,10 +1216,13 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             positions=sym_positions if ov_live else None,
             height=chart_height,
             show_zones=ov_zones,
+            show_ema=ov_ema,
+            show_volume=ov_volume,
         )
         st.caption(
-            f"Yahoo Finance · {_YF_SYMBOL.get(ov_symbol, ov_symbol)} · {ov_interval} · "
-            f"up to 200 candles · pinch to zoom · auto-refreshes every {POLL_INTERVAL_S}s"
+            f"{ov_symbol} · {ov_interval} · candles from the bot's exchange feed "
+            "(Yahoo Finance fallback) · pinch to zoom · "
+            f"auto-refreshes every {POLL_INTERVAL_S}s"
         )
 
 
@@ -1454,27 +1560,25 @@ def page_accounts() -> None:
             else:
                 st.caption("No realised P&L in the last 30 days.")
 
-            if st.checkbox("Recent trades (7d)", key=f"acc_log_{aid}"):
-                trades, terr = _fetch(
-                    f"/api/bot/trades/closed?limit=100&account_id={aid}&since={since_7d}"
-                )
-                if terr:
-                    st.warning(terr)
-                elif not trades:
-                    st.caption("No closed trades in the last 7 days.")
-                else:
-                    tdf = pd.DataFrame(trades)
-                    col_map = {
-                        "symbol": "Symbol", "side": "Side", "pattern": "Strategy",
-                        "entryPrice": "Entry", "exitPrice": "Exit",
-                        "realizedPnl": "PnL", "realizedPnlPct": "PnL %",
-                        "closeReason": "Close", "openedAt": "Opened", "closedAt": "Closed",
-                    }
-                    cols = [c for c in col_map if c in tdf.columns]
-                    st.dataframe(
-                        tdf[cols].rename(columns=col_map) if cols else tdf,
-                        hide_index=True, use_container_width=True,
-                    )
+            st.markdown("**Recent trades · 7d**")
+            trades, terr = _fetch(
+                f"/api/bot/trades/closed?limit=100&account_id={aid}&since={since_7d}"
+            )
+            if terr:
+                st.warning(terr)
+            elif not trades:
+                st.caption("No closed trades in the last 7 days.")
+            else:
+                tdf = pd.DataFrame(trades)
+                col_map = {
+                    "symbol": "Symbol", "side": "Side", "pattern": "Strategy",
+                    "entryPrice": "Entry", "exitPrice": "Exit",
+                    "realizedPnl": "PnL", "realizedPnlPct": "PnL %",
+                    "closeReason": "Close", "openedAt": "Opened", "closedAt": "Closed",
+                }
+                cols = [c for c in col_map if c in tdf.columns]
+                disp = tdf[cols].rename(columns=col_map) if cols else tdf
+                _capped_table(disp, key=f"acc_log_all_{aid}")
 
 
 # ── Positions ───────────────────────────────────────────────────────────────────
@@ -2009,25 +2113,24 @@ def _render_model_card(model_id: str, rows: list[dict]) -> None:
                         st.markdown("**Latest run**")
                         st.json(metrics)
 
-        # Collapsible "logs" — training history + trainer config + stage history.
+        # Logs — open by default, newest-first, capped at 10 with a Show-all toggle.
         runs = latest.get("runs") or []
+        if isinstance(runs, list) and len(runs) > 1:
+            st.markdown(f"**Training history · {len(runs)} runs**")
+            history_rows = [
+                {"run_id": r.get("run_id"), "at": r.get("at"), **(r.get("metrics") or {})}
+                for r in reversed(runs)
+            ]
+            _capped_table(pd.DataFrame(history_rows), key=f"model_runs_{model_id}")
+        if len(rows) > 1:
+            st.markdown(f"**Stage history · {len(rows)} rows**")
+            _capped_table(pd.DataFrame(list(reversed(rows))), key=f"model_stage_{model_id}")
+
+        # Config — always shown, at the bottom.
         cfg = latest.get("trainer_config") or {}
-        has_history = (isinstance(runs, list) and len(runs) > 1) or bool(cfg) or len(rows) > 1
-        if has_history and st.checkbox("History + config", key=f"model_log_{model_id}"):
-            if isinstance(runs, list) and len(runs) > 1:
-                st.markdown(f"**Training history ({len(runs)} runs)**")
-                history_rows = [
-                    {"run_id": r.get("run_id"), "at": r.get("at"), **(r.get("metrics") or {})}
-                    for r in runs
-                ]
-                st.dataframe(pd.DataFrame(history_rows), hide_index=True,
-                             use_container_width=True)
-            if cfg:
-                st.markdown("**Trainer config**")
-                st.json(cfg)
-            if len(rows) > 1:
-                st.markdown(f"**Stage history ({len(rows)} rows)**")
-                st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        if cfg:
+            st.markdown("**Trainer config**")
+            st.json(cfg, expanded=False)
 
 
 def _render_registry(registry_rows: list[dict]) -> None:
@@ -2670,17 +2773,17 @@ def page_strategies() -> None:
                 st.markdown("**How it works**")
                 st.write(desc["how_it_works"])
 
-            # Collapsible "logs" — config params + update log (changelog).
-            if st.checkbox("Config + update log", key=f"strat_log_{name}"):
-                if strat.get("config"):
-                    st.markdown("**Config parameters**")
-                    st.json(strat["config"])
-                if changelog:
-                    st.markdown(f"**Update log ({len(changelog)} entries)**")
-                    st.dataframe(pd.DataFrame(changelog), hide_index=True,
-                                 use_container_width=True)
-                else:
-                    st.caption("No changelog entries.")
+            # Update log — open by default, capped at 10 with a Show-all toggle.
+            st.markdown(f"**Update log · {len(changelog)} entries**")
+            if changelog:
+                _capped_table(pd.DataFrame(changelog), key=f"strat_log_{name}")
+            else:
+                st.caption("No changelog entries.")
+
+            # Config — always shown, at the bottom.
+            if strat.get("config"):
+                st.markdown("**Config parameters**")
+                st.json(strat["config"], expanded=False)
 
 
 # ── Data Explorer ─────────────────────────────────────────────────────────────

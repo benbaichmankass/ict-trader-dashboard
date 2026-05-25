@@ -110,9 +110,11 @@ Models · Accounts · Order Packages · Positions · Signals** (live/ops), then
 (dev tools). The list/registry pages — **Strategies, Models, Accounts** — share a
 uniform **collapsible-row** layout: each row is an `st.expander` whose label is a
 status dot (🟢 live · 🔵 shadow · 🟡 stale · 🔴 bad · ⚫ off) + name + a couple of
-summary stats; expanding shows detail metrics + a visualization + a "logs" toggle
-(config/changelog, training history, or recent trades). Nested expanders are
-illegal in Streamlit, so the in-row logs use a `st.checkbox`, not an expander.
+summary stats; expanding shows detail metrics + a visualization, then the logs
+(trade log / changelog / training+stage history) **open by default, capped at 10
+rows with a "Show all" toggle**, then the **config shown last (always open)**.
+Nested expanders are illegal in Streamlit, so the in-row "Show all" + config use
+`st.checkbox` / `st.json`, not expanders.
 
 | Tab | Endpoints |
 |---|---|
