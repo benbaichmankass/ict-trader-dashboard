@@ -45,9 +45,19 @@ DEFAULT_LIMIT = 50
 # Preview app vs production. The preview Streamlit app (tracking
 # claude/web-app-preview) sets DASHBOARD_PREVIEW=1 in its Secrets so it does
 # NOT auto-poll the bot by default — you flip "Live data" on only when actively
-# testing, sparing the bot from a second always-on poller. Production leaves the
-# env var unset → live by default.
-_PREVIEW_MODE = str(os.environ.get("DASHBOARD_PREVIEW", "")).strip().lower() in {"1", "true", "yes"}
+# testing, sparing the bot from a second always-on poller. Production leaves it
+# unset → live by default. Streamlit Cloud surfaces Secrets via st.secrets (not
+# os.environ), so read both.
+def _cfg(key: str, default: str = "") -> str:
+    try:
+        if key in st.secrets:
+            return str(st.secrets[key])
+    except Exception:  # no secrets.toml (local dev) — fall through to env
+        pass
+    return os.environ.get(key, default)
+
+
+_PREVIEW_MODE = _cfg("DASHBOARD_PREVIEW").strip().lower() in {"1", "true", "yes"}
 _DEFAULT_LIVE = not _PREVIEW_MODE
 
 # Yahoo Finance ticker mapping (dashboard uses bot symbol style for signal matching).
