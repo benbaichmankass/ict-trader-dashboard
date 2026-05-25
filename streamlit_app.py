@@ -447,90 +447,64 @@ def _lc_markers(
     return markers
 
 
-def _lc_price_lines(
+def _lc_hline_series(df: pd.DataFrame, price, color: str, title: str,
+                     *, dashed: bool = False, width: int = 1) -> dict | None:
+    """A horizontal level drawn as a flat 2-point Line series.
+
+    The streamlit-lightweight-charts build doesn't render per-series
+    `priceLines`, so live-position levels + ICT zones are drawn as flat Line
+    series (which the wrapper DOES render — same path as the EMA)."""
+    try:
+        t0 = int(pd.Timestamp(df["timestamp"].iloc[0]).timestamp())
+        t1 = int(pd.Timestamp(df["timestamp"].iloc[-1]).timestamp())
+        price = float(price)
+    except (KeyError, IndexError, ValueError, TypeError):
+        return None
+    return {
+        "type": "Line",
+        "data": [{"time": t0, "value": price}, {"time": t1, "value": price}],
+        "options": {
+            "color": color, "lineWidth": width,
+            "lineStyle": 2 if dashed else 0,
+            "priceLineVisible": False, "lastValueVisible": True,
+            "title": title, "crosshairMarkerVisible": False,
+        },
+    }
+
+
+def _lc_overlay_series(
     positions: list[dict] | None,
+    signals:   list[dict] | None,
     df:        pd.DataFrame,
     symbol:    str,
+    show_zones: bool,
 ) -> list[dict]:
-    """TradingView-style horizontal price lines for the overview chart.
-
-    Draws the current price (last candle close) plus, for every OPEN
-    position on *symbol*, its entry / stop-loss / take-profit levels —
-    the same overlay TradingView shows for a live position. Each is
-    nullable on the bot side (older rows), so missing levels are simply
-    skipped rather than drawn at 0.
-    """
-    lines: list[dict] = []
-
-    # Current price — subtle dashed reference line.
-    try:
-        last_close = float(df["close"].iloc[-1])
-        lines.append({
-            "price": last_close, "color": "#7f8da3", "lineWidth": 1,
-            "lineStyle": 2, "axisLabelVisible": True, "title": "last",
-        })
-    except (KeyError, IndexError, ValueError, TypeError):
-        pass
-
+    """Horizontal overlay lines (live-position entry/SL/TP + latest signal's
+    ICT zones), each as a flat Line series so the wrapper renders them."""
+    out: list[dict | None] = []
     for p in positions or []:
         if p.get("symbol") and p.get("symbol") != symbol:
             continue
-        side  = str(p.get("side", "")).upper()
-        entry = p.get("entryPrice")
-        sl    = p.get("stopLoss")
-        tp    = p.get("takeProfit")
-        if entry is not None:
-            lines.append({
-                "price": float(entry), "color": _TV_ENTRY, "lineWidth": 2,
-                "lineStyle": 0, "axisLabelVisible": True,
-                "title": f"{side or 'ENTRY'} entry",
-            })
-        if sl is not None:
-            lines.append({
-                "price": float(sl), "color": _TV_RED, "lineWidth": 1,
-                "lineStyle": 2, "axisLabelVisible": True, "title": "SL",
-            })
-        if tp is not None:
-            lines.append({
-                "price": float(tp), "color": _TV_GREEN, "lineWidth": 1,
-                "lineStyle": 2, "axisLabelVisible": True, "title": "TP",
-            })
-    return lines
-
-
-def _lc_zone_lines(signals: list[dict] | None, symbol: str, limit: int = 1) -> list[dict]:
-    """Price lines for the latest signal's ICT zones (FVG band + sweep).
-
-    Draws only what the strategy itself recorded for its decision (the
-    `zones` the bot's /api/bot/signals returns) — never a separately
-    computed indicator. Limited to the most-recent `limit` signals so
-    the chart shows the current setup rather than every historical zone.
-    The lightweight-charts package can't fill boxes, so an FVG renders
-    as its two bounding lines; a sweep as a single level.
-    """
-    if not signals:
-        return []
-    rows = [
-        s for s in signals
-        if (not s.get("symbol") or s.get("symbol") == symbol) and s.get("zones")
-    ]
-    rows.sort(key=lambda s: s.get("timestamp") or "", reverse=True)
-    lines: list[dict] = []
-    for s in rows[:limit]:
-        for z in (s.get("zones") or []):
-            kind = z.get("kind")
-            if kind == "fvg" and z.get("low") is not None and z.get("high") is not None:
-                for price, title in ((z["low"], "FVG ▾"), (z["high"], "FVG ▴")):
-                    lines.append({
-                        "price": float(price), "color": _TV_FVG, "lineWidth": 1,
-                        "lineStyle": 2, "axisLabelVisible": True, "title": title,
-                    })
-            elif kind == "sweep" and z.get("price") is not None:
-                lines.append({
-                    "price": float(z["price"]), "color": _TV_SWEEP, "lineWidth": 1,
-                    "lineStyle": 1, "axisLabelVisible": True, "title": "sweep",
-                })
-    return lines
+        side = str(p.get("side", "")).upper()
+        if p.get("entryPrice") is not None:
+            out.append(_lc_hline_series(df, p["entryPrice"], _TV_ENTRY,
+                                        f"{side or 'ENTRY'} entry", width=2))
+        if p.get("stopLoss") is not None:
+            out.append(_lc_hline_series(df, p["stopLoss"], _TV_RED, "SL", dashed=True))
+        if p.get("takeProfit") is not None:
+            out.append(_lc_hline_series(df, p["takeProfit"], _TV_GREEN, "TP", dashed=True))
+    if show_zones and signals:
+        rows = [s for s in signals
+                if (not s.get("symbol") or s.get("symbol") == symbol) and s.get("zones")]
+        rows.sort(key=lambda s: s.get("timestamp") or "", reverse=True)
+        for s in rows[:1]:
+            for z in (s.get("zones") or []):
+                if z.get("kind") == "fvg" and z.get("low") is not None and z.get("high") is not None:
+                    out.append(_lc_hline_series(df, z["low"], _TV_FVG, "FVG ▾", dashed=True))
+                    out.append(_lc_hline_series(df, z["high"], _TV_FVG, "FVG ▴", dashed=True))
+                elif z.get("kind") == "sweep" and z.get("price") is not None:
+                    out.append(_lc_hline_series(df, z["price"], _TV_SWEEP, "sweep", dashed=True))
+    return [s for s in out if s]
 
 
 def _lc_ema_data(df: pd.DataFrame, period: int) -> list[dict]:
@@ -591,9 +565,6 @@ def render_overview_chart(
 
     candle_data = _lc_candle_data(df)
     markers     = _lc_markers(signals, trades, symbol)
-    price_lines = _lc_price_lines(positions, df, symbol)
-    if show_zones:
-        price_lines = price_lines + _lc_zone_lines(signals, symbol)
 
     chart_opts = [{
         "chart": {
@@ -639,9 +610,14 @@ def render_overview_chart(
                 "wickDownColor": _TV_RED,
             },
             "markers":    markers,
-            "priceLines": price_lines,
         }],
     }]
+
+    # Live-position levels + ICT zones as flat Line series (the wrapper
+    # ignores per-series priceLines, so we draw them as lines).
+    chart_opts[0]["series"].extend(
+        _lc_overlay_series(positions, signals, df, symbol, show_zones)
+    )
 
     if show_ema and len(candle_data) >= 2:
         chart_opts[0]["series"].append({
@@ -1056,16 +1032,114 @@ def _render_strategy_snapshot(frame: pd.DataFrame) -> None:
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
 
+def _position_upnl(p: dict, last_price: float | None) -> float:
+    """Unrealised PnL for an open position. Prefer the bot's `unrealizedPnl`;
+    if it's missing/zero, compute it from the latest candle close so the
+    readout isn't stuck at $0 when the field isn't populated."""
+    raw = p.get("unrealizedPnl")
+    try:
+        if raw is not None and float(raw) != 0.0:
+            return float(raw)
+    except (TypeError, ValueError):
+        pass
+    if last_price is None:
+        return 0.0
+    try:
+        entry = float(p.get("entryPrice"))
+        qty = float(p.get("qty") or 0.0)
+        sign = 1.0 if str(p.get("side", "")).lower() in ("buy", "long") else -1.0
+        return (last_price - entry) * qty * sign
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def page_overview(stats: dict | None, stats_err: str | None) -> None:
     st.header("Overview")
-    st.caption("System snapshot — see Performance for the full analytics, "
-               "Positions / Order Packages for detail.")
-
-    s  = stats or {}
-    vm = s.get("vmHealth") or {}
     if stats_err:
         st.warning(f"Stats endpoint error: {stats_err}")
+    s  = stats or {}
+    vm = s.get("vmHealth") or {}
 
+    # ── Live chart (top of page) ────────────────────────────────────────────────
+    ctrl = st.columns([2, 2, 5, 1])
+    with ctrl[0]:
+        ov_symbol = st.selectbox("Symbol", CHART_SYMBOLS, key="ov_symbol")
+    with ctrl[1]:
+        ov_interval = st.selectbox(
+            "Interval", CHART_INTERVALS,
+            index=CHART_INTERVALS.index("1m") if "1m" in CHART_INTERVALS else 0,
+            key="ov_interval",
+        )
+    with ctrl[3]:
+        st.write("")  # vertical nudge so the button aligns with the selectboxes
+        if st.button("⛶", key="ov_fs",
+                     help="Fullscreen / widescreen — hides the sidebar and fills the width"):
+            st.session_state["ov_fullscreen"] = not st.session_state.get("ov_fullscreen", False)
+    ov_wide = st.session_state.get("ov_fullscreen", False)
+    if ov_wide:
+        # Widescreen: hide the sidebar + strip page padding so the chart fills the
+        # viewport. (The component can't trigger OS fullscreen; this is the
+        # Streamlit-native equivalent.)
+        st.html(
+            "<style>[data-testid='stSidebar']{display:none;}"
+            ".main .block-container{padding:0.4rem 0.6rem;max-width:100%;}</style>"
+        )
+    chart_height = 860 if ov_wide else _LC_HEIGHT
+
+    rail, chartcol = st.columns([1, 9])
+    with rail:
+        st.caption("Overlays")
+        ov_live    = st.checkbox("Live trades", value=True, key="ov_live")
+        ov_signals = st.checkbox("Signals", value=True, key="ov_signals")
+        ov_zones   = st.checkbox("Zones", value=True, key="ov_zones")
+        ov_trades  = st.checkbox("Closed", value=False, key="ov_trades")
+        ov_ema     = st.checkbox("EMA", value=True, key="ov_ema")
+        ov_volume  = st.checkbox("Volume", value=True, key="ov_volume")
+    with chartcol:
+        df, candles_err = _fetch_candles(ov_symbol, ov_interval)
+        positions, _ = _fetch("/api/bot/positions")
+        sym_positions = [p for p in (positions or []) if p.get("symbol") == ov_symbol]
+        last_price = None
+        if df is not None and not df.empty:
+            try:
+                last_price = float(df["close"].iloc[-1])
+            except (KeyError, IndexError, ValueError, TypeError):
+                last_price = None
+
+        if sym_positions:
+            net_pnl = sum(_position_upnl(p, last_price) for p in sym_positions)
+            pc1, pc2 = st.columns([1, 3])
+            pc1.metric(f"Live PnL · {ov_symbol}", fmt_usd(net_pnl), delta=round(net_pnl, 2))
+            pc2.caption(" · ".join(
+                f"{str(p.get('side', '')).upper()} {p.get('qty', '?')} @ {p.get('entryPrice', '?')}"
+                for p in sym_positions
+            ))
+
+        if candles_err:
+            st.warning(f"Candles unavailable: {candles_err}")
+        elif df is None or df.empty:
+            st.caption("No candle data.")
+        else:
+            sig_data = None
+            if ov_signals:
+                sig_data, _ = _fetch("/api/bot/signals")
+            trade_data = None
+            if ov_trades:
+                trade_data, _ = _fetch(f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}")
+            render_overview_chart(
+                df, sig_data, trade_data, ov_symbol,
+                positions=sym_positions if ov_live else None,
+                height=chart_height,
+                show_zones=ov_zones, show_ema=ov_ema, show_volume=ov_volume,
+            )
+            st.caption(
+                f"{ov_symbol} · {ov_interval} · candles from the bot's exchange feed "
+                f"(yfinance fallback) · auto-refreshes every {POLL_INTERVAL_S}s"
+            )
+
+    st.divider()
+
+    # ── Snapshot (below the chart) ──────────────────────────────────────────────
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("24h PnL",     fmt_usd(s.get("pnl24h")))
     c2.metric("Total PnL",   fmt_usd(s.get("totalPnL")))
@@ -1100,10 +1174,8 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     pos_col, strat_col = st.columns(2)
     with pos_col:
         st.markdown("**Open positions**")
-        positions, _ = _fetch("/api/bot/positions")
-        positions = positions or []
-        if positions:
-            pdf = pd.DataFrame(positions)
+        if sym_positions or positions:
+            pdf = pd.DataFrame(positions or [])
             cmap = {"symbol": "Symbol", "side": "Side", "qty": "Qty",
                     "entryPrice": "Entry", "unrealizedPnl": "uPnL",
                     "pattern": "Strategy"}
@@ -1115,115 +1187,6 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     with strat_col:
         st.markdown("**Strategies · 24h**")
         _render_strategy_snapshot(odf)
-
-    st.divider()
-
-    # ── Live price chart (single TradingView-style chart) ───────────────────────
-    st.subheader("Live chart")
-    # Controls stack full-width on mobile (see the <640px CSS rule).
-    oc1, oc2 = st.columns(2)
-    with oc1:
-        ov_symbol = st.selectbox("Symbol", CHART_SYMBOLS, key="ov_symbol")
-    with oc2:
-        ov_interval = st.selectbox(
-            "Interval", CHART_INTERVALS,
-            index=CHART_INTERVALS.index("1m") if "1m" in CHART_INTERVALS else 0,
-            key="ov_interval",
-        )
-    tg = st.columns(7)
-    with tg[0]:
-        ov_live = st.toggle(
-            "Live trades", value=True, key="ov_live",
-            help="Overlay open-position entry / SL / TP / current-price lines",
-        )
-    with tg[1]:
-        ov_signals = st.toggle("Signals", value=True, key="ov_signals")
-    with tg[2]:
-        ov_zones = st.toggle(
-            "Zones", value=True, key="ov_zones",
-            help="Draw the latest signal's ICT zones (FVG band + liquidity sweep) "
-                 "that the strategy actually traded on",
-        )
-    with tg[3]:
-        ov_trades = st.toggle(
-            "Closed", value=False, key="ov_trades",
-            help="Recent closed-trade entry/exit markers",
-        )
-    with tg[4]:
-        ov_ema = st.toggle("EMA", value=True, key="ov_ema",
-                           help="20-period EMA on close")
-    with tg[5]:
-        ov_volume = st.toggle("Volume", value=True, key="ov_volume",
-                              help="Per-bar volume histogram (bottom of the pane)")
-    with tg[6]:
-        ov_wide = st.toggle(
-            "Widescreen", value=False, key="ov_wide",
-            help="Near-fullscreen view — hides the sidebar so the chart fills the screen",
-        )
-
-    # Open positions drive both the live-trade overlay and the live-PnL readout.
-    positions, _ = _fetch("/api/bot/positions")
-    sym_positions = [p for p in (positions or []) if p.get("symbol") == ov_symbol]
-    if sym_positions:
-        net_pnl = sum((p.get("unrealizedPnl") or 0) for p in sym_positions)
-        pc1, pc2 = st.columns([1, 3])
-        pc1.metric(f"Live PnL · {ov_symbol}", fmt_usd(net_pnl), delta=round(net_pnl, 2))
-        pc2.caption(" · ".join(
-            f"{str(p.get('side', '')).upper()} {p.get('qty', '?')} @ {p.get('entryPrice', '?')}"
-            for p in sym_positions
-        ))
-
-    if ov_wide:
-        # Near-fullscreen: hide the sidebar + strip page padding so the chart
-        # fills the viewport. Pure CSS (mobile-safe); re-evaluated each run, so
-        # untoggling restores the sidebar on the next interaction.
-        st.html(
-            "<style>[data-testid='stSidebar']{display:none;}"
-            ".main .block-container{padding:0.4rem 0.6rem;max-width:100%;}</style>"
-        )
-    chart_height = 820 if ov_wide else _LC_HEIGHT
-
-    df, candles_err = _fetch_candles(ov_symbol, ov_interval)
-    if candles_err:
-        st.warning(f"Candles unavailable: {candles_err}")
-    elif df is None or df.empty:
-        st.caption("No candle data.")
-    else:
-        sig_data = None
-        if ov_signals:
-            sig_data, _ = _fetch("/api/bot/signals")
-            # Per-strategy signal filter — only when the endpoint tags signals
-            # with their strategy (added in the bot's /api/bot/signals route).
-            strategies = sorted({
-                s.get("strategy") for s in (sig_data or []) if s.get("strategy")
-            })
-            if strategies:
-                chosen = st.multiselect(
-                    "Signal strategies", strategies, default=strategies,
-                    key="ov_sig_strats",
-                    help="Toggle which strategies' entry signals are drawn",
-                )
-                sig_data = [
-                    s for s in sig_data
-                    if not s.get("strategy") or s.get("strategy") in chosen
-                ]
-        trade_data = None
-        if ov_trades:
-            trade_data, _ = _fetch(f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}")
-
-        render_overview_chart(
-            df, sig_data, trade_data, ov_symbol,
-            positions=sym_positions if ov_live else None,
-            height=chart_height,
-            show_zones=ov_zones,
-            show_ema=ov_ema,
-            show_volume=ov_volume,
-        )
-        st.caption(
-            f"{ov_symbol} · {ov_interval} · candles from the bot's exchange feed "
-            "(Yahoo Finance fallback) · pinch to zoom · "
-            f"auto-refreshes every {POLL_INTERVAL_S}s"
-        )
 
 
 # ── Chart symbol / interval choices (shared by the Overview chart) ──────────────
