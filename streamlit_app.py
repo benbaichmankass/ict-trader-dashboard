@@ -10,6 +10,7 @@ Override the upstream with the BOT_API_URL env var.
 """
 from __future__ import annotations
 
+import calendar
 import datetime as dt
 import os
 import time
@@ -511,6 +512,274 @@ def render_overview_chart(
     _render_lc(chart_opts, key=key)
 
 
+# ── Overview analytics (trade-performance visualizations) ───────────────────────
+#
+# Five widgets, all driven by ONE fetch of /api/bot/trades/closed (the endpoint
+# caps at 200 rows — ample for this bot's volume) aggregated client-side, so this
+# needs no new bot endpoint. A shared "All / per-strategy" filter gates the 24h
+# scorecard, the monthly P&L calendar, and the win/loss bar. The per-strategy pie
+# is the cross-strategy distribution itself, so it ignores that filter and carries
+# its own time-window selector.
+
+ANALYTICS_LOOKBACK_DAYS = 92          # one fetch feeds every widget below
+ANALYTICS_MAX_ROWS = 200              # mirrors trades_closed MAX_LIMIT on the bot
+_PNL_CALENDAR_SCALE = [[0.0, _TV_RED], [0.5, "#16203a"], [1.0, _TV_GREEN]]
+
+
+def _style_plotly(fig: go.Figure, height: int) -> go.Figure:
+    fig.update_layout(
+        height=height,
+        paper_bgcolor=_TV_BG,
+        plot_bgcolor=_TV_BG,
+        font=dict(color=_TV_TEXT, size=12),
+        margin=dict(l=8, r=8, t=34, b=8),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                    xanchor="right", x=1, bgcolor="rgba(0,0,0,0)"),
+    )
+    return fig
+
+
+def _parse_trade_ts(value: Any) -> dt.datetime | None:
+    """Parse an ISO-8601 trade timestamp into a tz-naive UTC datetime."""
+    if not value:
+        return None
+    try:
+        d = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if d.tzinfo is not None:
+        d = d.astimezone(dt.timezone.utc).replace(tzinfo=None)
+    return d
+
+
+def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
+    """One row per closed trade — strategy, pnl, ts (UTC), outcome."""
+    cols = ["strategy", "pnl", "ts", "outcome"]
+    records = []
+    for t in trades or []:
+        ts = _parse_trade_ts(t.get("closedAt") or t.get("openedAt"))
+        if ts is None:
+            continue
+        raw = t.get("realizedPnl")
+        try:
+            pnl = float(raw) if raw is not None else 0.0
+        except (TypeError, ValueError):
+            pnl = 0.0
+        records.append({
+            "strategy": t.get("pattern") or "unknown",
+            "pnl": pnl,
+            "ts": ts,
+            "outcome": "win" if pnl > 0 else ("loss" if pnl < 0 else "breakeven"),
+        })
+    if not records:
+        return pd.DataFrame(columns=cols)
+    return pd.DataFrame.from_records(records)[cols]
+
+
+def _filter_strategy(df: pd.DataFrame, strategy: str) -> pd.DataFrame:
+    if strategy and strategy != "All":
+        return df[df["strategy"] == strategy]
+    return df
+
+
+def _summary_window(df: pd.DataFrame, hours: int) -> dict[str, float]:
+    if df.empty:
+        return {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0}
+    cutoff = dt.datetime.utcnow() - dt.timedelta(hours=hours)
+    recent = df[df["ts"] >= cutoff]
+    return {
+        "trades": int(len(recent)),
+        "wins": int((recent["pnl"] > 0).sum()),
+        "losses": int((recent["pnl"] < 0).sum()),
+        "pnl": float(recent["pnl"].sum()),
+    }
+
+
+def _recent_months(n: int) -> list[tuple[int, int]]:
+    """The last *n* calendar months as (year, month), current first."""
+    today = dt.datetime.utcnow()
+    out: list[tuple[int, int]] = []
+    y, m = today.year, today.month
+    for _ in range(n):
+        out.append((y, m))
+        m -= 1
+        if m == 0:
+            m, y = 12, y - 1
+    return out
+
+
+def _month_pnl(df: pd.DataFrame, year: int, month: int) -> dict[int, float]:
+    if df.empty:
+        return {}
+    m = df[(df["ts"].dt.year == year) & (df["ts"].dt.month == month)]
+    if m.empty:
+        return {}
+    daily = m.groupby(m["ts"].dt.day)["pnl"].sum()
+    return {int(k): float(v) for k, v in daily.items()}
+
+
+def _daily_winloss(df: pd.DataFrame, days: int) -> pd.DataFrame:
+    """Per-calendar-day win/loss counts over the last *days* days (gaps filled)."""
+    cols = ["date", "wins", "losses"]
+    end = pd.Timestamp(dt.datetime.utcnow().date())
+    start = end - pd.Timedelta(days=days - 1)
+    full = pd.date_range(start, end, freq="D")
+    if df.empty:
+        return pd.DataFrame({"date": full, "wins": 0, "losses": 0})[cols]
+    d = df.copy()
+    d["date"] = d["ts"].dt.normalize()
+    d = d[d["date"] >= start]
+    if d.empty:
+        return pd.DataFrame({"date": full, "wins": 0, "losses": 0})[cols]
+    grp = d.groupby("date")["pnl"]
+    out = pd.DataFrame({
+        "wins": grp.apply(lambda s: int((s > 0).sum())),
+        "losses": grp.apply(lambda s: int((s < 0).sum())),
+    }).reindex(full, fill_value=0).rename_axis("date").reset_index()
+    return out[cols]
+
+
+def build_pnl_calendar(df: pd.DataFrame, year: int, month: int) -> go.Figure:
+    """Month grid heat-map: green = profit, red = loss, dark = near-zero / no trades."""
+    weeks = calendar.monthcalendar(year, month)   # Monday-first; 0 = padding day
+    pnl = _month_pnl(df, year, month)
+    z, text, hover = [], [], []
+    for week in weeks:
+        zr, tr, hr = [], [], []
+        for day in week:
+            if day == 0:
+                zr.append(None)
+                tr.append("")
+                hr.append("")
+                continue
+            p = pnl.get(day)
+            zr.append(0.0 if p is None else p)
+            if p is None:
+                tr.append(f"<b>{day}</b>")
+                hr.append(f"{year}-{month:02d}-{day:02d} · no trades")
+            else:
+                tr.append(f"<b>{day}</b><br>{p:+,.0f}")
+                hr.append(f"{year}-{month:02d}-{day:02d} · P&L {p:+,.2f}")
+        z.append(zr)
+        text.append(tr)
+        hover.append(hr)
+    mags = [abs(v) for v in pnl.values()]
+    cmax = max(mags) if mags else 1.0
+    fig = go.Figure(go.Heatmap(
+        z=z, text=text, customdata=hover,
+        texttemplate="%{text}", textfont=dict(size=11),
+        hovertemplate="%{customdata}<extra></extra>",
+        x=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        y=[f"W{i + 1}" for i in range(len(weeks))],
+        colorscale=_PNL_CALENDAR_SCALE, zmid=0, zmin=-cmax, zmax=cmax,
+        xgap=3, ygap=3, showscale=True,
+        colorbar=dict(title="P&L $", thickness=10, len=0.9),
+    ))
+    fig.update_xaxes(side="top", showgrid=False, fixedrange=True)
+    fig.update_yaxes(autorange="reversed", showgrid=False,
+                     showticklabels=False, fixedrange=True)
+    return _style_plotly(fig, 300)
+
+
+def build_winloss_bar(daily: pd.DataFrame) -> go.Figure:
+    fig = go.Figure()
+    fig.add_bar(x=daily["date"], y=daily["wins"], name="Wins", marker_color=_TV_GREEN)
+    fig.add_bar(x=daily["date"], y=daily["losses"], name="Losses", marker_color=_TV_RED)
+    fig.update_layout(barmode="stack")
+    fig.update_xaxes(showgrid=False, fixedrange=True)
+    fig.update_yaxes(showgrid=True, gridcolor=_LC_GRID_H, fixedrange=True,
+                     rangemode="tozero", dtick=1)
+    return _style_plotly(fig, 320)
+
+
+def build_strategy_pie(df: pd.DataFrame, days: int) -> tuple[go.Figure, int]:
+    cutoff = dt.datetime.utcnow() - dt.timedelta(days=days)
+    d = df[df["ts"] >= cutoff]
+    counts = d.groupby("strategy").size().sort_values(ascending=False)
+    fig = go.Figure(go.Pie(
+        labels=counts.index.tolist(), values=[int(v) for v in counts.values],
+        hole=0.45, textinfo="label+percent",
+        hovertemplate="%{label}: %{value} trades (%{percent})<extra></extra>",
+    ))
+    return _style_plotly(fig, 340), int(counts.sum())
+
+
+def render_overview_analytics() -> None:
+    st.subheader("Trade Analytics")
+    since = (dt.datetime.utcnow()
+             - dt.timedelta(days=ANALYTICS_LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    trades, err = _fetch(
+        "/api/bot/trades/closed?"
+        + urlencode({"limit": ANALYTICS_MAX_ROWS, "since": since})
+    )
+    if err:
+        st.info(f"Trade analytics unavailable: {err}")
+        return
+    trades = trades or []
+    df = _closed_trades_frame(trades)
+    if df.empty:
+        st.caption("No closed trades yet — analytics will populate as trades close.")
+        return
+
+    strategies = sorted(df["strategy"].unique().tolist())
+    choice = st.radio(
+        "Strategy", ["All"] + strategies, horizontal=True, key="ov_an_strat",
+        help="Filters the 24h scorecard, the monthly P&L calendar and the "
+             "win/loss bar. The 'Trades by strategy' pie always shows the full "
+             "cross-strategy split.",
+    )
+    fdf = _filter_strategy(df, choice)
+
+    s = _summary_window(fdf, 24)
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Trades · 24h", s["trades"])
+    k2.metric("Wins · 24h", s["wins"])
+    k3.metric("Losses · 24h", s["losses"])
+    k4.metric("P&L · 24h", fmt_usd(s["pnl"]))
+    if len(trades) >= ANALYTICS_MAX_ROWS:
+        st.caption(
+            f"Aggregating the most recent {ANALYTICS_MAX_ROWS} closed trades "
+            "(bot endpoint cap) — older trades in the window are not included."
+        )
+
+    cal_col, bar_col = st.columns(2)
+    with cal_col:
+        st.markdown("**Monthly P&L calendar**")
+        months = _recent_months(3)
+        ym = st.selectbox(
+            "Month", months, key="ov_an_month",
+            format_func=lambda v: f"{calendar.month_name[v[1]]} {v[0]}",
+        )
+        st.plotly_chart(
+            build_pnl_calendar(fdf, ym[0], ym[1]),
+            use_container_width=True, config={"displayModeBar": False},
+        )
+        st.caption("Green = net-profit day · red = net-loss day · "
+                   "darker = closer to flat.")
+    with bar_col:
+        st.markdown("**Wins vs losses per day**")
+        win = st.selectbox("Window (days)", [7, 14, 30, 60, 90], index=0,
+                           key="ov_an_barwin")
+        st.plotly_chart(
+            build_winloss_bar(_daily_winloss(fdf, win)),
+            use_container_width=True, config={"displayModeBar": False},
+        )
+
+    st.markdown("**Trades by strategy**")
+    pwin = st.selectbox(
+        "Window", ["Last 24h", "Last 7 days", "Last 30 days", "Last 90 days"],
+        index=1, key="ov_an_piewin",
+    )
+    pwin_days = {"Last 24h": 1, "Last 7 days": 7,
+                 "Last 30 days": 30, "Last 90 days": 90}[pwin]
+    pie_fig, total = build_strategy_pie(df, pwin_days)
+    if total == 0:
+        st.caption("No trades in the selected window.")
+    else:
+        st.plotly_chart(pie_fig, use_container_width=True,
+                        config={"displayModeBar": False})
+
+
 # ── Overview ──────────────────────────────────────────────────────────────────
 
 def page_overview(stats: dict | None, stats_err: str | None) -> None:
@@ -533,6 +802,10 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         h1.metric("CPU",    fmt_pct(vm.get("cpu")))
         h2.metric("Memory", fmt_pct(vm.get("memory")))
         h3.metric("Disk",   fmt_pct(vm.get("disk")))
+
+    st.divider()
+    render_overview_analytics()
+    st.divider()
 
     # ── Live price chart (single TradingView-style chart) ───────────────────────
     st.subheader("Price Chart")
@@ -1339,6 +1612,14 @@ def _render_model_card(model_id: str, rows: list[dict]) -> None:
                 st.caption("**Used by:** — (no strategy references this model)")
         with head_r:
             st.metric("Registry stage", stage)
+
+        # Human-readable description — sourced from the model's manifest
+        # (`description` field) and surfaced via /api/bot/ml/registry. Falls
+        # back silently when the manifest predates the field (older rows
+        # re-populate on the trainer's next registration).
+        description = latest.get("description")
+        if description:
+            st.markdown(description)
 
         # About — type / class / dataset / decision logic hints
         st.markdown("**About**")
