@@ -104,6 +104,16 @@ docs/                  — ad-hoc design notes
 
 ## Tabs (current)
 
+Sidebar order is operational top-to-bottom: **Overview · Performance · Strategies ·
+Models · Accounts · Order Packages · Positions · Signals** (live/ops), then
+**Backtesting · Promotion · Health** (diagnostics), then **Data Explorer · Logs**
+(dev tools). The list/registry pages — **Strategies, Models, Accounts** — share a
+uniform **collapsible-row** layout: each row is an `st.expander` whose label is a
+status dot (🟢 live · 🔵 shadow · 🟡 stale · 🔴 bad · ⚫ off) + name + a couple of
+summary stats; expanding shows detail metrics + a visualization + a "logs" toggle
+(config/changelog, training history, or recent trades). Nested expanders are
+illegal in Streamlit, so the in-row logs use a `st.checkbox`, not an expander.
+
 | Tab | Endpoints |
 |---|---|
 | Overview | `/api/bot/stats`, `/api/bot/trades/closed`, `/api/pnl/history?days=30`, `/api/bot/positions`, `/api/bot/strategies`, candles (Yahoo Finance) — **at-a-glance snapshot**: KPI row (24h/total PnL, open trades, win rate), a 24h trades/wins/losses scorecard + system-health (CPU/mem/disk), a 30-day realised-P&L sparkline, an open-positions mini-table, a per-strategy 24h line, and **the single live chart** (TradingView Lightweight Charts, 1m default, live-trade overlay of entry/SL/TP/current-price + live PnL, signal/closed markers, per-strategy signal toggle, a **Zones** toggle for the latest signal's ICT FVG band + sweep, Widescreen). The heavy analytics moved to Performance. |

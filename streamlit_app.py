@@ -228,9 +228,12 @@ def fmt_num(x: float | None) -> str:
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 PAGES = [
-    "Overview", "Performance", "Accounts", "Positions", "Signals",
-    "Order Packages", "Models", "Promotion", "Backtesting", "Strategies",
-    "Data Explorer", "Health", "Logs",
+    # Operational, top-to-bottom: glance → performance → what's trading →
+    # routing → decisions/fills → raw feed; then ops/diagnostics; then dev tools.
+    "Overview", "Performance", "Strategies", "Models", "Accounts",
+    "Order Packages", "Positions", "Signals",
+    "Backtesting", "Promotion", "Health",
+    "Data Explorer", "Logs",
 ]
 
 
@@ -239,6 +242,20 @@ def _status_dot(color: str) -> str:
         f"<span style='display:inline-block;width:9px;height:9px;border-radius:50%;"
         f"background:{color};box-shadow:0 0 6px {color};margin-right:6px;'></span>"
     )
+
+
+# Status dots for collapsible-row LABELS. st.expander labels render markdown,
+# not HTML, so the colored-circle emoji is the only way to get a status dot in
+# a collapsed row header. Used uniformly by the Strategies / Models / Accounts
+# list pages.
+_ROW_DOTS = {
+    "live": "🟢", "ok": "🟢", "shadow": "🔵", "warn": "🟡",
+    "stale": "🟡", "off": "⚫", "dry": "⚫", "bad": "🔴", "unknown": "⚪",
+}
+
+
+def _row_dot(state: str) -> str:
+    return _ROW_DOTS.get(state, "⚪")
 
 
 def render_sidebar() -> str:
@@ -1397,22 +1414,13 @@ def page_accounts() -> None:
         market    = acc.get("market_type", "—")
         strategies = acc.get("strategies") or []
 
-        pill = "\U0001f7e2 LIVE" if is_live else "⚫ DRY"
-        st.subheader(f"{pill} · {aid}")
-        st.caption(
-            f"{exchange} · {market} · "
-            f"strategies: {', '.join(strategies) if strategies else '— (none assigned)'}"
-        )
-
         bal_val = (balances.get(aid) or {}).get("balance")
         acc_positions = [p for p in positions if p.get("account") == aid]
         unrealized = sum((p.get("unrealizedPnl") or 0) for p in acc_positions)
 
         # 30-day realised-PnL history via the no-session, account-filtered
-        # endpoint. One fetch feeds the realized metric, the trade count, and
-        # the daily chart. Rows are `{date, pnl, trades}` — `pnl`, not
-        # `realizedPnl` (the field was renamed in S-063; the old key silently
-        # summed to zero).
+        # endpoint. Rows are `{date, pnl, trades}` — `pnl`, not `realizedPnl`
+        # (renamed in S-063; the old key silently summed to zero).
         realized = None
         trades_30d = 0
         ph, _ = _fetch(f"/api/pnl/history?days=30&account_id={aid}")
@@ -1424,42 +1432,49 @@ def page_accounts() -> None:
             except (TypeError, ValueError):
                 realized = None
 
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Balance",        fmt_usd(bal_val) if bal_val is not None else "—")
-        m2.metric("Realized · 30d", fmt_usd(realized))
-        m3.metric("Unrealized",     fmt_usd(unrealized) if acc_positions else "—")
-        m4.metric("Open trades",    len(acc_positions))
-        m5.metric("Trades · 30d",   trades_30d)
-
-        fig = build_daily_pnl_fig(ph, height=220)
-        if fig is not None:
-            st.plotly_chart(fig, use_container_width=True,
-                            config={"displayModeBar": False})
-        else:
-            st.caption("No realised P&L in the last 30 days.")
-
-        with st.expander("Recent trades (last 7 days)"):
-            trades, terr = _fetch(
-                f"/api/bot/trades/closed?limit=100&account_id={aid}&since={since_7d}"
+        dot = _row_dot("live" if is_live else "dry")
+        label = (f"{dot}  **{aid}**  ·  {'LIVE' if is_live else 'DRY'}  ·  "
+                 f"30d {fmt_usd(realized)}  ·  {len(acc_positions)} open")
+        with st.expander(label):
+            st.caption(
+                f"{exchange} · {market} · "
+                f"strategies: {', '.join(strategies) if strategies else '— (none assigned)'}"
             )
-            if terr:
-                st.warning(terr)
-            elif not trades:
-                st.caption("No closed trades in the last 7 days.")
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("Balance",        fmt_usd(bal_val) if bal_val is not None else "—")
+            m2.metric("Realized · 30d", fmt_usd(realized))
+            m3.metric("Unrealized",     fmt_usd(unrealized) if acc_positions else "—")
+            m4.metric("Open trades",    len(acc_positions))
+            m5.metric("Trades · 30d",   trades_30d)
+
+            fig = build_daily_pnl_fig(ph, height=220)
+            if fig is not None:
+                st.plotly_chart(fig, use_container_width=True,
+                                config={"displayModeBar": False})
             else:
-                tdf = pd.DataFrame(trades)
-                col_map = {
-                    "symbol": "Symbol", "side": "Side", "pattern": "Strategy",
-                    "entryPrice": "Entry", "exitPrice": "Exit",
-                    "realizedPnl": "PnL", "realizedPnlPct": "PnL %",
-                    "closeReason": "Close", "openedAt": "Opened", "closedAt": "Closed",
-                }
-                cols = [c for c in col_map if c in tdf.columns]
-                st.dataframe(
-                    tdf[cols].rename(columns=col_map) if cols else tdf,
-                    hide_index=True, use_container_width=True,
+                st.caption("No realised P&L in the last 30 days.")
+
+            if st.checkbox("Recent trades (7d)", key=f"acc_log_{aid}"):
+                trades, terr = _fetch(
+                    f"/api/bot/trades/closed?limit=100&account_id={aid}&since={since_7d}"
                 )
-        st.divider()
+                if terr:
+                    st.warning(terr)
+                elif not trades:
+                    st.caption("No closed trades in the last 7 days.")
+                else:
+                    tdf = pd.DataFrame(trades)
+                    col_map = {
+                        "symbol": "Symbol", "side": "Side", "pattern": "Strategy",
+                        "entryPrice": "Entry", "exitPrice": "Exit",
+                        "realizedPnl": "PnL", "realizedPnlPct": "PnL %",
+                        "closeReason": "Close", "openedAt": "Opened", "closedAt": "Closed",
+                    }
+                    cols = [c for c in col_map if c in tdf.columns]
+                    st.dataframe(
+                        tdf[cols].rename(columns=col_map) if cols else tdf,
+                        hide_index=True, use_container_width=True,
+                    )
 
 
 # ── Positions ───────────────────────────────────────────────────────────────────
@@ -1917,32 +1932,26 @@ def _render_model_card(model_id: str, rows: list[dict]) -> None:
     """
     latest = rows[-1]
     bucket = _normalize_bucket(latest)
-    pill = _format_pill(bucket)
     stage = latest.get("target_deployment_stage") or latest.get("stage") or "—"
     family = latest.get("model_family") or latest.get("family") or "—"
     linked = latest.get("linked_strategies") or []
 
-    with st.container(border=True):
-        # Header — pill + model_id + linked strategy + registry stage
-        head_l, head_r = st.columns([3, 1])
-        with head_l:
-            st.markdown(f"### {pill} · `{model_id}`")
-            if linked:
-                st.caption(f"**Used by:** {', '.join(linked)}")
-            else:
-                st.caption("**Used by:** — (no strategy references this model)")
-        with head_r:
-            st.metric("Registry stage", stage)
+    dot_state = {"LIVE": "live", "SHADOW": "shadow", "OFFLINE": "off"}.get(bucket, "unknown")
+    label = (f"{_row_dot(dot_state)}  **{model_id}**  ·  {bucket}  ·  {stage}"
+             + (f"  ·  used by {len(linked)}" if linked else ""))
+    with st.expander(label):
+        if linked:
+            st.caption(f"**Used by:** {', '.join(linked)}")
+        else:
+            st.caption("**Used by:** — (no strategy references this model)")
 
-        # Human-readable description — sourced from the model's manifest
-        # (`description` field) and surfaced via /api/bot/ml/registry. Falls
-        # back silently when the manifest predates the field (older rows
-        # re-populate on the trainer's next registration).
+        # Human-readable description from the model's manifest (`description`),
+        # surfaced via /api/bot/ml/registry. Absent for rows whose manifest
+        # predates the field (re-populates on the trainer's next registration).
         description = latest.get("description")
         if description:
             st.markdown(description)
 
-        # About — type / class / dataset / decision logic hints
         st.markdown("**About**")
         about_l, about_r = st.columns(2)
         with about_l:
@@ -1970,23 +1979,21 @@ def _render_model_card(model_id: str, rows: list[dict]) -> None:
         if notes:
             st.markdown(f"**Notes:** {notes}")
 
-        # Latest run — metrics + run_id + timestamp.
-        # Prefer the enriched `latest_run` field (PR #1391). Falls back
-        # to the per-run endpoint /api/bot/ml/runs/{model_id}/{run_id}
-        # for backward compat.
+        # Latest-run metrics — inline (nested expanders aren't allowed inside
+        # the row expander). Prefer the enriched `latest_run` field (PR #1391);
+        # fall back to the per-run endpoint.
         latest_run = latest.get("latest_run")
         if isinstance(latest_run, dict) and latest_run:
-            with st.expander("📊 Latest run metrics", expanded=True):
-                rc1, rc2 = st.columns(2)
-                rc1.caption(f"Run: `{latest_run.get('run_id', '—')}`")
-                rc2.caption(f"At: {latest_run.get('at', '—')}")
-                metrics = latest_run.get("metrics") or {}
-                if metrics:
-                    st.json(metrics)
-                else:
-                    st.caption("No metrics recorded for this run.")
+            st.markdown("**Latest run**")
+            rc1, rc2 = st.columns(2)
+            rc1.caption(f"Run: `{latest_run.get('run_id', '—')}`")
+            rc2.caption(f"At: {latest_run.get('at', '—')}")
+            metrics = latest_run.get("metrics") or {}
+            if metrics:
+                st.json(metrics)
+            else:
+                st.caption("No metrics recorded for this run.")
         else:
-            # Backward-compat: try the per-run endpoint.
             run_id = (
                 latest.get("run_id")
                 or (latest.get("metrics_path") or "").split("/")[-2]
@@ -1999,33 +2006,27 @@ def _render_model_card(model_id: str, rows: list[dict]) -> None:
                 else:
                     metrics = (run_payload or {}).get("metrics") or {}
                     if metrics:
-                        with st.expander("📊 Latest run metrics", expanded=True):
-                            st.json(metrics)
+                        st.markdown("**Latest run**")
+                        st.json(metrics)
 
-        # Training history — every recorded run with its metrics.
+        # Collapsible "logs" — training history + trainer config + stage history.
         runs = latest.get("runs") or []
-        if isinstance(runs, list) and len(runs) > 1:
-            with st.expander(f"📈 Training history ({len(runs)} runs)"):
-                history_rows = []
-                for r in runs:
-                    history_rows.append({
-                        "run_id": r.get("run_id"),
-                        "at": r.get("at"),
-                        **(r.get("metrics") or {}),
-                    })
-                st.dataframe(
-                    pd.DataFrame(history_rows),
-                    hide_index=True, use_container_width=True,
-                )
-
         cfg = latest.get("trainer_config") or {}
-        if cfg:
-            with st.expander("⚙️ Trainer config"):
+        has_history = (isinstance(runs, list) and len(runs) > 1) or bool(cfg) or len(rows) > 1
+        if has_history and st.checkbox("History + config", key=f"model_log_{model_id}"):
+            if isinstance(runs, list) and len(runs) > 1:
+                st.markdown(f"**Training history ({len(runs)} runs)**")
+                history_rows = [
+                    {"run_id": r.get("run_id"), "at": r.get("at"), **(r.get("metrics") or {})}
+                    for r in runs
+                ]
+                st.dataframe(pd.DataFrame(history_rows), hide_index=True,
+                             use_container_width=True)
+            if cfg:
+                st.markdown("**Trainer config**")
                 st.json(cfg)
-
-        # Stage-transition history (registry mutations over time).
-        if len(rows) > 1:
-            with st.expander(f"📜 Stage history ({len(rows)} rows)"):
+            if len(rows) > 1:
+                st.markdown(f"**Stage history ({len(rows)} rows)**")
                 st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
 
@@ -2609,79 +2610,77 @@ def page_strategies() -> None:
         accounts  = strat.get("accounts") or []
         risk_pct  = strat.get("risk_pct")
         timeframe = strat.get("timeframe", "—")
-        symbols   = ", ".join(strat.get("symbols") or []) or "—"
         stats     = strat.get("stats") or {}
         desc      = strat.get("description") or {}
         changelog = strat.get("changelog") or []
 
         if not enabled:
-            dot_color, status_label = _TV_RED, "Disabled"
+            state, status_label = "bad", "Disabled"
         elif running:
-            dot_color, status_label = _TV_GREEN, "Running"
+            state, status_label = "live", "Running"
         elif loaded:
-            dot_color, status_label = "#f5a623", "Loaded · tick stale"
+            state, status_label = "stale", "Loaded · stale"
         else:
-            dot_color, status_label = "#6b7488", "Configured · not loaded"
+            state, status_label = "off", "Not loaded"
 
-        st.markdown(
-            f"<h3 style='margin:0.4rem 0 0.1rem 0;'>{_status_dot(dot_color)}{name}"
-            f"<span style='font-size:0.8rem;color:#6b7488;font-weight:400;'> · "
-            f"{status_label} · {symbols}</span></h3>",
-            unsafe_allow_html=True,
-        )
-        if desc.get("short"):
-            st.caption(desc["short"])
-
-        # Account routing — which accounts run this strategy + live/dry.
-        if accounts:
-            chips = " · ".join(
-                _status_dot(_TV_GREEN if a.get("live") else "#6b7488") + str(a.get("id"))
-                for a in accounts
-            )
-            st.markdown(
-                f"<div style='font-size:0.8rem;color:#aeb6c6;'>Routes to: {chips}</div>",
-                unsafe_allow_html=True,
-            )
-        else:
-            st.caption("Routes to: — (no account routes this strategy)")
-
-        trades_24h = _summary_window(_filter_strategy(an_df, name), 24)["trades"] \
-            if not an_df.empty else 0
-        m1, m2, m3, m4, m5, m6 = st.columns(6)
-        m1.metric("Timeframe",     timeframe)
-        m2.metric("Risk/trade",    f"{risk_pct}%" if risk_pct is not None else "—")
-        m3.metric("Total trades",  stats.get("total_trades", 0))
-        m4.metric("Trades · 24h",  trades_24h)
-        m5.metric("Win rate",      fmt_pct(stats.get("win_rate_pct")))
-        m6.metric("Total PnL",     fmt_usd(stats.get("total_pnl")))
-
-        # Performance — cumulative realised P&L trajectory (client-side from
-        # the closed-trade window above).
         sdf = _filter_strategy(an_df, name) if not an_df.empty else an_df
-        perf = build_cumulative_pnl_fig(sdf) if not sdf.empty else None
-        if perf is not None:
-            st.plotly_chart(perf, use_container_width=True,
-                            config={"displayModeBar": False})
-            st.caption(f"Cumulative realised P&L · last {ANALYTICS_LOOKBACK_DAYS}d "
-                       f"(up to {ANALYTICS_MAX_ROWS} trades)")
+        trades_24h = _summary_window(sdf, 24)["trades"] if not sdf.empty else 0
 
-        exit_reasons = stats.get("exit_reasons") or {}
-        if exit_reasons:
-            total = stats.get("total_trades") or 1
-            reason_cols = st.columns(len(exit_reasons))
-            for col, (reason, count) in zip(reason_cols, sorted(exit_reasons.items())):
-                col.metric(reason, count, f"{count / total * 100:.0f}%")
+        label = (f"{_row_dot(state)}  **{name}**  ·  {status_label}  ·  "
+                 f"24h {trades_24h}  ·  {fmt_usd(stats.get('total_pnl'))}")
+        with st.expander(label):
+            if desc.get("short"):
+                st.caption(desc["short"])
 
-        if (desc or {}).get("how_it_works"):
-            with st.expander("How it works"):
+            if accounts:
+                chips = " · ".join(
+                    _status_dot(_TV_GREEN if a.get("live") else "#6b7488") + str(a.get("id"))
+                    for a in accounts
+                )
+                st.markdown(
+                    f"<div style='font-size:0.8rem;color:#aeb6c6;'>Routes to: {chips}</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.caption("Routes to: — (no account routes this strategy)")
+
+            m1, m2, m3, m4, m5, m6 = st.columns(6)
+            m1.metric("Timeframe",     timeframe)
+            m2.metric("Risk/trade",    f"{risk_pct}%" if risk_pct is not None else "—")
+            m3.metric("Total trades",  stats.get("total_trades", 0))
+            m4.metric("Trades · 24h",  trades_24h)
+            m5.metric("Win rate",      fmt_pct(stats.get("win_rate_pct")))
+            m6.metric("Total PnL",     fmt_usd(stats.get("total_pnl")))
+
+            perf = build_cumulative_pnl_fig(sdf) if not sdf.empty else None
+            if perf is not None:
+                st.plotly_chart(perf, use_container_width=True,
+                                config={"displayModeBar": False})
+                st.caption(f"Cumulative realised P&L · last {ANALYTICS_LOOKBACK_DAYS}d "
+                           f"(up to {ANALYTICS_MAX_ROWS} trades)")
+
+            exit_reasons = stats.get("exit_reasons") or {}
+            if exit_reasons:
+                total = stats.get("total_trades") or 1
+                reason_cols = st.columns(len(exit_reasons))
+                for col, (reason, count) in zip(reason_cols, sorted(exit_reasons.items())):
+                    col.metric(reason, count, f"{count / total * 100:.0f}%")
+
+            if desc.get("how_it_works"):
+                st.markdown("**How it works**")
                 st.write(desc["how_it_works"])
-        if strat.get("config"):
-            with st.expander("Config parameters"):
-                st.json(strat["config"])
-        if changelog:
-            with st.expander(f"Update log ({len(changelog)} entries)"):
-                st.dataframe(pd.DataFrame(changelog), hide_index=True, use_container_width=True)
-        st.divider()
+
+            # Collapsible "logs" — config params + update log (changelog).
+            if st.checkbox("Config + update log", key=f"strat_log_{name}"):
+                if strat.get("config"):
+                    st.markdown("**Config parameters**")
+                    st.json(strat["config"])
+                if changelog:
+                    st.markdown(f"**Update log ({len(changelog)} entries)**")
+                    st.dataframe(pd.DataFrame(changelog), hide_index=True,
+                                 use_container_width=True)
+                else:
+                    st.caption("No changelog entries.")
 
 
 # ── Data Explorer ─────────────────────────────────────────────────────────────
