@@ -33,6 +33,32 @@ Cloud (free), auto-redeploys from `main`.
 - Deploy + local-dev steps: [`README.md`](./README.md)
 - Migration history: [PR #32](https://github.com/benbaichmankass/ict-trader-dashboard/pull/32)
 
+## Preview app + branch (adopted 2026-05-25) — READ BEFORE BUILDING UI
+
+There are **two** Streamlit Community Cloud apps:
+
+| App | Tracks branch | Audience |
+|---|---|---|
+| **Production** | `main` | the operator's live dashboard — auto-redeploys on merge to `main` |
+| **Preview** | **`claude/web-app-preview`** (the standing preview branch) | a staging app the operator eyeballs **before** changes hit production |
+
+**The standing preview branch is `claude/web-app-preview`** — the preview app is
+pointed at it permanently, so the operator never has to create/re-point an app
+per feature.
+
+**Workflow for ANY dashboard UI/feature change** (this is the rule — follow it):
+1. Build the change and push it to **`claude/web-app-preview`** (the preview app
+   auto-redeploys from it within a minute or two).
+2. Open the PR against `main` as usual and tell the operator to preview on the
+   preview app.
+3. Only after the operator approves the preview, **merge to `main`** (production).
+
+Keep `claude/web-app-preview` **long-lived — never delete it.** After a change
+lands on `main`, re-sync the preview branch onto `main` (so it starts the next
+change from the released base) or stack the next WIP on it. Because the
+dashboard can't be rendered from a sandbox/CI, **the preview app is the
+verification step** — don't merge UI changes to `main` unverified.
+
 ## Architecture
 
 ```
