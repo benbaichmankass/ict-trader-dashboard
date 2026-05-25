@@ -229,7 +229,7 @@ def fmt_num(x: float | None) -> str:
 
 PAGES = [
     "Overview", "Performance", "Accounts", "Positions", "Signals",
-    "Closed Trades", "Models", "Promotion", "Backtesting", "Strategies",
+    "Order Packages", "Models", "Promotion", "Backtesting", "Strategies",
     "Data Explorer", "Health", "Logs",
 ]
 
@@ -789,8 +789,30 @@ def build_cumulative_pnl_fig(frame: pd.DataFrame, height: int = 220) -> go.Figur
     return _style_plotly(fig, height)
 
 
-def render_overview_analytics() -> None:
-    st.subheader("Trade Analytics")
+def _strategy_breakdown(df: pd.DataFrame) -> pd.DataFrame:
+    """Per-strategy performance table over the supplied closed-trade frame."""
+    cols = ["Strategy", "Trades", "Win rate %", "Expectancy $", "Total P&L $"]
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    rows = []
+    for name, sub in df.groupby("strategy"):
+        n = len(sub)
+        total = float(sub["pnl"].sum())
+        rows.append({
+            "Strategy": name,
+            "Trades": n,
+            "Win rate %": round(int((sub["pnl"] > 0).sum()) / n * 100, 1) if n else 0.0,
+            "Expectancy $": round(total / n, 2) if n else 0.0,
+            "Total P&L $": round(total, 2),
+        })
+    return (pd.DataFrame(rows)
+            .sort_values("Total P&L $", ascending=False)
+            .reset_index(drop=True))
+
+
+@st.cache_data(ttl=POLL_INTERVAL_S, show_spinner=False)
+def _analytics_frame() -> tuple[pd.DataFrame, int, str | None]:
+    """One closed-trade fetch (capped) → tidy frame, for the analytics widgets."""
     since = (dt.datetime.utcnow()
              - dt.timedelta(days=ANALYTICS_LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
     trades, err = _fetch(
@@ -798,41 +820,65 @@ def render_overview_analytics() -> None:
         + urlencode({"limit": ANALYTICS_MAX_ROWS, "since": since})
     )
     if err:
+        return pd.DataFrame(columns=["strategy", "pnl", "ts", "outcome"]), 0, err
+    trades = trades or []
+    return _closed_trades_frame(trades), len(trades), None
+
+
+def render_trade_analytics() -> None:
+    """The performance deep-dive: filter + headline metrics + equity curve +
+    calendar + win/loss bar + strategy pie + per-strategy breakdown."""
+    df, raw_count, err = _analytics_frame()
+    if err:
         st.info(f"Trade analytics unavailable: {err}")
         return
-    trades = trades or []
-    df = _closed_trades_frame(trades)
     if df.empty:
         st.caption("No closed trades yet — analytics will populate as trades close.")
         return
 
     strategies = sorted(df["strategy"].unique().tolist())
     choice = st.radio(
-        "Strategy", ["All"] + strategies, horizontal=True, key="ov_an_strat",
-        help="Filters the 24h scorecard, the monthly P&L calendar and the "
-             "win/loss bar. The 'Trades by strategy' pie always shows the full "
-             "cross-strategy split.",
+        "Strategy", ["All"] + strategies, horizontal=True, key="perf_strat",
+        help="Filters the headline metrics, the equity curve, the monthly P&L "
+             "calendar and the win/loss bar. The pie + per-strategy table below "
+             "always show the full cross-strategy split.",
     )
     fdf = _filter_strategy(df, choice)
 
-    s = _summary_window(fdf, 24)
-    k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Trades · 24h", s["trades"])
-    k2.metric("Wins · 24h", s["wins"])
-    k3.metric("Losses · 24h", s["losses"])
-    k4.metric("P&L · 24h", fmt_usd(s["pnl"]))
-    if len(trades) >= ANALYTICS_MAX_ROWS:
+    n = len(fdf)
+    total_pnl = float(fdf["pnl"].sum())
+    wr = round(int((fdf["pnl"] > 0).sum()) / n * 100, 1) if n else 0.0
+    exp = round(total_pnl / n, 2) if n else 0.0
+    m = st.columns(4)
+    m[0].metric(f"Trades · {ANALYTICS_LOOKBACK_DAYS}d", n)
+    m[1].metric("Win rate", f"{wr:.1f}%")
+    m[2].metric("Expectancy", fmt_usd(exp))
+    m[3].metric("Total P&L", fmt_usd(total_pnl))
+    s24 = _summary_window(fdf, 24)
+    g = st.columns(4)
+    g[0].metric("Trades · 24h", s24["trades"])
+    g[1].metric("Wins · 24h", s24["wins"])
+    g[2].metric("Losses · 24h", s24["losses"])
+    g[3].metric("P&L · 24h", fmt_usd(s24["pnl"]))
+    if raw_count >= ANALYTICS_MAX_ROWS:
         st.caption(
             f"Aggregating the most recent {ANALYTICS_MAX_ROWS} closed trades "
             "(bot endpoint cap) — older trades in the window are not included."
         )
+
+    st.markdown("**Equity curve · cumulative realised P&L**")
+    eq = build_cumulative_pnl_fig(fdf, height=260)
+    if eq is not None:
+        st.plotly_chart(eq, use_container_width=True, config={"displayModeBar": False})
+    else:
+        st.caption("No trades for the selected strategy.")
 
     cal_col, bar_col = st.columns(2)
     with cal_col:
         st.markdown("**Monthly P&L calendar**")
         months = _recent_months(3)
         ym = st.selectbox(
-            "Month", months, key="ov_an_month",
+            "Month", months, key="perf_month",
             format_func=lambda v: f"{calendar.month_name[v[1]]} {v[0]}",
         )
         st.plotly_chart(
@@ -844,56 +890,122 @@ def render_overview_analytics() -> None:
     with bar_col:
         st.markdown("**Wins vs losses per day**")
         win = st.selectbox("Window (days)", [7, 14, 30, 60, 90], index=0,
-                           key="ov_an_barwin")
+                           key="perf_barwin")
         st.plotly_chart(
             build_winloss_bar(_daily_winloss(fdf, win)),
             use_container_width=True, config={"displayModeBar": False},
         )
 
-    st.markdown("**Trades by strategy**")
-    pwin = st.selectbox(
-        "Window", ["Last 24h", "Last 7 days", "Last 30 days", "Last 90 days"],
-        index=1, key="ov_an_piewin",
-    )
-    pwin_days = {"Last 24h": 1, "Last 7 days": 7,
-                 "Last 30 days": 30, "Last 90 days": 90}[pwin]
-    pie_fig, total = build_strategy_pie(df, pwin_days)
-    if total == 0:
-        st.caption("No trades in the selected window.")
-    else:
-        st.plotly_chart(pie_fig, use_container_width=True,
-                        config={"displayModeBar": False})
+    pie_col, tbl_col = st.columns(2)
+    with pie_col:
+        st.markdown("**Trades by strategy**")
+        pwin = st.selectbox(
+            "Window", ["Last 24h", "Last 7 days", "Last 30 days", "Last 90 days"],
+            index=1, key="perf_piewin",
+        )
+        pwin_days = {"Last 24h": 1, "Last 7 days": 7,
+                     "Last 30 days": 30, "Last 90 days": 90}[pwin]
+        pie_fig, total = build_strategy_pie(df, pwin_days)
+        if total == 0:
+            st.caption("No trades in the selected window.")
+        else:
+            st.plotly_chart(pie_fig, use_container_width=True,
+                            config={"displayModeBar": False})
+    with tbl_col:
+        st.markdown(f"**Per-strategy breakdown · {ANALYTICS_LOOKBACK_DAYS}d**")
+        st.dataframe(_strategy_breakdown(df), hide_index=True,
+                     use_container_width=True)
 
 
 # ── Overview ──────────────────────────────────────────────────────────────────
 
+def _render_strategy_snapshot(frame: pd.DataFrame) -> None:
+    """Compact per-strategy line for the Overview snapshot."""
+    data, err = _fetch("/api/bot/strategies")
+    strategies = (data or {}).get("strategies") or []
+    if err or not strategies:
+        st.caption("Strategy data unavailable.")
+        return
+    rows = []
+    for strat in strategies:
+        name = strat.get("name", "")
+        sstats = strat.get("stats") or {}
+        t24 = (_summary_window(_filter_strategy(frame, name), 24)["trades"]
+               if not frame.empty else 0)
+        rows.append({
+            "Strategy": name,
+            "24h": t24,
+            "Trades": sstats.get("total_trades", 0),
+            "Win %": sstats.get("win_rate_pct"),
+            "P&L $": sstats.get("total_pnl"),
+        })
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+
 def page_overview(stats: dict | None, stats_err: str | None) -> None:
     st.header("Overview")
+    st.caption("System snapshot — see Performance for the full analytics, "
+               "Positions / Order Packages for detail.")
 
     s  = stats or {}
     vm = s.get("vmHealth") or {}
-
     if stats_err:
         st.warning(f"Stats endpoint error: {stats_err}")
-    else:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("24h PnL",     fmt_usd(s.get("pnl24h")))
-        c2.metric("Total PnL",   fmt_usd(s.get("totalPnL")))
-        c3.metric("Open trades", s.get("openTrades", 0))
-        c4.metric("Win rate",    fmt_pct(s.get("winRate")))
 
-        st.subheader("VM Health")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("24h PnL",     fmt_usd(s.get("pnl24h")))
+    c2.metric("Total PnL",   fmt_usd(s.get("totalPnL")))
+    c3.metric("Open trades", s.get("openTrades", 0))
+    c4.metric("Win rate",    fmt_pct(s.get("winRate")))
+
+    odf, _, _ = _analytics_frame()
+    s24 = _summary_window(odf, 24)
+
+    left, right = st.columns(2)
+    with left:
+        st.markdown("**Last 24h**")
+        a1, a2, a3 = st.columns(3)
+        a1.metric("Trades", s24["trades"])
+        a2.metric("Wins",   s24["wins"])
+        a3.metric("Losses", s24["losses"])
+        st.markdown("**System health**")
         h1, h2, h3 = st.columns(3)
         h1.metric("CPU",    fmt_pct(vm.get("cpu")))
         h2.metric("Memory", fmt_pct(vm.get("memory")))
         h3.metric("Disk",   fmt_pct(vm.get("disk")))
+    with right:
+        st.markdown("**Realised P&L · 30d**")
+        pnl30, _ = _fetch("/api/pnl/history?days=30")
+        fig30 = build_daily_pnl_fig(pnl30 or [], height=230)
+        if fig30 is not None:
+            st.plotly_chart(fig30, use_container_width=True,
+                            config={"displayModeBar": False})
+        else:
+            st.caption("No realised P&L in the last 30 days.")
 
-    st.divider()
-    render_overview_analytics()
+    pos_col, strat_col = st.columns(2)
+    with pos_col:
+        st.markdown("**Open positions**")
+        positions, _ = _fetch("/api/bot/positions")
+        positions = positions or []
+        if positions:
+            pdf = pd.DataFrame(positions)
+            cmap = {"symbol": "Symbol", "side": "Side", "qty": "Qty",
+                    "entryPrice": "Entry", "unrealizedPnl": "uPnL",
+                    "pattern": "Strategy"}
+            cols = [c for c in cmap if c in pdf.columns]
+            st.dataframe(pdf[cols].rename(columns=cmap), hide_index=True,
+                         use_container_width=True)
+        else:
+            st.caption("No open positions.")
+    with strat_col:
+        st.markdown("**Strategies · 24h**")
+        _render_strategy_snapshot(odf)
+
     st.divider()
 
     # ── Live price chart (single TradingView-style chart) ───────────────────────
-    st.subheader("Price Chart")
+    st.subheader("Live chart")
     # Controls stack full-width on mobile (see the <640px CSS rule).
     oc1, oc2 = st.columns(2)
     with oc1:
@@ -989,19 +1101,6 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             f"Yahoo Finance · {_YF_SYMBOL.get(ov_symbol, ov_symbol)} · {ov_interval} · "
             f"up to 200 candles · pinch to zoom · auto-refreshes every {POLL_INTERVAL_S}s"
         )
-
-    # ── PnL history (secondary) ─────────────────────────────────────────────────
-    with st.expander("Realised P&L — last 30 days"):
-        pnl, pnl_err = _fetch("/api/pnl/history?days=30")
-        if pnl_err:
-            st.info(f"PnL history unavailable: {pnl_err}")
-        else:
-            fig = build_daily_pnl_fig(pnl or [], height=260)
-            if fig is None:
-                st.caption("No realised P&L in the last 30 days.")
-            else:
-                st.plotly_chart(fig, use_container_width=True,
-                                config={"displayModeBar": False})
 
 
 # ── Chart symbol / interval choices (shared by the Overview chart) ──────────────
@@ -1236,12 +1335,20 @@ def render_performance_tab(symbol: str) -> None:
 
 
 def page_performance() -> None:
-    st.header("Performance Overview")
+    st.header("Performance")
     st.caption(
-        "Live price + trade context per symbol. BTCUSDT (Bybit) and "
-        "MES (IBKR paper) trade side by side through the same strategies."
+        "Detailed system + per-strategy performance, plus per-symbol trade "
+        "context. Filter by strategy and time window below."
     )
-    tab_btc, tab_mes = st.tabs(["📈 BTCUSDT", "📊 MES"])
+    render_trade_analytics()
+
+    st.divider()
+    st.subheader("Trade context · per symbol")
+    st.caption(
+        "Signals, open-trade entry/TP/SL and closed-trade markers on price — "
+        "recent (~24h) context. Refreshes each cycle (not tick-live)."
+    )
+    tab_btc, tab_mes = st.tabs(["BTCUSDT", "MES"])
     with tab_btc:
         render_performance_tab("BTCUSDT")
     with tab_mes:
@@ -1357,9 +1464,12 @@ def page_accounts() -> None:
 
 # ── Positions ───────────────────────────────────────────────────────────────────
 
+_CLOSED_WINDOWS = {"Last 24h": 1, "Last 7 days": 7, "Last 30 days": 30}
+
+
 def page_positions() -> None:
     st.header("Positions")
-    st.caption("Live open positions, plus trades closed in the last 24 hours.")
+    st.caption("Live open positions on top; the closed-position history below.")
 
     st.subheader("Open")
     rows, err = _fetch("/api/bot/positions")
@@ -1370,15 +1480,18 @@ def page_positions() -> None:
     else:
         st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
-    st.subheader("Closed · last 24h")
-    since = (dt.datetime.utcnow() - dt.timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    st.subheader("Closed positions")
+    wlabel = st.selectbox("History window", list(_CLOSED_WINDOWS), index=1,
+                          key="pos_closed_win")
+    days = _CLOSED_WINDOWS[wlabel]
+    since = (dt.datetime.utcnow() - dt.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     closed, cerr = _fetch(
         "/api/bot/trades/closed?" + urlencode({"limit": ANALYTICS_MAX_ROWS, "since": since})
     )
     if cerr:
         st.warning(cerr)
     elif not closed:
-        st.caption("No trades closed in the last 24 hours.")
+        st.caption(f"No trades closed in the {wlabel.lower()}.")
     else:
         cdf = pd.DataFrame(closed)
         col_map = {
@@ -1388,6 +1501,8 @@ def page_positions() -> None:
             "realizedPnl": "PnL", "realizedPnlPct": "PnL %", "closeReason": "Close",
         }
         cols = [c for c in col_map if c in cdf.columns]
+        st.caption(f"{len(closed)} closed trade(s) · {wlabel.lower()}"
+                   + (f" · capped at {ANALYTICS_MAX_ROWS}" if len(closed) >= ANALYTICS_MAX_ROWS else ""))
         st.dataframe(
             cdf[cols].rename(columns=col_map) if cols else cdf,
             hide_index=True, use_container_width=True,
@@ -1408,18 +1523,100 @@ def page_signals() -> None:
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
 
-# ── Closed Trades ─────────────────────────────────────────────────────────────────
+# ── Order Packages ─────────────────────────────────────────────────────────────────
 
-def page_trades() -> None:
-    st.header("Closed Trades")
-    rows, err = _fetch(f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}")
+def _short_model(model_id: str | None) -> str:
+    """`btc-regime-5m-baseline-v1` → `btc-regime-5m` for compact display."""
+    if not model_id:
+        return "?"
+    i = model_id.find("-baseline")
+    return model_id[:i] if i > 0 else model_id
+
+
+def _trade_score_map() -> dict[str, str]:
+    """trade_id → compact per-model shadow-score string, from /api/bot/trades/scores."""
+    payload, _ = _fetch("/api/bot/trades/scores?limit=200&include_open=true")
+    out: dict[str, str] = {}
+    for t in (payload or {}).get("trades", []):
+        parts = []
+        for sc in t.get("scores", []):
+            v = sc.get("score_last")
+            if v is None:
+                v = sc.get("score_mean")
+            if v is None:
+                continue
+            try:
+                parts.append(f"{_short_model(sc.get('model_id'))}={float(v):.2f}")
+            except (TypeError, ValueError):
+                continue
+        if parts:
+            out[str(t.get("trade_id"))] = " · ".join(sorted(parts))
+    return out
+
+
+def _claude_cell(cs: dict | None) -> str:
+    if not cs:
+        return "—"
+    grade, score = cs.get("grade"), cs.get("score")
+    if grade is None and score is None:
+        return "—"
+    txt = str(grade) if grade is not None else ""
+    if isinstance(score, (int, float)):
+        txt = f"{txt} ({score:.2f})".strip()
+    return txt or "—"
+
+
+def page_order_packages() -> None:
+    st.header("Order Packages")
+    st.caption(
+        "Each row is an order package — the bot's actual decision (which "
+        "strategy proposed what), with the shadow-model scores and the Claude "
+        "decision grade. The decision level, not the fill level."
+    )
+
+    payload, err = _fetch(
+        "/api/bot/order-packages?" + urlencode({"limit": ANALYTICS_MAX_ROWS})
+    )
     if err:
-        st.warning(err)
+        st.info(
+            f"Order-packages endpoint unavailable ({err}). This tab needs the "
+            "bot's `/api/bot/order-packages` route — pending a VM pull-and-deploy."
+        )
         return
-    if not rows:
-        st.caption("No closed trades.")
+    packages = (payload or {}).get("rows", [])
+    if not packages:
+        st.caption("No order packages recorded yet.")
         return
+
+    score_map = _trade_score_map()
+
+    strategies = sorted({p.get("strategy") for p in packages if p.get("strategy")})
+    choice = st.radio("Strategy", ["All"] + strategies, horizontal=True,
+                      key="op_strat")
+    if choice != "All":
+        packages = [p for p in packages if p.get("strategy") == choice]
+
+    rows = []
+    for p in packages:
+        rows.append({
+            "Created": p.get("createdAt"),
+            "Strategy": p.get("strategy"),
+            "Symbol": p.get("symbol"),
+            "Dir": p.get("direction"),
+            "Entry": p.get("entry"),
+            "SL": p.get("sl"),
+            "TP": p.get("tp"),
+            "Status": p.get("status"),
+            "PnL": p.get("pnl"),
+            "Model scores": score_map.get(str(p.get("linkedTradeId")), "—"),
+            "Claude": _claude_cell(p.get("claudeScore")),
+        })
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    if not (payload or {}).get("claude_log_present"):
+        st.caption(
+            "Claude decision scores populate as `/health-review` runs score each "
+            "package — the column shows — until then."
+        )
 
 
 # ── Models & Training ──────────────────────────────────────────────────────────────
@@ -2654,7 +2851,7 @@ def main() -> None:
         "Accounts":      page_accounts,
         "Positions":     page_positions,
         "Signals":       page_signals,
-        "Closed Trades": page_trades,
+        "Order Packages": page_order_packages,
         "Models":        page_models,
         "Promotion":     page_promotion,
         "Backtesting":   page_backtesting,
