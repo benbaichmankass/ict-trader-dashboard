@@ -42,6 +42,14 @@ TIMEOUT_S = 10.0
 POLL_INTERVAL_S = 10
 DEFAULT_LIMIT = 50
 
+# Preview app vs production. The preview Streamlit app (tracking
+# claude/web-app-preview) sets DASHBOARD_PREVIEW=1 in its Secrets so it does
+# NOT auto-poll the bot by default — you flip "Live data" on only when actively
+# testing, sparing the bot from a second always-on poller. Production leaves the
+# env var unset → live by default.
+_PREVIEW_MODE = str(os.environ.get("DASHBOARD_PREVIEW", "")).strip().lower() in {"1", "true", "yes"}
+_DEFAULT_LIVE = not _PREVIEW_MODE
+
 # Yahoo Finance ticker mapping (dashboard uses bot symbol style for signal matching).
 # MES (Micro E-mini S&P 500, IBKR) maps to the full-size continuous E-mini
 # front-month `ES=F`, which tracks the identical S&P index level as MES and
@@ -343,11 +351,26 @@ def render_sidebar() -> str:
             label_visibility="collapsed",
         )
         st.divider()
-        st.caption(f"Live data · auto-refresh {POLL_INTERVAL_S}s")
+        # Live data: ON auto-polls the bot every POLL_INTERVAL_S. OFF stops the
+        # auto-refresh so the app only hits the bot when you load/navigate —
+        # default OFF on the preview app (DASHBOARD_PREVIEW=1) so it isn't a
+        # second always-on poller against the bot.
+        live = st.toggle(
+            "Live data", value=_DEFAULT_LIVE, key="live_data",
+            help=f"On: auto-refresh every {POLL_INTERVAL_S}s. Off: fetch only "
+                 "when you load or navigate (use 'Refresh now').",
+        )
+        if live:
+            st.caption(f"\U0001f7e2 Live · auto-refresh {POLL_INTERVAL_S}s")
+        else:
+            st.caption("⏸ Paused — not polling the bot")
+            st.button("Refresh now", use_container_width=True, key="refresh_now")
+        if _PREVIEW_MODE:
+            st.caption("preview app")
         # Deploy marker — bump on each release so a stale Streamlit Cloud
         # instance is obvious at a glance. If this date is old, the app
         # needs a reboot/redeploy.
-        st.caption("build 2026-05-25 · analytics + accounts revamp")
+        st.caption("build 2026-05-25 · live-data toggle")
 
     return page  # type: ignore[return-value]
 
@@ -3072,15 +3095,18 @@ def page_logs() -> None:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    # Non-blocking poll. A frontend timer (streamlit-autorefresh) schedules
-    # the rerun, so navigation clicks take effect immediately instead of
-    # waiting out a blocking server-side sleep — which is what made the
-    # previous page linger under the next one when switching tabs. Falls
-    # back to the blocking sleep+rerun only if the component is unavailable.
-    if _AUTOREFRESH_AVAILABLE:
+    # Render the sidebar first — it owns the "Live data" toggle that decides
+    # whether we auto-poll. When Live data is OFF (default on the preview app)
+    # we skip the auto-refresh entirely, so the app only hits the bot when you
+    # load or navigate, rather than polling it as a second always-on client.
+    page = render_sidebar()
+    live = bool(st.session_state.get("live_data", _DEFAULT_LIVE))
+
+    # Non-blocking poll via a frontend timer (streamlit-autorefresh) so nav
+    # clicks take effect immediately instead of waiting out a blocking sleep.
+    if live and _AUTOREFRESH_AVAILABLE:
         st_autorefresh(interval=POLL_INTERVAL_S * 1000, key="poll")
 
-    page = render_sidebar()
     stats, stats_err = _fetch("/api/bot/stats")
 
     dispatch = {
@@ -3100,7 +3126,7 @@ def main() -> None:
     }
     dispatch.get(page, page_overview)()
 
-    if not _AUTOREFRESH_AVAILABLE:
+    if live and not _AUTOREFRESH_AVAILABLE:
         time.sleep(POLL_INTERVAL_S)
         st.rerun()
 

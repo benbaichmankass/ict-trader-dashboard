@@ -59,6 +59,12 @@ change from the released base) or stack the next WIP on it. Because the
 dashboard can't be rendered from a sandbox/CI, **the preview app is the
 verification step** — don't merge UI changes to `main` unverified.
 
+**Preview app config:** set **`DASHBOARD_PREVIEW=1`** in the preview app's
+Streamlit **Secrets**. That makes the sidebar **"Live data" toggle default OFF**
+on the preview app, so it doesn't poll the bot's API as a second always-on
+client — flip it ON only while actively testing. Production leaves the env var
+unset → Live data defaults ON (auto-refresh every `POLL_INTERVAL_S`).
+
 ## Architecture
 
 ```
