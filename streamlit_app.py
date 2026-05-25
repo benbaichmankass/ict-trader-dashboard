@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import calendar
 import datetime as dt
+import json
 import os
 import time
 from typing import Any
@@ -21,6 +22,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 
 try:
@@ -667,6 +669,206 @@ def render_overview_chart(
     _render_lc(chart_opts, key=key)
 
 
+# ── Custom TradingView (lightweight-charts v4) embed ────────────────────────────
+#
+# A self-contained embed of TradingView's lightweight-charts v4 via
+# st.components.v1.html — no npm/React build, the library loads from a CDN.
+# Built because the `streamlit-lightweight-charts` wrapper silently drops
+# per-series priceLines; the v4 API gives us native createPriceLine() +
+# setMarkers(), on-canvas overlay checkboxes (localStorage-persisted) and a
+# real fullscreen button — all inside the component, so it doesn't fight
+# Streamlit's page layout.
+
+_TV_CHART_HTML = """<!doctype html>
+<html><head><meta charset="utf-8">
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  html,body{margin:0;padding:0;background:__BG__;}
+  #wrap{position:relative;width:100%;height:__HEIGHT__px;}
+  #chart{position:absolute;inset:0;}
+  #ctrl{position:absolute;top:8px;left:8px;z-index:6;display:flex;gap:10px;flex-wrap:wrap;
+        background:rgba(13,22,40,0.72);padding:5px 9px;border:1px solid #1a2840;border-radius:7px;
+        font:12px -apple-system,Segoe UI,Roboto,sans-serif;color:#b2b5be;}
+  #ctrl label{cursor:pointer;user-select:none;display:inline-flex;align-items:center;gap:4px;}
+  #ctrl input{accent-color:#3d7aed;margin:0;}
+  #fs{position:absolute;top:8px;right:64px;z-index:6;width:28px;height:28px;cursor:pointer;
+      background:rgba(13,22,40,0.72);border:1px solid #1a2840;border-radius:6px;color:#b2b5be;
+      font-size:15px;line-height:26px;text-align:center;padding:0;}
+  #fs:hover{color:#f0f3fa;border-color:#3d7aed;}
+  #err{position:absolute;top:50%;left:0;right:0;text-align:center;color:#ef5350;
+       font:13px sans-serif;}
+</style></head>
+<body><div id="wrap">
+  <div id="ctrl"></div>
+  <button id="fs" title="Fullscreen">&#9974;</button>
+  <div id="chart"></div>
+  <div id="err"></div>
+</div>
+<script>
+(function(){
+  var D = __PAYLOAD__;
+  var el = document.getElementById('chart');
+  if (typeof LightweightCharts === 'undefined') {
+    document.getElementById('err').textContent = 'Chart library failed to load.';
+    return;
+  }
+  var chart, candle, ema, vol;
+  var posLines = [], zoneLines = [];
+  try {
+    chart = LightweightCharts.createChart(el, {
+      autoSize: true,
+      layout: { background: {type:'solid', color: D.theme.bg}, textColor: D.theme.text },
+      grid: { vertLines: {color: D.theme.gridV}, horzLines: {color: D.theme.gridH} },
+      crosshair: { mode: 1 },
+      rightPriceScale: { borderColor: '#2a364a' },
+      timeScale: { borderColor: '#2a364a', timeVisible: true, secondsVisible: false },
+    });
+    candle = chart.addCandlestickSeries({
+      upColor: D.theme.green, downColor: D.theme.red, borderVisible: false,
+      wickUpColor: D.theme.green, wickDownColor: D.theme.red,
+    });
+    candle.setData(D.candles || []);
+    ema = chart.addLineSeries({ color: D.theme.ema, lineWidth: 2,
+      priceLineVisible: false, lastValueVisible: false });
+    ema.setData(D.ema || []);
+    vol = chart.addHistogramSeries({ priceFormat: {type:'volume'}, priceScaleId: '' });
+    vol.priceScale().applyOptions({ scaleMargins: {top: 0.82, bottom: 0} });
+    vol.setData(D.volume || []);
+    // Show the most-recent ~150 bars by default but keep the full history
+    // scrollable; persist the scroll position across the 10s auto-refresh so
+    // scrolling back doesn't snap to "now" on every reload.
+    var TS = chart.timeScale();
+    var saved = localStorage.getItem('tvc_lrange');
+    var applied = false;
+    if (saved) { try { TS.setVisibleLogicalRange(JSON.parse(saved)); applied = true; } catch (e) {} }
+    if (!applied) {
+      var n = (D.candles || []).length;
+      if (n) TS.setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 2 });
+    }
+    TS.subscribeVisibleLogicalRangeChange(function(r){
+      if (r) { try { localStorage.setItem('tvc_lrange', JSON.stringify(r)); } catch (e) {} }
+    });
+  } catch (e) {
+    document.getElementById('err').textContent = 'Chart error: ' + e;
+    return;
+  }
+
+  function pref(k, d){ var v = localStorage.getItem('tvc_'+k); return v === null ? d : v === '1'; }
+  function setPref(k, v){ localStorage.setItem('tvc_'+k, v ? '1' : '0'); }
+
+  function mkLine(pl){
+    return candle.createPriceLine({
+      price: pl.price, color: pl.color, lineWidth: pl.lineWidth || 1,
+      lineStyle: (pl.lineStyle == null ? 0 : pl.lineStyle),
+      axisLabelVisible: true, title: pl.title || '',
+    });
+  }
+  function rebuildLines(){
+    posLines.forEach(function(l){ candle.removePriceLine(l); }); posLines = [];
+    zoneLines.forEach(function(l){ candle.removePriceLine(l); }); zoneLines = [];
+    if (pref('live', true)) (D.priceLines || []).forEach(function(pl){ posLines.push(mkLine(pl)); });
+    if (pref('zones', true)) (D.zoneLines || []).forEach(function(pl){ zoneLines.push(mkLine(pl)); });
+  }
+  function applyMarkers(){
+    var m = [];
+    if (pref('signals', true)) m = m.concat(D.signalMarkers || []);
+    if (pref('closed', false)) m = m.concat(D.tradeMarkers || []);
+    m.sort(function(a,b){ return a.time - b.time; });
+    candle.setMarkers(m);
+  }
+  function applyAll(){
+    ema.applyOptions({ visible: pref('ema', true) });
+    vol.applyOptions({ visible: pref('volume', true) });
+    rebuildLines();
+    applyMarkers();
+  }
+
+  var defs = {live:true, signals:true, closed:false, zones:true, ema:true, volume:true};
+  var labels = [['live','Live'],['signals','Signals'],['closed','Closed'],
+                ['zones','Zones'],['ema','EMA'],['volume','Volume']];
+  var ctrl = document.getElementById('ctrl');
+  labels.forEach(function(c){
+    var k = c[0], on = pref(k, defs[k]);
+    var lab = document.createElement('label');
+    var box = document.createElement('input');
+    box.type = 'checkbox'; box.checked = on;
+    box.addEventListener('change', function(){ setPref(k, box.checked); applyAll(); });
+    lab.appendChild(box); lab.appendChild(document.createTextNode(' ' + c[1]));
+    ctrl.appendChild(lab);
+  });
+  applyAll();
+
+  document.getElementById('fs').addEventListener('click', function(){
+    try {
+      if (document.fullscreenElement) { document.exitFullscreen(); }
+      else { document.getElementById('wrap').requestFullscreen(); }
+    } catch (e) { /* iframe may disallow fullscreen */ }
+  });
+})();
+</script></body></html>"""
+
+
+def render_tv_chart(
+    df: pd.DataFrame,
+    signals:   list[dict] | None,
+    trades:    list[dict] | None,
+    symbol:    str,
+    positions: list[dict] | None = None,
+    *,
+    height:     int = _LC_HEIGHT,
+    ema_period: int = 20,
+) -> None:
+    """Render the live chart via the custom lightweight-charts v4 embed.
+
+    All series + overlays are sent to the component; the on-canvas checkboxes
+    (Live / Signals / Closed / Zones / EMA / Volume) toggle them client-side
+    (persisted in localStorage), and the ⤢ button requests fullscreen."""
+    candle_data = _lc_candle_data(df)
+    if not candle_data:
+        st.caption("No candle data.")
+        return
+    payload = {
+        "candles": candle_data,
+        "volume": _lc_volume_data(df),
+        "ema": _lc_ema_data(df, ema_period),
+        "signalMarkers": _lc_markers(signals, None, symbol),
+        "tradeMarkers": _lc_markers(None, trades, symbol),
+        "priceLines": _lc_price_lines(positions, df, symbol),
+        "zoneLines": _lc_zone_lines(signals, symbol),
+        "theme": {
+            "bg": _TV_BG, "text": _TV_TEXT, "gridH": _LC_GRID_H, "gridV": _LC_GRID_V,
+            "green": _TV_GREEN, "red": _TV_RED, "ema": _TV_EMA20,
+        },
+    }
+    html = (
+        _TV_CHART_HTML
+        .replace("__PAYLOAD__", json.dumps(payload))
+        .replace("__HEIGHT__", str(int(height)))
+        .replace("__BG__", _TV_BG)
+    )
+    components.html(html, height=int(height) + 4, scrolling=False)
+
+
+def _position_upnl(p: dict, last_price: float | None) -> float:
+    """Unrealised PnL for a position — prefer the bot's value, else compute
+    from the latest close (the bot's `unrealizedPnl` is often unset → $0)."""
+    raw = p.get("unrealizedPnl")
+    try:
+        if raw is not None and float(raw) != 0.0:
+            return float(raw)
+    except (TypeError, ValueError):
+        pass
+    if last_price is None:
+        return 0.0
+    try:
+        entry = float(p.get("entryPrice"))
+        qty = float(p.get("qty") or 0.0)
+        sign = 1.0 if str(p.get("side", "")).lower() in ("buy", "long") else -1.0
+        return (last_price - entry) * qty * sign
+    except (TypeError, ValueError):
+        return 0.0
+
+
 # ── Overview analytics (trade-performance visualizations) ───────────────────────
 #
 # Five widgets, all driven by ONE fetch of /api/bot/trades/closed (the endpoint
@@ -1058,14 +1260,59 @@ def _render_strategy_snapshot(frame: pd.DataFrame) -> None:
 
 def page_overview(stats: dict | None, stats_err: str | None) -> None:
     st.header("Overview")
-    st.caption("System snapshot — see Performance for the full analytics, "
-               "Positions / Order Packages for detail.")
-
-    s  = stats or {}
-    vm = s.get("vmHealth") or {}
     if stats_err:
         st.warning(f"Stats endpoint error: {stats_err}")
+    s  = stats or {}
+    vm = s.get("vmHealth") or {}
 
+    # ââ Live chart (top of page) ââââââââââââââââââââââââââââââââââââââââââââââââ
+    oc1, oc2 = st.columns(2)
+    with oc1:
+        ov_symbol = st.selectbox("Symbol", CHART_SYMBOLS, key="ov_symbol")
+    with oc2:
+        ov_interval = st.selectbox(
+            "Interval", CHART_INTERVALS,
+            index=CHART_INTERVALS.index("1m") if "1m" in CHART_INTERVALS else 0,
+            key="ov_interval",
+        )
+
+    df, candles_err = _fetch_candles(ov_symbol, ov_interval, limit=1000)
+    positions, _ = _fetch("/api/bot/positions")
+    sym_positions = [p for p in (positions or []) if p.get("symbol") == ov_symbol]
+    last_price = None
+    if df is not None and not df.empty:
+        try:
+            last_price = float(df["close"].iloc[-1])
+        except (KeyError, IndexError, ValueError, TypeError):
+            last_price = None
+
+    if sym_positions:
+        net_pnl = sum(_position_upnl(p, last_price) for p in sym_positions)
+        pc1, pc2 = st.columns([1, 3])
+        pc1.metric(f"Live PnL · {ov_symbol}", fmt_usd(net_pnl), delta=round(net_pnl, 2))
+        pc2.caption(" · ".join(
+            f"{str(p.get('side', '')).upper()} {p.get('qty', '?')} @ {p.get('entryPrice', '?')}"
+            for p in sym_positions
+        ))
+
+    if candles_err:
+        st.warning(f"Candles unavailable: {candles_err}")
+    elif df is None or df.empty:
+        st.caption("No candle data.")
+    else:
+        # All overlays sent to the component; its on-canvas checkboxes toggle them.
+        sig_data, _ = _fetch("/api/bot/signals")
+        trade_data, _ = _fetch(f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}")
+        render_tv_chart(df, sig_data, trade_data, ov_symbol, positions=sym_positions)
+        st.caption(
+            f"{ov_symbol} · {ov_interval} · candles from the bot's exchange feed "
+            f"(yfinance fallback) · overlay toggles + fullscreen on the chart · "
+            f"auto-refreshes every {POLL_INTERVAL_S}s"
+        )
+
+    st.divider()
+
+    # ââ Snapshot (below the chart) ââââââââââââââââââââââââââââââââââââââââââââââ
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("24h PnL",     fmt_usd(s.get("pnl24h")))
     c2.metric("Total PnL",   fmt_usd(s.get("totalPnL")))
@@ -1100,8 +1347,6 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     pos_col, strat_col = st.columns(2)
     with pos_col:
         st.markdown("**Open positions**")
-        positions, _ = _fetch("/api/bot/positions")
-        positions = positions or []
         if positions:
             pdf = pd.DataFrame(positions)
             cmap = {"symbol": "Symbol", "side": "Side", "qty": "Qty",
@@ -1115,115 +1360,6 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     with strat_col:
         st.markdown("**Strategies · 24h**")
         _render_strategy_snapshot(odf)
-
-    st.divider()
-
-    # ── Live price chart (single TradingView-style chart) ───────────────────────
-    st.subheader("Live chart")
-    # Controls stack full-width on mobile (see the <640px CSS rule).
-    oc1, oc2 = st.columns(2)
-    with oc1:
-        ov_symbol = st.selectbox("Symbol", CHART_SYMBOLS, key="ov_symbol")
-    with oc2:
-        ov_interval = st.selectbox(
-            "Interval", CHART_INTERVALS,
-            index=CHART_INTERVALS.index("1m") if "1m" in CHART_INTERVALS else 0,
-            key="ov_interval",
-        )
-    tg = st.columns(7)
-    with tg[0]:
-        ov_live = st.toggle(
-            "Live trades", value=True, key="ov_live",
-            help="Overlay open-position entry / SL / TP / current-price lines",
-        )
-    with tg[1]:
-        ov_signals = st.toggle("Signals", value=True, key="ov_signals")
-    with tg[2]:
-        ov_zones = st.toggle(
-            "Zones", value=True, key="ov_zones",
-            help="Draw the latest signal's ICT zones (FVG band + liquidity sweep) "
-                 "that the strategy actually traded on",
-        )
-    with tg[3]:
-        ov_trades = st.toggle(
-            "Closed", value=False, key="ov_trades",
-            help="Recent closed-trade entry/exit markers",
-        )
-    with tg[4]:
-        ov_ema = st.toggle("EMA", value=True, key="ov_ema",
-                           help="20-period EMA on close")
-    with tg[5]:
-        ov_volume = st.toggle("Volume", value=True, key="ov_volume",
-                              help="Per-bar volume histogram (bottom of the pane)")
-    with tg[6]:
-        ov_wide = st.toggle(
-            "Widescreen", value=False, key="ov_wide",
-            help="Near-fullscreen view — hides the sidebar so the chart fills the screen",
-        )
-
-    # Open positions drive both the live-trade overlay and the live-PnL readout.
-    positions, _ = _fetch("/api/bot/positions")
-    sym_positions = [p for p in (positions or []) if p.get("symbol") == ov_symbol]
-    if sym_positions:
-        net_pnl = sum((p.get("unrealizedPnl") or 0) for p in sym_positions)
-        pc1, pc2 = st.columns([1, 3])
-        pc1.metric(f"Live PnL · {ov_symbol}", fmt_usd(net_pnl), delta=round(net_pnl, 2))
-        pc2.caption(" · ".join(
-            f"{str(p.get('side', '')).upper()} {p.get('qty', '?')} @ {p.get('entryPrice', '?')}"
-            for p in sym_positions
-        ))
-
-    if ov_wide:
-        # Near-fullscreen: hide the sidebar + strip page padding so the chart
-        # fills the viewport. Pure CSS (mobile-safe); re-evaluated each run, so
-        # untoggling restores the sidebar on the next interaction.
-        st.html(
-            "<style>[data-testid='stSidebar']{display:none;}"
-            ".main .block-container{padding:0.4rem 0.6rem;max-width:100%;}</style>"
-        )
-    chart_height = 820 if ov_wide else _LC_HEIGHT
-
-    df, candles_err = _fetch_candles(ov_symbol, ov_interval)
-    if candles_err:
-        st.warning(f"Candles unavailable: {candles_err}")
-    elif df is None or df.empty:
-        st.caption("No candle data.")
-    else:
-        sig_data = None
-        if ov_signals:
-            sig_data, _ = _fetch("/api/bot/signals")
-            # Per-strategy signal filter — only when the endpoint tags signals
-            # with their strategy (added in the bot's /api/bot/signals route).
-            strategies = sorted({
-                s.get("strategy") for s in (sig_data or []) if s.get("strategy")
-            })
-            if strategies:
-                chosen = st.multiselect(
-                    "Signal strategies", strategies, default=strategies,
-                    key="ov_sig_strats",
-                    help="Toggle which strategies' entry signals are drawn",
-                )
-                sig_data = [
-                    s for s in sig_data
-                    if not s.get("strategy") or s.get("strategy") in chosen
-                ]
-        trade_data = None
-        if ov_trades:
-            trade_data, _ = _fetch(f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}")
-
-        render_overview_chart(
-            df, sig_data, trade_data, ov_symbol,
-            positions=sym_positions if ov_live else None,
-            height=chart_height,
-            show_zones=ov_zones,
-            show_ema=ov_ema,
-            show_volume=ov_volume,
-        )
-        st.caption(
-            f"{ov_symbol} · {ov_interval} · candles from the bot's exchange feed "
-            "(Yahoo Finance fallback) · pinch to zoom · "
-            f"auto-refreshes every {POLL_INTERVAL_S}s"
-        )
 
 
 # ── Chart symbol / interval choices (shared by the Overview chart) ──────────────

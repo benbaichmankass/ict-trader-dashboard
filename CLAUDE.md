@@ -33,6 +33,32 @@ Cloud (free), auto-redeploys from `main`.
 - Deploy + local-dev steps: [`README.md`](./README.md)
 - Migration history: [PR #32](https://github.com/benbaichmankass/ict-trader-dashboard/pull/32)
 
+## Preview app + branch (adopted 2026-05-25) — READ BEFORE BUILDING UI
+
+There are **two** Streamlit Community Cloud apps:
+
+| App | Tracks branch | Audience |
+|---|---|---|
+| **Production** | `main` | the operator's live dashboard — auto-redeploys on merge to `main` |
+| **Preview** | **`claude/web-app-preview`** (the standing preview branch) | a staging app the operator eyeballs **before** changes hit production |
+
+**The standing preview branch is `claude/web-app-preview`** — the preview app is
+pointed at it permanently, so the operator never has to create/re-point an app
+per feature.
+
+**Workflow for ANY dashboard UI/feature change** (this is the rule — follow it):
+1. Build the change and push it to **`claude/web-app-preview`** (the preview app
+   auto-redeploys from it within a minute or two).
+2. Open the PR against `main` as usual and tell the operator to preview on the
+   preview app.
+3. Only after the operator approves the preview, **merge to `main`** (production).
+
+Keep `claude/web-app-preview` **long-lived — never delete it.** After a change
+lands on `main`, re-sync the preview branch onto `main` (so it starts the next
+change from the released base) or stack the next WIP on it. Because the
+dashboard can't be rendered from a sandbox/CI, **the preview app is the
+verification step** — don't merge UI changes to `main` unverified.
+
 ## Architecture
 
 ```
@@ -118,7 +144,7 @@ Nested expanders are illegal in Streamlit, so the in-row "Show all" + config use
 
 | Tab | Endpoints |
 |---|---|
-| Overview | `/api/bot/stats`, `/api/bot/trades/closed`, `/api/pnl/history?days=30`, `/api/bot/positions`, `/api/bot/strategies`, candles (Yahoo Finance) — **at-a-glance snapshot**: KPI row (24h/total PnL, open trades, win rate), a 24h trades/wins/losses scorecard + system-health (CPU/mem/disk), a 30-day realised-P&L sparkline, an open-positions mini-table, a per-strategy 24h line, and **the single live chart** (TradingView Lightweight Charts, 1m default, live-trade overlay of entry/SL/TP/current-price + live PnL, signal/closed markers, per-strategy signal toggle, a **Zones** toggle for the latest signal's ICT FVG band + sweep, Widescreen). The heavy analytics moved to Performance. |
+| Overview | candles (`/api/bot/candles`, yfinance fallback), `/api/bot/positions`, `/api/bot/signals`, `/api/bot/trades/closed`, `/api/bot/stats`, `/api/pnl/history?days=30`, `/api/bot/strategies` — **live chart at the top** via a **custom lightweight-charts v4 embed** (`render_tv_chart` + `_TV_CHART_HTML`, loaded through `st.components.v1.html`; the lib comes from a jsDelivr CDN). Built because the `streamlit-lightweight-charts` wrapper silently drops per-series `priceLines` — the v4 API gives native `createPriceLine()` (live-position entry/SL/TP + current + ICT zones), `setMarkers()` (signals + closed trades), an **on-canvas control bar** (Live/Signals/Closed/Zones/EMA/Volume checkboxes, localStorage-persisted) and a **⤢ fullscreen button**. Live PnL is computed from the last candle close when the bot's `unrealizedPnl` is unset. Below the chart: the snapshot (KPI row, 24h scorecard + system health, 30-day P&L sparkline, open-positions mini-table, per-strategy 24h line). The legacy `render_overview_chart` (the wrapper path) is kept as a fallback. Heavy analytics live on Performance. |
 | Performance | `/api/bot/trades/closed`, candles (Yahoo Finance), `/api/bot/signals`, `/api/bot/positions` — **the analytics deep-dive**: a shared All/per-strategy filter driving headline metrics (trades, win rate, expectancy, total P&L) + 24h scorecard, an equity curve (cumulative realised P&L), a monthly P&L calendar heat-map, a per-day wins-vs-losses bar, a trades-by-strategy pie, and a per-strategy breakdown table — all from one client-side `/api/bot/trades/closed?limit=200&since=…` fetch. Below: per-symbol (BTCUSDT, MES) trade-context price charts (signals + open-trade entry/TP/SL + closed markers), recent (~24h) context, refreshed each cycle (not tick-live). |
 | Accounts | `/api/bot/config`, `/api/bot/accounts/balances`, `/api/pnl/history?account_id=`, `/api/bot/positions`, `/api/bot/trades/closed?account_id=` — one card per account (**all accounts incl. the demo `bybit_1`** — the old separate Demo tab was folded in here): live/dry status, tracked balance (snapshot), realized·30d + unrealized PnL, open-trade count, trades·30d, a **daily realised-P&L chart** (bars + cumulative), and an expandable 7-day trade log. Uses the **no-session** `/api/pnl/history` (not the session-gated `/api/pnl`); reads its `pnl` field (renamed from `realized_usd` in S-063 — **not** `realizedPnl`). |
 | Positions | `/api/bot/positions` (open) + `/api/bot/trades/closed?since=…` (closed history) — two sections: live open positions on top, and the closed-position history below with a 24h / 7d / 30d window selector (7d default) |
