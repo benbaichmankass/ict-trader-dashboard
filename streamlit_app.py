@@ -730,6 +730,14 @@ _TV_CHART_HTML = """<!doctype html>
   #fs:hover{color:#f0f3fa;border-color:#3d7aed;}
   #err{position:absolute;top:50%;left:0;right:0;text-align:center;color:#ef5350;
        font:13px sans-serif;}
+  /* Mobile-portrait force-landscape: when in fullscreen on a portrait
+     viewport, rotate the chart 90° so the long edge runs across the
+     screen. iOS Safari ignores screen.orientation.lock() so this CSS
+     trick is the only way to flip the chart without the user physically
+     rotating the device. View-only — pan/zoom touch coords inside the
+     canvas don't re-map after rotation, so this is a "glance at it" mode. */
+  #wrap.rotate{position:fixed;top:0;left:0;width:100vh;height:100vw;
+               transform-origin:0 0;transform:rotate(90deg) translateY(-100vh);}
 </style></head>
 <body><div id="wrap">
   <div id="ctrl"></div>
@@ -831,11 +839,47 @@ _TV_CHART_HTML = """<!doctype html>
   });
   applyAll();
 
+  // Fullscreen + force-landscape:
+  //   - Try the standard Fullscreen API (works on desktop, iOS Safari
+  //     16.4+, recent Android).
+  //   - Try screen.orientation.lock('landscape') for true device-rotation
+  //     on Android. iOS Safari ignores this — for portrait iOS the
+  //     `.rotate` CSS hack visually flips the chart so it still fills
+  //     landscape (view-only; pan/zoom touch coords don't re-map).
+  //   - Auto-resize the chart on every transition + on viewport
+  //     resize/orientation change while fullscreen, so lightweight-charts
+  //     fills the new bounds.
+  var wrap = document.getElementById('wrap');
+  function isPortrait(){ return window.innerHeight > window.innerWidth; }
+  function updateRotate(){
+    var fs = !!document.fullscreenElement;
+    wrap.classList.toggle('rotate', fs && isPortrait());
+    // give the lightweight-charts ResizeObserver a beat to pick up the
+    // rotated bounding box, then nudge it explicitly as a belt-and-braces.
+    if (chart) { setTimeout(function(){ try { chart.timeScale().fitContent(); } catch(e){} }, 60); }
+  }
+  document.addEventListener('fullscreenchange', updateRotate);
+  document.addEventListener('webkitfullscreenchange', updateRotate);
+  window.addEventListener('resize', updateRotate);
+  if (window.screen && window.screen.orientation) {
+    try { window.screen.orientation.addEventListener('change', updateRotate); } catch (e) {}
+  }
   document.getElementById('fs').addEventListener('click', function(){
     try {
-      if (document.fullscreenElement) { document.exitFullscreen(); }
-      else { document.getElementById('wrap').requestFullscreen(); }
-    } catch (e) { /* iframe may disallow fullscreen */ }
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+        if (window.screen && window.screen.orientation && window.screen.orientation.unlock) {
+          try { window.screen.orientation.unlock(); } catch (e) {}
+        }
+      } else {
+        var p = wrap.requestFullscreen();
+        if (p && p.then) p.then(function(){
+          if (window.screen && window.screen.orientation && window.screen.orientation.lock) {
+            try { window.screen.orientation.lock('landscape').catch(function(){}); } catch (e) {}
+          }
+        }).catch(function(){});
+      }
+    } catch (e) { /* iframe may disallow fullscreen — already best-effort */ }
   });
 })();
 </script></body></html>"""
