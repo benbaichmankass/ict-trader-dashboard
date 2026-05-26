@@ -286,7 +286,7 @@ def fmt_num(x: float | None) -> str:
 PAGES = [
     # Operational, top-to-bottom: glance → performance → what's trading →
     # routing → decisions/fills → raw feed; then ops/diagnostics; then dev tools.
-    "Overview", "Performance", "Strategies", "Models", "Accounts",
+    "Overview", "Performance", "Insights", "Strategies", "Models", "Accounts",
     "Order Packages", "Positions", "Signals",
     "Backtesting", "Promotion", "Health",
     "Data Explorer", "Logs",
@@ -1341,6 +1341,12 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         st.warning(f"Stats endpoint error: {stats_err}")
     s  = stats or {}
     vm = s.get("vmHealth") or {}
+
+    # M13 S1: surface the latest analyst summary at the top of the page.
+    # Silent no-op when /api/bot/insights/* isn't deployed yet OR the
+    # generator hasn't written its first cache file — see
+    # _render_overview_insight_card for the placeholder handling.
+    _render_overview_insight_card()
 
     # ââ Live chart (top of page) ââââââââââââââââââââââââââââââââââââââââââââââââ
     oc1, oc2 = st.columns(2)
@@ -3108,6 +3114,207 @@ def page_data_explorer() -> None:
         st.caption("No rows match.")
 
 
+# ── Insights (AI Analyst — server-side LLM, M13 S1) ──────────────────────────
+#
+# Backed by /api/bot/insights/{summary,recent,strategy/<name>,health}. The
+# bot serves these from runtime_logs/insights/<endpoint>.json — files written
+# every ~10 min by the ict-insights-generator.service systemd timer. The
+# dashboard is a pure read-only consumer; nothing here calls Anthropic.
+#
+# The router returns a 200 placeholder envelope (cache_present=false) when
+# the cache hasn't been written yet — typical right after a fresh activation
+# or when the operator has set INSIGHTS_ENABLED=0. Render that gracefully
+# rather than treating it as an error.
+
+_INSIGHTS_GRADE_BADGE = {
+    "good":       ("🟢", "#26a69a"),
+    "mixed":      ("🟡", "#f5a623"),
+    "concerning": ("🔴", "#ef5350"),
+}
+_INSIGHTS_SIGNAL_BADGE = {
+    "low":  ("•",  "#888"),
+    "med":  ("◆",  "#f5a623"),
+    "high": ("●",  "#ef5350"),
+}
+
+
+def _format_cache_age(seconds: int | None) -> str:
+    if seconds is None:
+        return "no cache yet"
+    if seconds < 90:
+        return f"{seconds}s ago"
+    if seconds < 60 * 90:
+        return f"{seconds // 60} min ago"
+    if seconds < 60 * 60 * 36:
+        return f"{seconds // 3600}h {(seconds % 3600) // 60}m ago"
+    return f"{seconds // (60 * 60 * 24)}d ago"
+
+
+def _render_insight_envelope(payload: dict, *, compact: bool = False) -> None:
+    """Render one insight envelope (any endpoint).
+
+    ``compact=True`` is the Overview-card variant — no signals table,
+    no raw row-counts, just the grade pill + summary + freshness line.
+    """
+    grade = (payload.get("grade") or "good").lower()
+    emoji, color = _INSIGHTS_GRADE_BADGE.get(grade, ("⚪", "#888"))
+    summary_md = payload.get("summary_md") or "_(empty)_"
+    cache_present = payload.get("cache_present", True)
+    cache_age = _format_cache_age(payload.get("cache_age_seconds"))
+    model_id = payload.get("model_id") or "—"
+
+    # Header strip: grade pill + freshness + model
+    head_cols = st.columns([1, 2, 2])
+    with head_cols[0]:
+        st.markdown(
+            f"<div style='font-size:1.3em;line-height:1;'>{emoji} "
+            f"<span style='color:{color};font-weight:600'>{grade}</span></div>",
+            unsafe_allow_html=True,
+        )
+    with head_cols[1]:
+        if cache_present:
+            st.caption(f"Cache: {cache_age}")
+        else:
+            st.caption("Cache not yet written")
+    with head_cols[2]:
+        st.caption(f"Model: `{model_id}`")
+
+    st.markdown(summary_md)
+
+    if compact:
+        return
+
+    # Signals — render only when present and the cache is real.
+    signals = payload.get("signals") or []
+    if signals and cache_present:
+        st.markdown("**Signals**")
+        for sig in signals:
+            sev = (sig.get("severity") or "low").lower()
+            mark, _ = _INSIGHTS_SIGNAL_BADGE.get(sev, ("•", "#888"))
+            st.markdown(
+                f"{mark} **{sig.get('kind', '?')}** "
+                f"<span style='color:#888'>[{sev}]</span> — "
+                f"{sig.get('note', '')}",
+                unsafe_allow_html=True,
+            )
+
+    # Row counts + data window — transparency for the operator (so they can
+    # see what window the LLM actually summarised).
+    counts = payload.get("row_counts") or {}
+    window = payload.get("data_window") or {}
+    if counts or window:
+        with st.expander("Data window + row counts", expanded=False):
+            if window:
+                st.json(window)
+            if counts:
+                st.json(counts)
+
+
+def _render_overview_insight_card() -> None:
+    """Compact 'Latest Analyst Read' card for the Overview page.
+
+    Calls /api/bot/insights/summary. If the analyst hasn't been activated
+    yet, the router returns the placeholder envelope and we render a
+    one-line "no analyst data yet" hint rather than scaring the operator.
+    """
+    payload, err = _fetch("/api/bot/insights/summary")
+    if err is not None:
+        # The /insights router landed in M13 PR B — older bot deploys
+        # return 404 here. That's fine; the overview card stays silent
+        # until the bot's catch up.
+        return
+    if not isinstance(payload, dict):
+        return
+    cache_present = payload.get("cache_present", False)
+    summary_md = (payload.get("summary_md") or "").strip()
+    if not cache_present and not summary_md:
+        return
+
+    with st.container(border=True):
+        st.markdown("**🧭 Latest Analyst Read**")
+        _render_insight_envelope(payload, compact=True)
+
+
+def page_insights() -> None:
+    st.header("Insights")
+    st.caption(
+        "AI-generated narrative + grades over the bot's live trading data. "
+        "Refreshed every ~10 min by the `ict-insights-generator` systemd "
+        "timer on the bot VM; this page reads the cached output via "
+        "`/api/bot/insights/*`."
+    )
+
+    # Endpoint picker — one subheader per call, so the operator can compare
+    # the four narratives without leaving the page.
+    summary_payload, summary_err = _fetch("/api/bot/insights/summary")
+    recent_payload, recent_err = _fetch("/api/bot/insights/recent?limit=20")
+    health_payload, health_err = _fetch("/api/bot/insights/health")
+
+    st.subheader("Overall (last 24h)")
+    if summary_err:
+        st.warning(f"Insights summary unavailable: {summary_err}")
+    elif isinstance(summary_payload, dict):
+        _render_insight_envelope(summary_payload)
+    else:
+        st.info("No summary payload.")
+
+    st.divider()
+
+    st.subheader("Recent closed trades")
+    if recent_err:
+        st.warning(f"Insights recent unavailable: {recent_err}")
+    elif isinstance(recent_payload, dict):
+        _render_insight_envelope(recent_payload)
+    else:
+        st.info("No recent payload.")
+
+    st.divider()
+
+    # Per-strategy view. Discover strategy names from /api/bot/strategies
+    # so the picker stays in sync with whatever is configured on the bot;
+    # fall back to a small hardcoded list if that endpoint is unreachable.
+    st.subheader("Per-strategy")
+    strategies_payload, strategies_err = _fetch("/api/bot/strategies")
+    strategy_names: list[str] = []
+    if isinstance(strategies_payload, dict):
+        per = strategies_payload.get("strategies") or {}
+        if isinstance(per, dict):
+            strategy_names = sorted(
+                name for name in per
+                if isinstance(name, str)
+                and name.replace("_", "").isalnum()
+                and name.islower()
+            )
+    if not strategy_names:
+        strategy_names = [
+            "turtle_soup", "vwap", "ict_scalp_5m",
+            "trend_donchian", "fade_breakout_4h", "squeeze_breakout_4h",
+        ]
+    selected = st.selectbox(
+        "Strategy",
+        options=strategy_names,
+        key="insights_strategy_select",
+    )
+    if selected:
+        strat_payload, strat_err = _fetch(
+            f"/api/bot/insights/strategy/{quote(selected, safe='')}"
+        )
+        if strat_err:
+            st.warning(f"Strategy insight unavailable: {strat_err}")
+        elif isinstance(strat_payload, dict):
+            _render_insight_envelope(strat_payload)
+
+    st.divider()
+
+    st.subheader("Health snapshot narrative")
+    if health_err:
+        st.warning(f"Insights health unavailable: {health_err}")
+    elif isinstance(health_payload, dict):
+        _render_insight_envelope(health_payload)
+    else:
+        st.info("No health payload.")
+
+
 # ── Health ────────────────────────────────────────────────────────────────────
 
 def page_health() -> None:
@@ -3172,6 +3379,7 @@ def main() -> None:
     dispatch = {
         "Overview":      lambda: page_overview(stats, stats_err),
         "Performance":   page_performance,
+        "Insights":      page_insights,
         "Accounts":      page_accounts,
         "Positions":     page_positions,
         "Signals":       page_signals,
