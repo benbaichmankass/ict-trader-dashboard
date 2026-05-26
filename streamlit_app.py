@@ -45,9 +45,19 @@ DEFAULT_LIMIT = 50
 # Preview app vs production. The preview Streamlit app (tracking
 # claude/web-app-preview) sets DASHBOARD_PREVIEW=1 in its Secrets so it does
 # NOT auto-poll the bot by default — you flip "Live data" on only when actively
-# testing, sparing the bot from a second always-on poller. Production leaves the
-# env var unset → live by default.
-_PREVIEW_MODE = str(os.environ.get("DASHBOARD_PREVIEW", "")).strip().lower() in {"1", "true", "yes"}
+# testing, sparing the bot from a second always-on poller. Production leaves it
+# unset → live by default. Streamlit Cloud surfaces Secrets via st.secrets (not
+# os.environ), so read both.
+def _cfg(key: str, default: str = "") -> str:
+    try:
+        if key in st.secrets:
+            return str(st.secrets[key])
+    except Exception:  # no secrets.toml (local dev) — fall through to env
+        pass
+    return os.environ.get(key, default)
+
+
+_PREVIEW_MODE = _cfg("DASHBOARD_PREVIEW").strip().lower() in {"1", "true", "yes"}
 _DEFAULT_LIVE = not _PREVIEW_MODE
 
 # Yahoo Finance ticker mapping (dashboard uses bot symbol style for signal matching).
@@ -1295,7 +1305,7 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     with oc2:
         ov_interval = st.selectbox(
             "Interval", CHART_INTERVALS,
-            index=CHART_INTERVALS.index("1m") if "1m" in CHART_INTERVALS else 0,
+            index=CHART_INTERVALS.index("15m") if "15m" in CHART_INTERVALS else 0,
             key="ov_interval",
         )
 
@@ -1313,10 +1323,16 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         net_pnl = sum(_position_upnl(p, last_price) for p in sym_positions)
         pc1, pc2 = st.columns([1, 3])
         pc1.metric(f"Live PnL · {ov_symbol}", fmt_usd(net_pnl), delta=round(net_pnl, 2))
-        pc2.caption(" · ".join(
-            f"{str(p.get('side', '')).upper()} {p.get('qty', '?')} @ {p.get('entryPrice', '?')}"
-            for p in sym_positions
-        ))
+        # Each open position rendered as "SIDE qty @ entry · strategy"
+        # (pattern is nullable per the API contract — fall back to "?"
+        # so a missing strategy stays visible rather than silently dropped).
+        def _pos_caption(p: dict) -> str:
+            side = str(p.get("side", "")).upper()
+            qty = p.get("qty", "?")
+            entry = p.get("entryPrice", "?")
+            strat = p.get("pattern") or "?"
+            return f"{side} {qty} @ {entry} · {strat}"
+        pc2.caption(" · ".join(_pos_caption(p) for p in sym_positions))
 
     if candles_err:
         st.warning(f"Candles unavailable: {candles_err}")
