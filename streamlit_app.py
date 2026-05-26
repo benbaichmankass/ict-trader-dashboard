@@ -3235,6 +3235,79 @@ def _render_overview_insight_card() -> None:
         _render_insight_envelope(payload, compact=True)
 
 
+def _render_usage_panel() -> None:
+    """Monthly spend + per-endpoint split + budget bar.
+
+    Calls /api/bot/insights/usage (M13 S1 PR F). Silent no-op when the
+    endpoint 404s (older bot deploys) or the table doesn't exist yet
+    (fresh DB with no generator runs).
+    """
+    payload, err = _fetch("/api/bot/insights/usage")
+    if err is not None or not isinstance(payload, dict):
+        return
+    if not payload.get("table_present"):
+        return
+
+    spent = float(payload.get("current_month_usd") or 0.0)
+    budget = float(payload.get("budget_usd") or 0.0)
+    tokens = int(payload.get("current_month_tokens") or 0)
+    calls = int(payload.get("current_month_calls") or 0)
+    pct = (spent / budget * 100) if budget > 0 else 0.0
+    by_endpoint = payload.get("by_endpoint") or []
+
+    with st.container(border=True):
+        st.markdown("**💸 Analyst usage — this calendar month**")
+        cols = st.columns(4)
+        cols[0].metric("Spent", f"${spent:.2f}")
+        cols[1].metric("Budget", f"${budget:.2f}")
+        cols[2].metric("Tokens", f"{tokens:,}")
+        cols[3].metric("Calls", f"{calls:,}")
+        if budget > 0:
+            st.progress(min(pct / 100.0, 1.0), text=f"{pct:.1f}% of budget")
+        if by_endpoint:
+            with st.expander("By endpoint", expanded=False):
+                for row in by_endpoint:
+                    ep = row.get("endpoint", "?")
+                    sp = float(row.get("spent") or 0.0)
+                    ca = int(row.get("calls") or 0)
+                    st.markdown(f"- `{ep}` — ${sp:.4f} ({ca} calls)")
+
+
+def _render_history_panel(endpoint: str, strategy_name: str | None = None) -> None:
+    """Show the last N runs of an endpoint's analyst output.
+
+    Each row is a collapsed expander label = `<grade dot> <ts> — <first 80 chars
+    of summary_md>`; expanding shows the full envelope. Silent no-op when the
+    history endpoint isn't deployed yet.
+    """
+    qs = f"endpoint={endpoint}&hours=24&limit=20"
+    if strategy_name:
+        qs += f"&strategy_name={quote(strategy_name, safe='')}"
+    payload, err = _fetch(f"/api/bot/insights/history?{qs}")
+    if err is not None or not isinstance(payload, dict):
+        return
+    if not payload.get("table_present"):
+        return
+    rows = payload.get("rows") or []
+    if not rows:
+        st.caption("_No historical runs yet (the generator has not landed a row in the last 24h)._")
+        return
+
+    with st.expander(f"📜 History — last {len(rows)} runs (24h)", expanded=False):
+        for row in rows:
+            grade = (row.get("grade") or "good").lower()
+            emoji, _ = _INSIGHTS_GRADE_BADGE.get(grade, ("⚪", "#888"))
+            ts = (row.get("generated_at") or "").replace("T", " ")[:19]
+            snippet = (row.get("summary_md") or "").strip().splitlines()
+            first_line = (snippet[0] if snippet else "")[:80]
+            label = f"{emoji} {ts} — {first_line}"
+            inner_payload = row.get("payload") or {}
+            # Streamlit forbids nested expanders, so we use a checkbox to
+            # toggle the full envelope inline instead.
+            if st.checkbox(label, key=f"hist_{endpoint}_{strategy_name or ''}_{row.get('id')}"):
+                _render_insight_envelope(inner_payload)
+
+
 def page_insights() -> None:
     st.header("Insights")
     st.caption(
@@ -3243,6 +3316,10 @@ def page_insights() -> None:
         "timer on the bot VM; this page reads the cached output via "
         "`/api/bot/insights/*`."
     )
+
+    # Usage / cost panel at the top — operator's at-a-glance "is the
+    # budget gate biting?" signal. Hidden cleanly on older deploys.
+    _render_usage_panel()
 
     # Endpoint picker — one subheader per call, so the operator can compare
     # the four narratives without leaving the page.
@@ -3257,6 +3334,7 @@ def page_insights() -> None:
         _render_insight_envelope(summary_payload)
     else:
         st.info("No summary payload.")
+    _render_history_panel("summary")
 
     st.divider()
 
@@ -3267,6 +3345,7 @@ def page_insights() -> None:
         _render_insight_envelope(recent_payload)
     else:
         st.info("No recent payload.")
+    _render_history_panel("recent")
 
     st.divider()
 
@@ -3303,6 +3382,7 @@ def page_insights() -> None:
             st.warning(f"Strategy insight unavailable: {strat_err}")
         elif isinstance(strat_payload, dict):
             _render_insight_envelope(strat_payload)
+        _render_history_panel("strategy", strategy_name=selected)
 
     st.divider()
 
@@ -3313,6 +3393,7 @@ def page_insights() -> None:
         _render_insight_envelope(health_payload)
     else:
         st.info("No health payload.")
+    _render_history_panel("health")
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
