@@ -987,8 +987,8 @@ def _parse_trade_ts(value: Any) -> dt.datetime | None:
 
 
 def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
-    """One row per closed trade — strategy, pnl, ts (UTC), outcome."""
-    cols = ["strategy", "pnl", "ts", "outcome"]
+    """One row per closed trade — strategy, pnl, ts (UTC), outcome, isDemo."""
+    cols = ["strategy", "pnl", "ts", "outcome", "isDemo"]
     records = []
     for t in trades or []:
         ts = _parse_trade_ts(t.get("closedAt") or t.get("openedAt"))
@@ -1004,10 +1004,67 @@ def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
             "pnl": pnl,
             "ts": ts,
             "outcome": "win" if pnl > 0 else ("loss" if pnl < 0 else "breakeven"),
+            "isDemo": bool(t.get("isDemo", False)),
         })
     if not records:
         return pd.DataFrame(columns=cols)
     return pd.DataFrame.from_records(records)[cols]
+
+
+# 2026-06-04 reporting-cleanup — live/demo segment helpers.
+#
+# Every reporting surface that mixes live + demo accounts now offers
+# a "Live money / Demo / All" picker. The bot API ships an ``isDemo``
+# flag per trade/position/order-package row (see ict-trading-bot PR
+# #2759) so we fetch with ``?include_demo=true`` and filter client-side.
+# Default segment is **Live money** — operators see live by default
+# and opt into demo when they explicitly want it.
+
+_SEGMENT_CHOICES: list[str] = ["Live money", "Demo", "All"]
+_SEGMENT_SLUG: dict[str, str] = {"Live money": "live", "Demo": "demo", "All": "all"}
+
+
+def _segment_picker(key: str) -> str:
+    """Render a Live / Demo / All radio at the top of a reporting page.
+
+    Returns ``"live"`` / ``"demo"`` / ``"all"`` so callers can pass it
+    through to ``_segment_filter`` and to API ``include_demo`` params.
+    """
+    label = st.radio(
+        "Segment",
+        _SEGMENT_CHOICES,
+        index=0,  # Live money by default
+        horizontal=True,
+        key=key,
+        help=(
+            "Live money = real-money accounts. Demo = the bybit_1 demo "
+            "account (configured ``demo: true`` in accounts.yaml). All "
+            "merges both."
+        ),
+    )
+    return _SEGMENT_SLUG[label]
+
+
+def _segment_filter_rows(rows: list[dict], segment: str) -> list[dict]:
+    """Filter a list of row-dicts by segment using each row's ``isDemo``.
+
+    Rows missing the ``isDemo`` key are treated as live (False) — the
+    bot returns ``isDemo: false`` for non-demo accounts, but older API
+    versions or other sources may omit it entirely.
+    """
+    if segment == "all":
+        return rows
+    want_demo = (segment == "demo")
+    return [r for r in (rows or []) if bool(r.get("isDemo", False)) == want_demo]
+
+
+def _segment_filter_frame(df: pd.DataFrame, segment: str) -> pd.DataFrame:
+    """Same as :func:`_segment_filter_rows` for a pandas DataFrame with
+    an ``isDemo`` column."""
+    if segment == "all" or "isDemo" not in df.columns:
+        return df
+    want_demo = (segment == "demo")
+    return df[df["isDemo"] == want_demo].reset_index(drop=True)
 
 
 def _filter_strategy(df: pd.DataFrame, strategy: str) -> pd.DataFrame:
@@ -1204,29 +1261,45 @@ def _strategy_breakdown(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=POLL_INTERVAL_S, show_spinner=False)
-def _analytics_frame() -> tuple[pd.DataFrame, int, str | None]:
-    """One closed-trade fetch (capped) → tidy frame, for the analytics widgets."""
+def _analytics_frame(include_demo: bool = False) -> tuple[pd.DataFrame, int, str | None]:
+    """One closed-trade fetch (capped) → tidy frame, for the analytics widgets.
+
+    ``include_demo=True`` opts into the live+demo response so the page
+    can offer a Live / Demo / All segment picker over a single fetch.
+    """
     since = (dt.datetime.utcnow()
              - dt.timedelta(days=ANALYTICS_LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    trades, err = _fetch(
-        "/api/bot/trades/closed?"
-        + urlencode({"limit": ANALYTICS_MAX_ROWS, "since": since})
-    )
+    params: dict[str, str] = {"limit": str(ANALYTICS_MAX_ROWS), "since": since}
+    if include_demo:
+        params["include_demo"] = "true"
+    trades, err = _fetch("/api/bot/trades/closed?" + urlencode(params))
     if err:
-        return pd.DataFrame(columns=["strategy", "pnl", "ts", "outcome"]), 0, err
+        return pd.DataFrame(columns=["strategy", "pnl", "ts", "outcome", "isDemo"]), 0, err
     trades = trades or []
     return _closed_trades_frame(trades), len(trades), None
 
 
 def render_trade_analytics() -> None:
     """The performance deep-dive: filter + headline metrics + equity curve +
-    calendar + win/loss bar + strategy pie + per-strategy breakdown."""
-    df, raw_count, err = _analytics_frame()
+    calendar + win/loss bar + strategy pie + per-strategy breakdown.
+
+    Renders a Live / Demo / All segment picker first so the operator can
+    inspect each segment in isolation without mixing real-money KPIs with
+    demo activity.
+    """
+    segment = _segment_picker("perf_segment")
+    df, raw_count, err = _analytics_frame(include_demo=True)
     if err:
         st.info(f"Trade analytics unavailable: {err}")
         return
+    df = _segment_filter_frame(df, segment)
     if df.empty:
-        st.caption("No closed trades yet — analytics will populate as trades close.")
+        if segment == "live":
+            st.caption("No closed live-money trades yet — analytics will populate as trades close.")
+        elif segment == "demo":
+            st.caption("No closed demo trades in the lookback window.")
+        else:
+            st.caption("No closed trades yet — analytics will populate as trades close.")
         return
 
     strategies = sorted(df["strategy"].unique().tolist())
@@ -1813,16 +1886,21 @@ _CLOSED_WINDOWS = {"Last 24h": 1, "Last 7 days": 7, "Last 30 days": 30}
 
 def page_positions() -> None:
     st.header("Positions")
-    st.caption("Live open positions on top; the closed-position history below.")
+    st.caption("Live open positions on top; the closed-position history below. "
+               "Use the segment picker to switch between live and demo.")
+
+    segment = _segment_picker("pos_segment")
 
     st.subheader("Open")
-    rows, err = _fetch("/api/bot/positions")
+    rows, err = _fetch("/api/bot/positions?include_demo=true")
     if err:
         st.warning(err)
-    elif not rows:
-        st.caption("No open positions.")
     else:
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        rows = _segment_filter_rows(rows or [], segment)
+        if not rows:
+            st.caption(f"No open {segment if segment != 'all' else ''} positions.".strip())
+        else:
+            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
     st.subheader("Closed positions")
     wlabel = st.selectbox("History window", list(_CLOSED_WINDOWS), index=1,
@@ -1830,8 +1908,11 @@ def page_positions() -> None:
     days = _CLOSED_WINDOWS[wlabel]
     since = (dt.datetime.utcnow() - dt.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     closed, cerr = _fetch(
-        "/api/bot/trades/closed?" + urlencode({"limit": ANALYTICS_MAX_ROWS, "since": since})
+        "/api/bot/trades/closed?" + urlencode({
+            "limit": ANALYTICS_MAX_ROWS, "since": since, "include_demo": "true",
+        })
     )
+    closed = _segment_filter_rows(closed or [], segment)
     if cerr:
         st.warning(cerr)
     elif not closed:
@@ -1918,8 +1999,11 @@ def page_order_packages() -> None:
         "decision grade. The decision level, not the fill level."
     )
 
+    segment = _segment_picker("op_segment")
     payload, err = _fetch(
-        "/api/bot/order-packages?" + urlencode({"limit": ANALYTICS_MAX_ROWS})
+        "/api/bot/order-packages?" + urlencode({
+            "limit": ANALYTICS_MAX_ROWS, "include_demo": "true",
+        })
     )
     if err:
         st.info(
@@ -1928,8 +2012,14 @@ def page_order_packages() -> None:
         )
         return
     packages = (payload or {}).get("rows", [])
+    packages = _segment_filter_rows(packages, segment)
     if not packages:
-        st.caption("No order packages recorded yet.")
+        if segment == "live":
+            st.caption("No live-money order packages recorded yet.")
+        elif segment == "demo":
+            st.caption("No demo order packages recorded yet.")
+        else:
+            st.caption("No order packages recorded yet.")
         return
 
     score_map = _trade_score_map()
