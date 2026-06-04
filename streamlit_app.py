@@ -987,7 +987,17 @@ def _parse_trade_ts(value: Any) -> dt.datetime | None:
 
 
 def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
-    """One row per closed trade — strategy, pnl, ts (UTC), outcome, isDemo."""
+    """One row per closed trade — strategy, pnl, ts (UTC), outcome, isDemo.
+
+    ``realizedPnl`` is nullable on the wire (bot emits ``null`` for the
+    reconciler-incomplete close shape, see ict-trading-bot #2759). Keep
+    null as ``NaN`` so pandas aggregations skip those rows by default
+    (``sum``/``mean`` with ``skipna=True``), and mark ``outcome='unknown'``
+    so the wins/losses/breakeven counts don't fold null rows into
+    "breakeven". 2026-06-04 reporting-cleanup follow-up.
+    """
+    import math
+
     cols = ["strategy", "pnl", "ts", "outcome", "isDemo"]
     records = []
     for t in trades or []:
@@ -995,20 +1005,46 @@ def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
         if ts is None:
             continue
         raw = t.get("realizedPnl")
-        try:
-            pnl = float(raw) if raw is not None else 0.0
-        except (TypeError, ValueError):
-            pnl = 0.0
+        if raw is None:
+            pnl = math.nan
+        else:
+            try:
+                pnl = float(raw)
+            except (TypeError, ValueError):
+                pnl = math.nan
+        if math.isnan(pnl):
+            outcome = "unknown"
+        elif pnl > 0:
+            outcome = "win"
+        elif pnl < 0:
+            outcome = "loss"
+        else:
+            outcome = "breakeven"
         records.append({
             "strategy": t.get("pattern") or "unknown",
             "pnl": pnl,
             "ts": ts,
-            "outcome": "win" if pnl > 0 else ("loss" if pnl < 0 else "breakeven"),
+            "outcome": outcome,
             "isDemo": bool(t.get("isDemo", False)),
         })
     if not records:
         return pd.DataFrame(columns=cols)
     return pd.DataFrame.from_records(records)[cols]
+
+
+def _format_closed_trades_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Apply the canonical render formatting to a raw closed-trade table.
+
+    Renders nullable PnL columns via :func:`fmt_usd` / :func:`fmt_pct` so
+    ``null`` realizedPnl shows as "—" rather than "None" / "0.0". Returns
+    a new DataFrame; the input is not mutated.
+    """
+    out = df.copy()
+    if "realizedPnl" in out.columns:
+        out["realizedPnl"] = out["realizedPnl"].apply(fmt_usd)
+    if "realizedPnlPct" in out.columns:
+        out["realizedPnlPct"] = out["realizedPnlPct"].apply(fmt_pct)
+    return out
 
 
 # 2026-06-04 reporting-cleanup — live/demo segment helpers.
@@ -1867,7 +1903,7 @@ def page_accounts() -> None:
             elif not trades:
                 st.caption("No closed trades in the last 7 days.")
             else:
-                tdf = pd.DataFrame(trades)
+                tdf = _format_closed_trades_df(pd.DataFrame(trades))
                 col_map = {
                     "symbol": "Symbol", "side": "Side", "pattern": "Strategy",
                     "entryPrice": "Entry", "exitPrice": "Exit",
@@ -1918,7 +1954,7 @@ def page_positions() -> None:
     elif not closed:
         st.caption(f"No trades closed in the {wlabel.lower()}.")
     else:
-        cdf = pd.DataFrame(closed)
+        cdf = _format_closed_trades_df(pd.DataFrame(closed))
         col_map = {
             "closedAt": "Closed", "openedAt": "Opened", "account": "Account",
             "symbol": "Symbol", "side": "Side", "pattern": "Strategy",
