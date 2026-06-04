@@ -286,7 +286,7 @@ def fmt_num(x: float | None) -> str:
 PAGES = [
     # Operational, top-to-bottom: glance → performance → what's trading →
     # routing → decisions/fills → raw feed; then ops/diagnostics; then dev tools.
-    "Overview", "Performance", "Strategies", "Models", "Accounts",
+    "Overview", "Performance", "Insights", "Strategies", "Models", "Accounts",
     "Order Packages", "Positions", "Signals",
     "Backtesting", "Promotion", "Health",
     "Data Explorer", "Logs",
@@ -987,8 +987,8 @@ def _parse_trade_ts(value: Any) -> dt.datetime | None:
 
 
 def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
-    """One row per closed trade — strategy, pnl, ts (UTC), outcome."""
-    cols = ["strategy", "pnl", "ts", "outcome"]
+    """One row per closed trade — strategy, pnl, ts (UTC), outcome, isDemo."""
+    cols = ["strategy", "pnl", "ts", "outcome", "isDemo"]
     records = []
     for t in trades or []:
         ts = _parse_trade_ts(t.get("closedAt") or t.get("openedAt"))
@@ -1004,10 +1004,67 @@ def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
             "pnl": pnl,
             "ts": ts,
             "outcome": "win" if pnl > 0 else ("loss" if pnl < 0 else "breakeven"),
+            "isDemo": bool(t.get("isDemo", False)),
         })
     if not records:
         return pd.DataFrame(columns=cols)
     return pd.DataFrame.from_records(records)[cols]
+
+
+# 2026-06-04 reporting-cleanup — live/demo segment helpers.
+#
+# Every reporting surface that mixes live + demo accounts now offers
+# a "Live money / Demo / All" picker. The bot API ships an ``isDemo``
+# flag per trade/position/order-package row (see ict-trading-bot PR
+# #2759) so we fetch with ``?include_demo=true`` and filter client-side.
+# Default segment is **Live money** — operators see live by default
+# and opt into demo when they explicitly want it.
+
+_SEGMENT_CHOICES: list[str] = ["Live money", "Demo", "All"]
+_SEGMENT_SLUG: dict[str, str] = {"Live money": "live", "Demo": "demo", "All": "all"}
+
+
+def _segment_picker(key: str) -> str:
+    """Render a Live / Demo / All radio at the top of a reporting page.
+
+    Returns ``"live"`` / ``"demo"`` / ``"all"`` so callers can pass it
+    through to ``_segment_filter`` and to API ``include_demo`` params.
+    """
+    label = st.radio(
+        "Segment",
+        _SEGMENT_CHOICES,
+        index=0,  # Live money by default
+        horizontal=True,
+        key=key,
+        help=(
+            "Live money = real-money accounts. Demo = the bybit_1 demo "
+            "account (configured ``demo: true`` in accounts.yaml). All "
+            "merges both."
+        ),
+    )
+    return _SEGMENT_SLUG[label]
+
+
+def _segment_filter_rows(rows: list[dict], segment: str) -> list[dict]:
+    """Filter a list of row-dicts by segment using each row's ``isDemo``.
+
+    Rows missing the ``isDemo`` key are treated as live (False) — the
+    bot returns ``isDemo: false`` for non-demo accounts, but older API
+    versions or other sources may omit it entirely.
+    """
+    if segment == "all":
+        return rows
+    want_demo = (segment == "demo")
+    return [r for r in (rows or []) if bool(r.get("isDemo", False)) == want_demo]
+
+
+def _segment_filter_frame(df: pd.DataFrame, segment: str) -> pd.DataFrame:
+    """Same as :func:`_segment_filter_rows` for a pandas DataFrame with
+    an ``isDemo`` column."""
+    if segment == "all" or "isDemo" not in df.columns:
+        return df
+    want_demo = (segment == "demo")
+    return df[df["isDemo"] == want_demo].reset_index(drop=True)
 
 
 def _filter_strategy(df: pd.DataFrame, strategy: str) -> pd.DataFrame:
@@ -1204,29 +1261,45 @@ def _strategy_breakdown(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=POLL_INTERVAL_S, show_spinner=False)
-def _analytics_frame() -> tuple[pd.DataFrame, int, str | None]:
-    """One closed-trade fetch (capped) → tidy frame, for the analytics widgets."""
+def _analytics_frame(include_demo: bool = False) -> tuple[pd.DataFrame, int, str | None]:
+    """One closed-trade fetch (capped) → tidy frame, for the analytics widgets.
+
+    ``include_demo=True`` opts into the live+demo response so the page
+    can offer a Live / Demo / All segment picker over a single fetch.
+    """
     since = (dt.datetime.utcnow()
              - dt.timedelta(days=ANALYTICS_LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    trades, err = _fetch(
-        "/api/bot/trades/closed?"
-        + urlencode({"limit": ANALYTICS_MAX_ROWS, "since": since})
-    )
+    params: dict[str, str] = {"limit": str(ANALYTICS_MAX_ROWS), "since": since}
+    if include_demo:
+        params["include_demo"] = "true"
+    trades, err = _fetch("/api/bot/trades/closed?" + urlencode(params))
     if err:
-        return pd.DataFrame(columns=["strategy", "pnl", "ts", "outcome"]), 0, err
+        return pd.DataFrame(columns=["strategy", "pnl", "ts", "outcome", "isDemo"]), 0, err
     trades = trades or []
     return _closed_trades_frame(trades), len(trades), None
 
 
 def render_trade_analytics() -> None:
     """The performance deep-dive: filter + headline metrics + equity curve +
-    calendar + win/loss bar + strategy pie + per-strategy breakdown."""
-    df, raw_count, err = _analytics_frame()
+    calendar + win/loss bar + strategy pie + per-strategy breakdown.
+
+    Renders a Live / Demo / All segment picker first so the operator can
+    inspect each segment in isolation without mixing real-money KPIs with
+    demo activity.
+    """
+    segment = _segment_picker("perf_segment")
+    df, raw_count, err = _analytics_frame(include_demo=True)
     if err:
         st.info(f"Trade analytics unavailable: {err}")
         return
+    df = _segment_filter_frame(df, segment)
     if df.empty:
-        st.caption("No closed trades yet — analytics will populate as trades close.")
+        if segment == "live":
+            st.caption("No closed live-money trades yet — analytics will populate as trades close.")
+        elif segment == "demo":
+            st.caption("No closed demo trades in the lookback window.")
+        else:
+            st.caption("No closed trades yet — analytics will populate as trades close.")
         return
 
     strategies = sorted(df["strategy"].unique().tolist())
@@ -1341,6 +1414,12 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         st.warning(f"Stats endpoint error: {stats_err}")
     s  = stats or {}
     vm = s.get("vmHealth") or {}
+
+    # M13 S1: surface the latest analyst summary at the top of the page.
+    # Silent no-op when /api/bot/insights/* isn't deployed yet OR the
+    # generator hasn't written its first cache file — see
+    # _render_overview_insight_card for the placeholder handling.
+    _render_overview_insight_card()
 
     # ââ Live chart (top of page) ââââââââââââââââââââââââââââââââââââââââââââââââ
     oc1, oc2 = st.columns(2)
@@ -1807,16 +1886,21 @@ _CLOSED_WINDOWS = {"Last 24h": 1, "Last 7 days": 7, "Last 30 days": 30}
 
 def page_positions() -> None:
     st.header("Positions")
-    st.caption("Live open positions on top; the closed-position history below.")
+    st.caption("Live open positions on top; the closed-position history below. "
+               "Use the segment picker to switch between live and demo.")
+
+    segment = _segment_picker("pos_segment")
 
     st.subheader("Open")
-    rows, err = _fetch("/api/bot/positions")
+    rows, err = _fetch("/api/bot/positions?include_demo=true")
     if err:
         st.warning(err)
-    elif not rows:
-        st.caption("No open positions.")
     else:
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        rows = _segment_filter_rows(rows or [], segment)
+        if not rows:
+            st.caption(f"No open {segment if segment != 'all' else ''} positions.".strip())
+        else:
+            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
     st.subheader("Closed positions")
     wlabel = st.selectbox("History window", list(_CLOSED_WINDOWS), index=1,
@@ -1824,8 +1908,11 @@ def page_positions() -> None:
     days = _CLOSED_WINDOWS[wlabel]
     since = (dt.datetime.utcnow() - dt.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     closed, cerr = _fetch(
-        "/api/bot/trades/closed?" + urlencode({"limit": ANALYTICS_MAX_ROWS, "since": since})
+        "/api/bot/trades/closed?" + urlencode({
+            "limit": ANALYTICS_MAX_ROWS, "since": since, "include_demo": "true",
+        })
     )
+    closed = _segment_filter_rows(closed or [], segment)
     if cerr:
         st.warning(cerr)
     elif not closed:
@@ -1912,8 +1999,11 @@ def page_order_packages() -> None:
         "decision grade. The decision level, not the fill level."
     )
 
+    segment = _segment_picker("op_segment")
     payload, err = _fetch(
-        "/api/bot/order-packages?" + urlencode({"limit": ANALYTICS_MAX_ROWS})
+        "/api/bot/order-packages?" + urlencode({
+            "limit": ANALYTICS_MAX_ROWS, "include_demo": "true",
+        })
     )
     if err:
         st.info(
@@ -1922,8 +2012,14 @@ def page_order_packages() -> None:
         )
         return
     packages = (payload or {}).get("rows", [])
+    packages = _segment_filter_rows(packages, segment)
     if not packages:
-        st.caption("No order packages recorded yet.")
+        if segment == "live":
+            st.caption("No live-money order packages recorded yet.")
+        elif segment == "demo":
+            st.caption("No demo order packages recorded yet.")
+        else:
+            st.caption("No order packages recorded yet.")
         return
 
     score_map = _trade_score_map()
@@ -3108,6 +3204,288 @@ def page_data_explorer() -> None:
         st.caption("No rows match.")
 
 
+# ── Insights (AI Analyst — server-side LLM, M13 S1) ──────────────────────────
+#
+# Backed by /api/bot/insights/{summary,recent,strategy/<name>,health}. The
+# bot serves these from runtime_logs/insights/<endpoint>.json — files written
+# every ~10 min by the ict-insights-generator.service systemd timer. The
+# dashboard is a pure read-only consumer; nothing here calls Anthropic.
+#
+# The router returns a 200 placeholder envelope (cache_present=false) when
+# the cache hasn't been written yet — typical right after a fresh activation
+# or when the operator has set INSIGHTS_ENABLED=0. Render that gracefully
+# rather than treating it as an error.
+
+_INSIGHTS_GRADE_BADGE = {
+    "good":       ("🟢", "#26a69a"),
+    "mixed":      ("🟡", "#f5a623"),
+    "concerning": ("🔴", "#ef5350"),
+}
+_INSIGHTS_SIGNAL_BADGE = {
+    "low":  ("•",  "#888"),
+    "med":  ("◆",  "#f5a623"),
+    "high": ("●",  "#ef5350"),
+}
+
+
+def _format_cache_age(seconds: int | None) -> str:
+    if seconds is None:
+        return "no cache yet"
+    if seconds < 90:
+        return f"{seconds}s ago"
+    if seconds < 60 * 90:
+        return f"{seconds // 60} min ago"
+    if seconds < 60 * 60 * 36:
+        return f"{seconds // 3600}h {(seconds % 3600) // 60}m ago"
+    return f"{seconds // (60 * 60 * 24)}d ago"
+
+
+def _render_insight_envelope(payload: dict, *, compact: bool = False) -> None:
+    """Render one insight envelope (any endpoint).
+
+    ``compact=True`` is the Overview-card variant — no signals table,
+    no raw row-counts, just the grade pill + summary + freshness line.
+    """
+    grade = (payload.get("grade") or "good").lower()
+    emoji, color = _INSIGHTS_GRADE_BADGE.get(grade, ("⚪", "#888"))
+    summary_md = payload.get("summary_md") or "_(empty)_"
+    cache_present = payload.get("cache_present", True)
+    cache_age = _format_cache_age(payload.get("cache_age_seconds"))
+    model_id = payload.get("model_id") or "—"
+
+    # Header strip: grade pill + freshness + model
+    head_cols = st.columns([1, 2, 2])
+    with head_cols[0]:
+        st.markdown(
+            f"<div style='font-size:1.3em;line-height:1;'>{emoji} "
+            f"<span style='color:{color};font-weight:600'>{grade}</span></div>",
+            unsafe_allow_html=True,
+        )
+    with head_cols[1]:
+        if cache_present:
+            st.caption(f"Cache: {cache_age}")
+        else:
+            st.caption("Cache not yet written")
+    with head_cols[2]:
+        st.caption(f"Model: `{model_id}`")
+
+    st.markdown(summary_md)
+
+    if compact:
+        return
+
+    # Signals — render only when present and the cache is real.
+    signals = payload.get("signals") or []
+    if signals and cache_present:
+        st.markdown("**Signals**")
+        for sig in signals:
+            sev = (sig.get("severity") or "low").lower()
+            mark, _ = _INSIGHTS_SIGNAL_BADGE.get(sev, ("•", "#888"))
+            st.markdown(
+                f"{mark} **{sig.get('kind', '?')}** "
+                f"<span style='color:#888'>[{sev}]</span> — "
+                f"{sig.get('note', '')}",
+                unsafe_allow_html=True,
+            )
+
+    # Row counts + data window — transparency for the operator (so they can
+    # see what window the LLM actually summarised).
+    counts = payload.get("row_counts") or {}
+    window = payload.get("data_window") or {}
+    if counts or window:
+        with st.expander("Data window + row counts", expanded=False):
+            if window:
+                st.json(window)
+            if counts:
+                st.json(counts)
+
+
+def _render_overview_insight_card() -> None:
+    """Compact 'Latest Analyst Read' card for the Overview page.
+
+    Calls /api/bot/insights/summary. If the analyst hasn't been activated
+    yet, the router returns the placeholder envelope and we render a
+    one-line "no analyst data yet" hint rather than scaring the operator.
+    """
+    payload, err = _fetch("/api/bot/insights/summary")
+    if err is not None:
+        # The /insights router landed in M13 PR B — older bot deploys
+        # return 404 here. That's fine; the overview card stays silent
+        # until the bot's catch up.
+        return
+    if not isinstance(payload, dict):
+        return
+    cache_present = payload.get("cache_present", False)
+    summary_md = (payload.get("summary_md") or "").strip()
+    if not cache_present and not summary_md:
+        return
+
+    with st.container(border=True):
+        st.markdown("**🧭 Latest Analyst Read**")
+        _render_insight_envelope(payload, compact=True)
+
+
+def _render_usage_panel() -> None:
+    """Monthly spend + per-endpoint split + budget bar.
+
+    Calls /api/bot/insights/usage (M13 S1 PR F). Silent no-op when the
+    endpoint 404s (older bot deploys) or the table doesn't exist yet
+    (fresh DB with no generator runs).
+    """
+    payload, err = _fetch("/api/bot/insights/usage")
+    if err is not None or not isinstance(payload, dict):
+        return
+    if not payload.get("table_present"):
+        return
+
+    spent = float(payload.get("current_month_usd") or 0.0)
+    budget = float(payload.get("budget_usd") or 0.0)
+    tokens = int(payload.get("current_month_tokens") or 0)
+    calls = int(payload.get("current_month_calls") or 0)
+    pct = (spent / budget * 100) if budget > 0 else 0.0
+    by_endpoint = payload.get("by_endpoint") or []
+
+    with st.container(border=True):
+        st.markdown("**💸 Analyst usage — this calendar month**")
+        cols = st.columns(4)
+        cols[0].metric("Spent", f"${spent:.2f}")
+        cols[1].metric("Budget", f"${budget:.2f}")
+        cols[2].metric("Tokens", f"{tokens:,}")
+        cols[3].metric("Calls", f"{calls:,}")
+        if budget > 0:
+            st.progress(min(pct / 100.0, 1.0), text=f"{pct:.1f}% of budget")
+        if by_endpoint:
+            with st.expander("By endpoint", expanded=False):
+                for row in by_endpoint:
+                    ep = row.get("endpoint", "?")
+                    sp = float(row.get("spent") or 0.0)
+                    ca = int(row.get("calls") or 0)
+                    st.markdown(f"- `{ep}` — ${sp:.4f} ({ca} calls)")
+
+
+def _render_history_panel(endpoint: str, strategy_name: str | None = None) -> None:
+    """Show the last N runs of an endpoint's analyst output.
+
+    Each row is a collapsed expander label = `<grade dot> <ts> — <first 80 chars
+    of summary_md>`; expanding shows the full envelope. Silent no-op when the
+    history endpoint isn't deployed yet.
+    """
+    qs = f"endpoint={endpoint}&hours=24&limit=20"
+    if strategy_name:
+        qs += f"&strategy_name={quote(strategy_name, safe='')}"
+    payload, err = _fetch(f"/api/bot/insights/history?{qs}")
+    if err is not None or not isinstance(payload, dict):
+        return
+    if not payload.get("table_present"):
+        return
+    rows = payload.get("rows") or []
+    if not rows:
+        st.caption("_No historical runs yet (the generator has not landed a row in the last 24h)._")
+        return
+
+    with st.expander(f"📜 History — last {len(rows)} runs (24h)", expanded=False):
+        for row in rows:
+            grade = (row.get("grade") or "good").lower()
+            emoji, _ = _INSIGHTS_GRADE_BADGE.get(grade, ("⚪", "#888"))
+            ts = (row.get("generated_at") or "").replace("T", " ")[:19]
+            snippet = (row.get("summary_md") or "").strip().splitlines()
+            first_line = (snippet[0] if snippet else "")[:80]
+            label = f"{emoji} {ts} — {first_line}"
+            inner_payload = row.get("payload") or {}
+            # Streamlit forbids nested expanders, so we use a checkbox to
+            # toggle the full envelope inline instead.
+            if st.checkbox(label, key=f"hist_{endpoint}_{strategy_name or ''}_{row.get('id')}"):
+                _render_insight_envelope(inner_payload)
+
+
+def page_insights() -> None:
+    st.header("Insights")
+    st.caption(
+        "AI-generated narrative + grades over the bot's live trading data. "
+        "Refreshed every ~10 min by the `ict-insights-generator` systemd "
+        "timer on the bot VM; this page reads the cached output via "
+        "`/api/bot/insights/*`."
+    )
+
+    # Usage / cost panel at the top — operator's at-a-glance "is the
+    # budget gate biting?" signal. Hidden cleanly on older deploys.
+    _render_usage_panel()
+
+    # Endpoint picker — one subheader per call, so the operator can compare
+    # the four narratives without leaving the page.
+    summary_payload, summary_err = _fetch("/api/bot/insights/summary")
+    recent_payload, recent_err = _fetch("/api/bot/insights/recent?limit=20")
+    health_payload, health_err = _fetch("/api/bot/insights/health")
+
+    st.subheader("Overall (last 24h)")
+    if summary_err:
+        st.warning(f"Insights summary unavailable: {summary_err}")
+    elif isinstance(summary_payload, dict):
+        _render_insight_envelope(summary_payload)
+    else:
+        st.info("No summary payload.")
+    _render_history_panel("summary")
+
+    st.divider()
+
+    st.subheader("Recent closed trades")
+    if recent_err:
+        st.warning(f"Insights recent unavailable: {recent_err}")
+    elif isinstance(recent_payload, dict):
+        _render_insight_envelope(recent_payload)
+    else:
+        st.info("No recent payload.")
+    _render_history_panel("recent")
+
+    st.divider()
+
+    # Per-strategy view. Discover strategy names from /api/bot/strategies
+    # so the picker stays in sync with whatever is configured on the bot;
+    # fall back to a small hardcoded list if that endpoint is unreachable.
+    st.subheader("Per-strategy")
+    strategies_payload, strategies_err = _fetch("/api/bot/strategies")
+    strategy_names: list[str] = []
+    if isinstance(strategies_payload, dict):
+        per = strategies_payload.get("strategies") or {}
+        if isinstance(per, dict):
+            strategy_names = sorted(
+                name for name in per
+                if isinstance(name, str)
+                and name.replace("_", "").isalnum()
+                and name.islower()
+            )
+    if not strategy_names:
+        strategy_names = [
+            "turtle_soup", "vwap", "ict_scalp_5m",
+            "trend_donchian", "fade_breakout_4h", "squeeze_breakout_4h",
+        ]
+    selected = st.selectbox(
+        "Strategy",
+        options=strategy_names,
+        key="insights_strategy_select",
+    )
+    if selected:
+        strat_payload, strat_err = _fetch(
+            f"/api/bot/insights/strategy/{quote(selected, safe='')}"
+        )
+        if strat_err:
+            st.warning(f"Strategy insight unavailable: {strat_err}")
+        elif isinstance(strat_payload, dict):
+            _render_insight_envelope(strat_payload)
+        _render_history_panel("strategy", strategy_name=selected)
+
+    st.divider()
+
+    st.subheader("Health snapshot narrative")
+    if health_err:
+        st.warning(f"Insights health unavailable: {health_err}")
+    elif isinstance(health_payload, dict):
+        _render_insight_envelope(health_payload)
+    else:
+        st.info("No health payload.")
+    _render_history_panel("health")
+
+
 # ── Health ────────────────────────────────────────────────────────────────────
 
 def page_health() -> None:
@@ -3172,6 +3550,7 @@ def main() -> None:
     dispatch = {
         "Overview":      lambda: page_overview(stats, stats_err),
         "Performance":   page_performance,
+        "Insights":      page_insights,
         "Accounts":      page_accounts,
         "Positions":     page_positions,
         "Signals":       page_signals,
