@@ -927,14 +927,35 @@ def render_tv_chart(
 
 
 def _position_upnl(p: dict, last_price: float | None) -> float:
-    """Unrealised PnL for a position — prefer the bot's value, else compute
-    from the latest close (the bot's `unrealizedPnl` is often unset → $0)."""
+    """Unrealised PnL for a position — broker-truth first, else computed.
+
+    The bot's `/api/bot/positions` endpoint sources `unrealizedPnl` from
+    the broker (Bybit / IB `unrealised_pnl`) and tags each row with
+    `unrealizedPnlSource ∈ {"broker", "unavailable"}` (ict-trading-bot
+    PR #2953, 2026-06-07). When the broker call lands, the wire value
+    is the truth — including a real $0.00 (price at exact entry); we
+    must not treat that as "unset".
+
+    Fallback when the source is `"unavailable"` (or the field is
+    missing — legacy API): compute mark-to-market from the latest
+    candle close.
+    """
+    source = str(p.get("unrealizedPnlSource") or "").lower()
     raw = p.get("unrealizedPnl")
-    try:
-        if raw is not None and float(raw) != 0.0:
+    if source == "broker" and raw is not None:
+        try:
             return float(raw)
-    except (TypeError, ValueError):
-        pass
+        except (TypeError, ValueError):
+            pass
+    # Legacy / pre-#2953 API didn't tag the source. Trust a non-zero
+    # value as broker truth; treat 0/null as "compute fallback" so the
+    # dashboard remains usable against an older bot deploy.
+    if not source:
+        try:
+            if raw is not None and float(raw) != 0.0:
+                return float(raw)
+        except (TypeError, ValueError):
+            pass
     if last_price is None:
         return 0.0
     try:
@@ -1547,8 +1568,17 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         st.markdown("**Open positions**")
         if positions:
             pdf = pd.DataFrame(positions)
+            # Per-row uPnL via _position_upnl so broker-truth values
+            # (ict-trading-bot #2953) or computed-from-mark fallbacks
+            # display consistently. last_price here is the Overview
+            # chart's selected symbol — off-symbol rows fall through
+            # to the broker value when present, else $0.
+            pdf["uPnL"] = [
+                _position_upnl(p, last_price if p.get("symbol") == ov_symbol else None)
+                for p in positions
+            ]
             cmap = {"symbol": "Symbol", "side": "Side", "qty": "Qty",
-                    "entryPrice": "Entry", "unrealizedPnl": "uPnL",
+                    "entryPrice": "Entry", "uPnL": "uPnL",
                     "pattern": "Strategy"}
             cols = [c for c in cmap if c in pdf.columns]
             st.dataframe(pdf[cols].rename(columns=cmap), hide_index=True,
@@ -1589,14 +1619,18 @@ def _positions_for_symbol(symbol: str) -> tuple[list[dict], str | None]:
     return [p for p in (rows or []) if str(p.get("symbol")) == symbol], None
 
 
-def _render_open_trade_header(symbol: str, positions: list[dict]) -> None:
+def _render_open_trade_header(
+    symbol: str, positions: list[dict], last_price: float | None,
+) -> None:
     if not positions:
         st.info(
             f"No open {symbol} position right now — the chart below still shows "
             "strategy signals and recent closed-trade context."
         )
         return
-    net_pnl = sum((p.get("unrealizedPnl") or 0) for p in positions)
+    # Broker-truth uPnL when /api/bot/positions tagged the source
+    # (ict-trading-bot #2953); computed-from-mark fallback otherwise.
+    net_pnl = sum(_position_upnl(p, last_price) for p in positions)
     p = positions[0]  # primary leg for the detail metrics
     side = str(p.get("side", "")).upper() or "—"
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -1730,7 +1764,6 @@ def render_performance_tab(symbol: str) -> None:
     positions, pos_err = _positions_for_symbol(symbol)
     if pos_err:
         st.warning(f"Positions unavailable: {pos_err}")
-    _render_open_trade_header(symbol, positions)
 
     df, candles_err = _fetch_candles(symbol, interval)
     if candles_err:
@@ -1741,6 +1774,9 @@ def render_performance_tab(symbol: str) -> None:
         return
 
     last_price = float(df["close"].iloc[-1])
+    # last_price ready — header can now fall back to computed PnL when
+    # the broker-truth value is "unavailable".
+    _render_open_trade_header(symbol, positions, last_price)
 
     fig = go.Figure()
     fig.add_trace(go.Candlestick(
@@ -1856,7 +1892,13 @@ def page_accounts() -> None:
 
         bal_val = (balances.get(aid) or {}).get("balance")
         acc_positions = [p for p in positions if p.get("account") == aid]
-        unrealized = sum((p.get("unrealizedPnl") or 0) for p in acc_positions)
+        # Broker-truth uPnL when /api/bot/positions tagged the source
+        # (ict-trading-bot #2953). last_price=None here means the
+        # client-side computed fallback returns 0 for any position
+        # whose broker value is "unavailable" — acceptable for the
+        # account-level summary; the per-symbol Performance header has
+        # the candle context for a richer fallback.
+        unrealized = sum(_position_upnl(p, None) for p in acc_positions)
 
         # 30-day realised-PnL history via the no-session, account-filtered
         # endpoint. Rows are `{date, pnl, trades}` — `pnl`, not `realizedPnl`
