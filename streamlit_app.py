@@ -15,7 +15,7 @@ import datetime as dt
 import json
 import os
 import time
-from typing import Any
+from typing import Any, Optional
 from urllib.parse import quote, urlencode
 
 import pandas as pd
@@ -3060,6 +3060,111 @@ def page_backtesting() -> None:
 
 # ── Strategies ───────────────────────────────────────────────────────────────────
 
+# Colour key for the M7 gate's proposed_action. The hex values come from
+# the existing _TV_GREEN family palette to stay visually consistent with
+# the live/dry status dots above. `tune` is the M8 hand-off — neutral
+# yellow, neither alarming nor reassuring.
+_M7_ACTION_COLOR = {
+    "kill":          "#d04848",  # red — disable the strategy
+    "demote_shadow": "#d68e1f",  # orange — flip execution: shadow
+    "tune":          "#d6c01f",  # yellow — point at the M8 parameter sweep
+    "promote":       "#2eaa4e",  # green  — flip execution: live (shadow → live)
+    "hold":          "#6b7488",  # grey   — no change recommended
+}
+
+
+def _fmt_pct_or_dash(v: Optional[float]) -> str:
+    if v is None:
+        return "—"
+    try:
+        return f"{float(v):.1%}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _fmt_num_or_dash(v: Optional[float], decimals: int = 2) -> str:
+    if v is None:
+        return "—"
+    try:
+        return f"{float(v):.{decimals}f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _render_strategy_review(name: str) -> None:
+    """Render the latest M7 review packet for *name* (if one exists).
+
+    Reads ``GET /api/bot/strategies/{name}/review`` — Tier 1, returns a
+    ``{present, packet, …}`` envelope. When ``present: false`` (the
+    bot's packet generator has never been run for this strategy), this
+    helper renders a short ghost caption pointing at the
+    ``generate-strategy-review-packets`` operator action instead of
+    leaving the section blank. When ``present: true`` it surfaces:
+
+    - ``proposed_action`` as a coloured badge.
+    - Headline numbers (n_closed, win_rate, expectancy, pnl_total).
+    - Tier-3 SLA due-by when the action is ``demote_shadow`` / ``kill``.
+    - Reasons list — the matrix's explanation.
+
+    The full packet JSON is offered in a collapsed ``st.json`` for
+    drill-down without leaving the page.
+    """
+    review, err = _fetch(f"/api/bot/strategies/{quote(name)}/review")
+    st.markdown("**M7 review packet**")
+    if err:
+        st.caption(f"_review endpoint error: {err}_")
+        return
+    review = review or {}
+    if not review.get("present"):
+        st.caption(
+            "_No packet yet. Run `generate-strategy-review-packets` "
+            "(`docs/strategy-review-gate.md`)._"
+        )
+        return
+
+    packet = review.get("packet") or {}
+    action = str(packet.get("proposed_action") or "hold").lower()
+    colour = _M7_ACTION_COLOR.get(action, "#6b7488")
+    h = packet.get("headline") or {}
+    sla = packet.get("sla_due_by")
+    generated_at = (packet.get("generated_at") or "")[:19]
+
+    badge_html = (
+        f"<span style='display:inline-block;background:{colour};"
+        f"color:white;font-weight:600;letter-spacing:0.04em;"
+        f"padding:3px 12px;border-radius:4px;font-size:0.85rem;'>"
+        f"{action.upper()}</span>"
+    )
+    sla_html = (
+        f"<br><span style='color:#aeb6c6;font-size:0.78rem;'>Tier-3 SLA due `{sla[:10]}`</span>"
+        if sla else ""
+    )
+    st.markdown(badge_html + sla_html, unsafe_allow_html=True)
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("n_closed", h.get("n_closed", 0))
+    m2.metric("win_rate", _fmt_pct_or_dash(h.get("win_rate")))
+    m3.metric("expectancy", _fmt_num_or_dash(h.get("expectancy"), 4))
+    m4.metric("pnl_total", _fmt_num_or_dash(h.get("pnl_total")))
+
+    reasons = packet.get("reasons") or []
+    for r in reasons:
+        st.caption(f"• {r}")
+
+    # Brief footer with the window + generation timestamp so the
+    # operator can tell at a glance how fresh the verdict is.
+    win_start = (packet.get("window_start") or "")[:10]
+    win_end = (packet.get("window_end") or "")[:10]
+    if win_start and win_end:
+        st.caption(
+            f"_window {win_start} → {win_end} · packet generated {generated_at}Z_"
+        )
+
+    # Drill-down — the full packet, collapsed by default.
+    if st.checkbox(f"Show full packet JSON · {name}", key=f"m7_full_{name}"):
+        st.json(packet)
+
+
 def page_strategies() -> None:
     st.header("Strategies")
     data, err = _fetch("/api/bot/strategies")
@@ -3172,6 +3277,13 @@ def page_strategies() -> None:
                 _capped_table(pd.DataFrame(changelog), key=f"strat_log_{name}")
             else:
                 st.caption("No changelog entries.")
+
+            # M7 review packet — the mechanical gate's verdict on this strategy,
+            # served by GET /api/bot/strategies/{name}/review. The bot-side
+            # ict-trading-bot/docs/strategy-review-gate.md is the canonical
+            # rubric; this card renders proposed_action + reasons + the
+            # headline numbers the matrix consumed.
+            _render_strategy_review(name)
 
             # Config — always shown, at the bottom.
             if strat.get("config"):
