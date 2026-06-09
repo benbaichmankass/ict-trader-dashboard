@@ -287,7 +287,7 @@ PAGES = [
     # Operational, top-to-bottom: glance → performance → what's trading →
     # routing → decisions/fills → raw feed; then ops/diagnostics; then dev tools.
     "Overview", "Performance", "Insights", "Strategies", "Models", "Accounts",
-    "Order Packages", "Positions", "Signals",
+    "Order Packages", "Positions", "Signals", "News",
     "Backtesting", "Promotion", "Health",
     "Data Explorer", "Logs",
 ]
@@ -3708,6 +3708,54 @@ def page_health() -> None:
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
 
+def page_news() -> None:
+    """M9 news layer — what the news/event filter decided per actionable signal.
+
+    Reads the bot's shadow-soak log via `/api/bot/news/recent`. The log is empty
+    (and the layer inert) until the operator enables it (`NEWS_ENABLED=true` +
+    `NEWS_API_KEY`), so this page renders a clear "not enabled" state until then.
+    """
+    st.header("News")
+    st.caption(
+        "M9 news layer: per-signal news sentiment + economic-event decisions. "
+        "Veto blocks a trade on adverse high-impact news; the reductive influence "
+        "downsizes when news/events oppose the trade direction (default-off)."
+    )
+    payload, err = _fetch("/api/bot/news/recent?limit=200")
+    if err:
+        st.warning(err)
+        return
+    if not isinstance(payload, dict) or not payload.get("present"):
+        st.info(
+            "News layer not active yet — no decisions logged. It begins recording "
+            "once the bot has `NEWS_ENABLED=true` and a `NEWS_API_KEY` set."
+        )
+        return
+    records = payload.get("records") or []
+    if not records:
+        st.caption("No news decisions recorded yet.")
+        return
+
+    df = pd.DataFrame(records)
+    # Headline counts over the decision rows (skip the influence-applied rows).
+    decisions = df[df.get("decision").notna()] if "decision" in df else df
+    if "decision" in df and len(decisions):
+        counts = decisions["decision"].value_counts().to_dict()
+        vetoes = int(decisions["veto"].fillna(False).sum()) if "veto" in decisions else 0
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Decisions", len(decisions))
+        c2.metric("Vetoes", vetoes)
+        c3.metric("Boost / Reduce", f"{counts.get('boost', 0)} / {counts.get('reduce', 0)}")
+        c4.metric("Neutral", counts.get("neutral", 0))
+
+    # Friendly column order when present; tolerate missing keys across row kinds.
+    preferred = ["ts", "symbol", "side", "strategy", "decision", "adjustment",
+                 "veto", "event_risk", "factor", "action", "query", "reason"]
+    cols = [c for c in preferred if c in df.columns]
+    cols += [c for c in df.columns if c not in cols]
+    st.dataframe(df[cols], hide_index=True, use_container_width=True, height=560)
+
+
 def page_logs() -> None:
     st.header("Logs")
     rows, err = _fetch("/api/bot/logs")
@@ -3744,6 +3792,7 @@ def main() -> None:
         "Accounts":      page_accounts,
         "Positions":     page_positions,
         "Signals":       page_signals,
+        "News":          page_news,
         "Order Packages": page_order_packages,
         "Models":        page_models,
         "Promotion":     page_promotion,
