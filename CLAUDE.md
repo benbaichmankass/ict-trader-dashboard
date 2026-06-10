@@ -126,8 +126,8 @@ The dashboard PR is autonomous; the bot-side endpoint is Tier-3 per
 ## What's in this repo
 
 ```
-streamlit_app.py       — the dashboard (single file, ~200 lines)
-requirements.txt       — Python deps (streamlit, streamlit-autorefresh, requests, pandas)
+streamlit_app.py       — the dashboard (single file, ~3800 lines)
+requirements.txt       — Python deps (streamlit, streamlit-autorefresh, requests, pandas, plotly, yfinance)
 .streamlit/config.toml — theme + privacy
 README.md              — deploy + dev steps
 CLAUDE.md              — this file
@@ -150,8 +150,8 @@ Nested expanders are illegal in Streamlit, so the in-row "Show all" + config use
 
 | Tab | Endpoints |
 |---|---|
-| Overview | candles (`/api/bot/candles`, yfinance fallback), `/api/bot/positions`, `/api/bot/signals`, `/api/bot/trades/closed`, `/api/bot/stats`, `/api/pnl/history?days=30`, `/api/bot/strategies` — **live chart at the top** via a **custom lightweight-charts v4 embed** (`render_tv_chart` + `_TV_CHART_HTML`, loaded through `st.components.v1.html`; the lib comes from a jsDelivr CDN). Built because the `streamlit-lightweight-charts` wrapper silently drops per-series `priceLines` — the v4 API gives native `createPriceLine()` (live-position entry/SL/TP + current + ICT zones), `setMarkers()` (signals + closed trades), an **on-canvas control bar** (Live/Signals/Closed/Zones/EMA/Volume checkboxes, localStorage-persisted) and a **⤢ fullscreen button**. Live PnL is computed from the last candle close when the bot's `unrealizedPnl` is unset. Below the chart: the snapshot (KPI row, 24h scorecard + system health, 30-day P&L sparkline, open-positions mini-table, per-strategy 24h line). The legacy `render_overview_chart` (the wrapper path) is kept as a fallback. Heavy analytics live on Performance. |
-| Performance | `/api/bot/trades/closed`, candles (Yahoo Finance), `/api/bot/signals`, `/api/bot/positions` — **the analytics deep-dive**: a shared All/per-strategy filter driving headline metrics (trades, win rate, expectancy, total P&L) + 24h scorecard, an equity curve (cumulative realised P&L), a monthly P&L calendar heat-map, a per-day wins-vs-losses bar, a trades-by-strategy pie, and a per-strategy breakdown table — all from one client-side `/api/bot/trades/closed?limit=200&since=…` fetch. Below: per-symbol (BTCUSDT, MES) trade-context price charts (signals + open-trade entry/TP/SL + closed markers), recent (~24h) context, refreshed each cycle (not tick-live). |
+| Overview | candles (`/api/bot/candles`, yfinance fallback), `/api/bot/positions`, `/api/bot/signals`, `/api/bot/trades/closed`, `/api/bot/stats`, `/api/pnl/history?days=30`, `/api/bot/strategies` — **live chart at the top** via a **custom lightweight-charts v4 embed** (`render_tv_chart` + `_TV_CHART_HTML`, loaded through `st.components.v1.html`; the lib comes from a jsDelivr CDN). Built because the `streamlit-lightweight-charts` wrapper silently drops per-series `priceLines` — the v4 API gives native `createPriceLine()` (live-position entry/SL/TP + current + ICT zones), `setMarkers()` (signals + closed trades), an **on-canvas control bar** (Live/Signals/Closed/Zones/EMA/Volume checkboxes, localStorage-persisted) and a **⤢ fullscreen button**. Live PnL is computed from the last candle close when the bot's `unrealizedPnl` is unset. Below the chart: the snapshot (KPI row, 24h scorecard + system health, 30-day P&L sparkline, open-positions mini-table, per-strategy 24h line). Heavy analytics live on Performance. |
+| Performance | `/api/bot/trades/closed`, candles (`/api/bot/candles`, yfinance fallback), `/api/bot/signals`, `/api/bot/positions` — **the analytics deep-dive**: a shared All/per-strategy filter driving headline metrics (trades, win rate, expectancy, total P&L) + 24h scorecard, an equity curve (cumulative realised P&L), a monthly P&L calendar heat-map, a per-day wins-vs-losses bar, a trades-by-strategy pie, and a per-strategy breakdown table — all from one client-side `/api/bot/trades/closed?limit=200&since=…` fetch. Below: per-symbol (BTCUSDT, MES) trade-context price charts (signals + open-trade entry/TP/SL + closed markers), recent (~24h) context, refreshed each cycle (not tick-live). |
 | Insights | `/api/bot/insights/{summary,recent,strategy/{name},health}` — AI Analyst (M13 S1). Renders the cached LLM narrative + grade pill + signals list for each of the four endpoints. The grade is 🟢 good / 🟡 mixed / 🔴 concerning; signals are bullet-tagged by severity. Per-strategy section uses a selectbox populated from `/api/bot/strategies` (falls back to the canonical 6-strategy list). The router returns a 200 placeholder envelope when the cache hasn't been written yet, so this tab renders cleanly even before the generator's first run; the Overview page also surfaces the `summary` payload as a compact "Latest Analyst Read" card at the top. **Read-only** — nothing here calls Anthropic (that's the bot's `ict-insights-generator.service`). |
 | Accounts | `/api/bot/config`, `/api/bot/accounts/balances`, `/api/pnl/history?account_id=`, `/api/bot/positions`, `/api/bot/trades/closed?account_id=` — one card per account (**all accounts incl. the demo `bybit_1`** — the old separate Demo tab was folded in here): live/dry status, tracked balance (snapshot), realized·30d + unrealized PnL, open-trade count, trades·30d, a **daily realised-P&L chart** (bars + cumulative), and an expandable 7-day trade log. Uses the **no-session** `/api/pnl/history` (not the session-gated `/api/pnl`); reads its `pnl` field (renamed from `realized_usd` in S-063 — **not** `realizedPnl`). |
 | Positions | `/api/bot/positions` (open) + `/api/bot/trades/closed?since=…` (closed history) — two sections: live open positions on top, and the closed-position history below with a 24h / 7d / 30d window selector (7d default) |
@@ -166,12 +166,15 @@ Nested expanders are illegal in Streamlit, so the in-row "Show all" + config use
 | Health | `/api/bot/health/services`, `/api/bot/health/latest` |
 | Logs | `/api/bot/logs` |
 
-**Candles come from Yahoo Finance**, not a bot endpoint — `_fetch_candles`
-maps the bot symbol to a Yahoo ticker (`BTCUSDT`→`BTC-USD`, `MES`→`ES=F`;
-`ES=F` shares MES's S&P index level with deeper history than `MES=F`).
-There is no `/api/bot/candles/*` route on the bot. The bot endpoints supply
-the **trade context** overlaid on those candles (signals, open positions
-with stop-loss/take-profit, closed trades).
+**Candles: bot endpoint first, Yahoo Finance fallback.** `_fetch_candles`
+calls the bot's **`/api/bot/candles?symbol=&interval=&limit=`** route first
+(OHLCV from the same exchange the strategy trades — BTCUSDT→Bybit, MES→IBKR,
+matching the bot's own view), and falls back to yfinance only on an empty/error
+response. The yfinance fallback maps the bot symbol to a Yahoo ticker
+(`BTCUSDT`→`BTC-USD`, `MES`→`ES=F`; `ES=F` shares MES's S&P index level with
+deeper history than `MES=F`). The other bot endpoints supply the **trade
+context** overlaid on those candles (signals, open positions with
+stop-loss/take-profit, closed trades).
 
 **Not (yet) ported from the old React app:** TradingView candle chart
 with Bybit-WS per-tick updates, Backtests, Models / ShadowModels (ML

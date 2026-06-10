@@ -26,12 +26,6 @@ import streamlit.components.v1 as components
 import yfinance as yf
 
 try:
-    from streamlit_lightweight_charts import renderLightweightCharts as _render_lc
-    _LC_AVAILABLE = True
-except ImportError:
-    _LC_AVAILABLE = False
-
-try:
     from streamlit_autorefresh import st_autorefresh
     _AUTOREFRESH_AVAILABLE = True
 except ImportError:
@@ -591,115 +585,6 @@ def _lc_volume_data(df: pd.DataFrame) -> list[dict]:
             "color": "rgba(38,166,154,0.5)" if up else "rgba(239,83,80,0.5)",
         })
     return out
-
-
-def render_overview_chart(
-    df: pd.DataFrame,
-    signals:   list[dict] | None,
-    trades:    list[dict] | None,
-    symbol:    str,
-    positions: list[dict] | None = None,
-    height:    int = _LC_HEIGHT,
-    key:       str = "overview_lc_chart",
-    show_zones: bool = False,
-    show_ema:   bool = False,
-    show_volume: bool = False,
-    ema_period: int = 20,
-) -> None:
-    """Render the single TradingView Lightweight Charts candlestick.
-
-    Overlays live-trade context like TradingView: signal/trade markers,
-    entry/SL/TP/current-price lines for open positions, and (when
-    show_zones) the latest signal's ICT zones the strategy traded on.
-
-    Extending:
-      - Marker tweaks: edit _lc_markers() above.
-      - Price-line tweaks: edit _lc_price_lines() / _lc_zone_lines() above.
-      - Theme: change _TV_BG / _LC_GRID_* at the top.
-    """
-    if not _LC_AVAILABLE:
-        st.warning(
-            "Install `streamlit-lightweight-charts` to enable the chart.\n"
-            "`pip install streamlit-lightweight-charts`"
-        )
-        return
-
-    candle_data = _lc_candle_data(df)
-    markers     = _lc_markers(signals, trades, symbol)
-    price_lines = _lc_price_lines(positions, df, symbol)
-    if show_zones:
-        price_lines = price_lines + _lc_zone_lines(signals, symbol)
-
-    chart_opts = [{
-        "chart": {
-            "height": height,
-            "layout": {
-                "background": {"type": "solid", "color": _TV_BG},
-                "textColor":  _TV_TEXT,
-            },
-            "grid": {
-                "vertLines": {"color": _LC_GRID_V},
-                "horzLines": {"color": _LC_GRID_H},
-            },
-            "crosshair": {"mode": 1},
-            "rightPriceScale": {"borderColor": "#2a364a", "visible": True},
-            "timeScale": {
-                "borderColor":    "#2a364a",
-                "timeVisible":    True,
-                "secondsVisible": False,
-            },
-            # Touch / mobile: enable horizontal drag and pinch-to-zoom.
-            # vertTouchDrag=False prevents the chart stealing page scroll.
-            "handleScroll": {
-                "mouseWheel":       True,
-                "pressedMouseMove": True,
-                "horzTouchDrag":    True,
-                "vertTouchDrag":    False,
-            },
-            "handleScale": {
-                "axisPressedMouseMove": True,
-                "axisDoubleClickReset": True,
-                "mouseWheel":           True,
-                "pinch":                True,
-            },
-        },
-        "series": [{
-            "type": "Candlestick",
-            "data": candle_data,
-            "options": {
-                "upColor":       _TV_GREEN,
-                "downColor":     _TV_RED,
-                "borderVisible": False,
-                "wickUpColor":   _TV_GREEN,
-                "wickDownColor": _TV_RED,
-            },
-            "markers":    markers,
-            "priceLines": price_lines,
-        }],
-    }]
-
-    if show_ema and len(candle_data) >= 2:
-        chart_opts[0]["series"].append({
-            "type": "Line",
-            "data": _lc_ema_data(df, ema_period),
-            "options": {
-                "color": _TV_EMA20, "lineWidth": 2,
-                "priceLineVisible": False, "lastValueVisible": False,
-            },
-        })
-    if show_volume:
-        chart_opts[0]["series"].append({
-            "type": "Histogram",
-            "data": _lc_volume_data(df),
-            "options": {
-                "priceFormat": {"type": "volume"},
-                "priceScaleId": "",          # overlay on the main pane
-            },
-            # Pin the volume bars to the bottom 20% of the pane.
-            "priceScale": {"scaleMargins": {"top": 0.8, "bottom": 0.0}},
-        })
-
-    _render_lc(chart_opts, key=key)
 
 
 # ── Custom TradingView (lightweight-charts v4) embed ────────────────────────────
