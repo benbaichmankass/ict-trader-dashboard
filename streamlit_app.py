@@ -3165,6 +3165,102 @@ def _render_strategy_review(name: str) -> None:
         st.json(packet)
 
 
+# M8 tune-result recommendation colours (advisory action → badge).
+_M8_TUNE_COLOR = {
+    "propose_value": "#2e9e5b",        # green — an OOS/k-fold-validated improvement
+    "hold_current": "#6b7488",         # grey — current value already best
+    "insufficient_evidence": "#d6c01f",  # yellow — widen the grid/window
+}
+
+
+def _render_strategy_tune(name: str) -> None:
+    """Render the latest M8 parameter-sweep results for *name* (if any).
+
+    Reads ``GET /api/bot/strategies/{name}/tune`` — Tier 1, returns a
+    ``{present, date, results:[strategy_tune_result/v1, …]}`` envelope (one entry
+    per tuned param). For each result it surfaces the advisory recommendation
+    (proposed value + the exact Tier-3 YAML line), an OOS/robustness summary, a
+    compact metric grid, and a collapsed full-JSON drill-down. ``present:false``
+    → a ghost caption pointing at the bot's tune harness. Advisory only — every
+    value change is an operator-gated Tier-3 config edit; the dashboard never
+    initiates one.
+    """
+    tune, err = _fetch(f"/api/bot/strategies/{quote(name)}/tune")
+    st.markdown("**M8 tune results**")
+    if err:
+        st.caption(f"_tune endpoint error: {err}_")
+        return
+    tune = tune or {}
+    if not tune.get("present"):
+        st.caption(
+            "_No tune sweep yet. Run `scripts/ml/strategy_tune_sweep.py` "
+            "(`docs/strategy-tuning.md`)._"
+        )
+        return
+
+    date = tune.get("date") or ""
+    for res in tune.get("results") or []:
+        param = res.get("param") or "?"
+        rec = res.get("recommendation") or {}
+        action = str(rec.get("action") or "hold_current").lower()
+        colour = _M8_TUNE_COLOR.get(action, "#6b7488")
+        basis = str(rec.get("metric_basis") or res.get("metric_basis") or "full_sample")
+        cur = res.get("current_value")
+        proposed = rec.get("proposed_value")
+
+        badge = (
+            f"<span style='display:inline-block;background:{colour};color:white;"
+            f"font-weight:600;letter-spacing:0.03em;padding:2px 10px;border-radius:4px;"
+            f"font-size:0.8rem;'>{action.upper()}</span>"
+            f"<span style='color:#aeb6c6;font-size:0.78rem;'> &nbsp;`{param}` · "
+            f"basis: {basis}</span>"
+        )
+        st.markdown(badge, unsafe_allow_html=True)
+
+        if proposed is not None:
+            flags = []
+            if rec.get("robust") is not None:
+                fp, nf = rec.get("folds_positive"), rec.get("n_folds")
+                flags.append(f"robust {rec['robust']} ({fp}/{nf} folds)" if nf else f"robust {rec['robust']}")
+            if rec.get("train_oos_consistent") is not None:
+                flags.append(f"train/OOS-consistent {rec['train_oos_consistent']}")
+            flag_str = (" · " + " · ".join(flags)) if flags else ""
+            st.caption(
+                f"current `{cur}` → proposed **`{proposed}`** · "
+                f"beats baseline {rec.get('beats_baseline')}{flag_str}"
+            )
+            st.caption(f"⚠ Tier-3 (operator-gated): `{rec.get('yaml_line', '')}`")
+        else:
+            st.caption(rec.get("detail") or "_no actionable pick._")
+
+        # Compact grid — value vs net_total / expectancy / (folds+ if k-fold).
+        grid = res.get("grid") or []
+        if grid:
+            kfold = any("folds_positive" in r for r in grid)
+            rows = []
+            for r in grid:
+                row = {
+                    "value": r.get("value"),
+                    "trades": r.get("trades"),
+                    "net_total": _fmt_num_or_dash(r.get("net_total")),
+                    "net_exp": _fmt_num_or_dash(r.get("net_expectancy"), 3),
+                    "maxDD": _fmt_num_or_dash(r.get("max_drawdown")),
+                }
+                if kfold:
+                    row["folds+"] = f"{r.get('folds_positive')}/{r.get('n_folds')}"
+                rows.append(row)
+            try:
+                import pandas as _pd
+                st.dataframe(_pd.DataFrame(rows), hide_index=True, use_container_width=True)
+            except Exception:
+                st.json(rows)
+
+        if st.checkbox(f"Show full tune JSON · {name}.{param}", key=f"m8_full_{name}_{param}"):
+            st.json(res)
+    if date:
+        st.caption(f"_tune run {date}_")
+
+
 def page_strategies() -> None:
     st.header("Strategies")
     data, err = _fetch("/api/bot/strategies")
@@ -3284,6 +3380,12 @@ def page_strategies() -> None:
             # rubric; this card renders proposed_action + reasons + the
             # headline numbers the matrix consumed.
             _render_strategy_review(name)
+
+            # M8 tune results — the parameter-sweep harness's OOS / k-fold
+            # evidence for this strategy (GET /api/bot/strategies/{name}/tune,
+            # from runtime_logs/strategy_tunes/). Advisory only — any value
+            # change is an operator-gated Tier-3 config edit.
+            _render_strategy_tune(name)
 
             # Config — always shown, at the bottom.
             if strat.get("config"):
