@@ -3756,9 +3756,11 @@ def page_health() -> None:
 def page_news() -> None:
     """M9 news layer — what the news/event filter decided per actionable signal.
 
-    Reads the bot's shadow-soak log via `/api/bot/news/recent`. The log is empty
-    (and the layer inert) until the operator enables it (`NEWS_ENABLED=true` +
-    `NEWS_API_KEY`), so this page renders a clear "not enabled" state until then.
+    Reads the bot's shadow-soak log via `/api/bot/news/recent`. Activation is
+    source-driven since 2026-06-10 (the legacy `NEWS_ENABLED` flag was removed):
+    the layer is active when `NEWS_SOURCE=rss`, or `NEWS_SOURCE=newsapi` with a
+    `NEWS_API_KEY`. Until then the log is empty and this page renders a clear
+    "not active" state.
     """
     st.header("News")
     st.caption(
@@ -3773,7 +3775,8 @@ def page_news() -> None:
     if not isinstance(payload, dict) or not payload.get("present"):
         st.info(
             "News layer not active yet — no decisions logged. It begins recording "
-            "once the bot has `NEWS_ENABLED=true` and a `NEWS_API_KEY` set."
+            "once the bot selects a usable feed source: `NEWS_SOURCE=rss` "
+            "(keyless), or `NEWS_SOURCE=newsapi` plus a `NEWS_API_KEY`."
         )
         return
     records = payload.get("records") or []
