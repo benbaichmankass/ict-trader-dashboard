@@ -57,7 +57,13 @@ _DEFAULT_LIVE = not _PREVIEW_MODE
 # Yahoo Finance ticker mapping (dashboard uses bot symbol style for signal matching).
 # MES (Micro E-mini S&P 500, IBKR) maps to the full-size continuous E-mini
 # front-month `ES=F`, which tracks the identical S&P index level as MES and
-# carries far deeper Yahoo history than the micro contract `MES=F`.
+# carries far deeper Yahoo history than the micro contract `MES=F`; the same
+# micro→full-size reasoning maps MGC (Micro Gold)→`GC=F` and MHG (Micro
+# Copper)→`HG=F`. Spot gold (OANDA XAUUSD) also reads `GC=F` — the deepest
+# Yahoo proxy for the gold price. This map covers only the symbols that NEED
+# translating; `_yf_ticker` below derives everything else by rule (crypto
+# `*USDT`→`*-USD`; equities/ETFs pass through unchanged) so a newly traded
+# instrument gets a sensible fallback without a dashboard edit.
 _YF_SYMBOL: dict[str, str] = {
     "BTCUSDT": "BTC-USD",
     "ETHUSDT": "ETH-USD",
@@ -65,7 +71,20 @@ _YF_SYMBOL: dict[str, str] = {
     "BNBUSDT": "BNB-USD",
     "XRPUSDT": "XRP-USD",
     "MES": "ES=F",
+    "MGC": "GC=F",
+    "MHG": "HG=F",
+    "XAUUSD": "GC=F",
 }
+
+
+def _yf_ticker(symbol: str) -> str:
+    """Bot symbol → Yahoo Finance ticker, rule-based beyond the known map."""
+    sym = str(symbol).upper()
+    if sym in _YF_SYMBOL:
+        return _YF_SYMBOL[sym]
+    if sym.endswith("USDT"):
+        return f"{sym[:-4]}-USD"  # Bybit linear perp → Yahoo crypto pair
+    return sym  # equities / ETFs (SPY, QQQ, GLD, …) use the same ticker
 
 # yfinance interval + download period that yields ~200 bars per interval label
 _YF_PARAMS: dict[str, dict] = {
@@ -175,6 +194,46 @@ def _fetch(path: str) -> tuple[Any, str | None]:
         return None, f"Bad JSON from {path}: {e}"
 
 
+def _discover_symbols() -> list[str]:
+    """Every symbol the bot trades, derived live from the API — never hardcoded.
+
+    Union of (a) per-account ``symbols`` from ``/api/bot/config`` (the
+    canonical "what trades" enumeration, mirroring the bot's own
+    ``_resolve_tick_symbols``), (b) per-strategy ``symbols`` from the same
+    payload's ``strategies`` block (covers bot builds that predate the
+    account-symbols exposure), and (c) symbols on open positions (so a
+    live position is always selectable even if config briefly fails to
+    load). Order follows config declaration order so accounts.yaml drives
+    the selector. Static pair only as a last-resort API-down fallback —
+    adding an instrument to the bot must surface here with no dashboard
+    edit.
+    """
+    symbols: list[str] = []
+
+    def _add(raw: Any) -> None:
+        sym = str(raw or "").strip().upper()
+        if sym and sym not in symbols:
+            symbols.append(sym)
+
+    cfg, _cfg_err = _fetch("/api/bot/config")
+    if isinstance(cfg, dict):
+        for acc in cfg.get("accounts") or []:
+            if isinstance(acc, dict):
+                for s in acc.get("symbols") or []:
+                    _add(s)
+        strategies = cfg.get("strategies")
+        if isinstance(strategies, dict):
+            for scfg in strategies.values():
+                if isinstance(scfg, dict):
+                    for s in scfg.get("symbols") or []:
+                        _add(s)
+    positions, _pos_err = _fetch("/api/bot/positions")
+    for p in positions or []:
+        if isinstance(p, dict):
+            _add(p.get("symbol"))
+    return symbols or ["BTCUSDT", "MES"]
+
+
 def _fetch_candles(
     symbol: str, interval: str, limit: int = 200
 ) -> tuple[pd.DataFrame | None, str | None]:
@@ -217,7 +276,7 @@ def _fetch_candles_yf(
 ) -> tuple[pd.DataFrame | None, str | None]:
     try:
         params = _YF_PARAMS.get(interval, _YF_PARAMS["15m"])
-        yf_symbol = _YF_SYMBOL.get(symbol, symbol.replace("USDT", "-USD"))
+        yf_symbol = _yf_ticker(symbol)
 
         raw = yf.download(
             yf_symbol,
@@ -1366,7 +1425,7 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     # ââ Live chart (top of page) ââââââââââââââââââââââââââââââââââââââââââââââââ
     oc1, oc2 = st.columns(2)
     with oc1:
-        ov_symbol = st.selectbox("Symbol", CHART_SYMBOLS, key="ov_symbol")
+        ov_symbol = st.selectbox("Symbol", _discover_symbols(), key="ov_symbol")
     with oc2:
         ov_interval = st.selectbox(
             "Interval", CHART_INTERVALS,
@@ -1475,9 +1534,10 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         _render_strategy_snapshot(odf)
 
 
-# ── Chart symbol / interval choices (shared by the Overview chart) ──────────────
+# ── Chart interval choices (shared by the Overview chart) ──────────────────────
+# Symbols are NOT listed here — both the Overview selector and the
+# Performance per-symbol tabs enumerate them live via _discover_symbols().
 
-CHART_SYMBOLS   = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"]
 CHART_INTERVALS = list(_YF_PARAMS.keys())
 
 
@@ -1485,15 +1545,14 @@ CHART_INTERVALS = list(_YF_PARAMS.keys())
 
 # ── Performance Overview (per-symbol live trade context) ──────────────────────────
 #
-# Two tabs (BTCUSDT, MES). Each renders the live price chart for that symbol
-# with TradingView-style trade context overlaid:
+# One tab per traded symbol (from _discover_symbols()). Each renders the live
+# price chart for that symbol with TradingView-style trade context overlaid:
 #   * strategy signal entry markers          (/api/bot/signals, symbol-filtered)
 #   * live/open trade entry + TP + SL lines  (/api/bot/positions, symbol-filtered)
 #   * live PnL for the open position(s)       (Position.unrealizedPnl)
 #   * recent closed-trade entry/exit markers  (/api/bot/trades/closed)
-# Candles come from Yahoo Finance (BTCUSDT -> BTC-USD, MES -> ES=F).
+# Candles: bot exchange feed first, Yahoo Finance fallback (_yf_ticker map).
 
-PERF_SYMBOLS   = ["BTCUSDT", "MES"]
 PERF_INTERVALS = ["5m", "15m", "1h", "4h", "1d"]
 
 
@@ -1706,7 +1765,7 @@ def render_performance_tab(symbol: str) -> None:
         key=f"perf_chart_{symbol}",
     )
     st.caption(
-        f"Yahoo Finance · {_YF_SYMBOL.get(symbol, symbol)} · {interval} · "
+        f"Yahoo Finance · {_yf_ticker(symbol)} · {interval} · "
         f"signals + open-trade entry/TP/SL + live PnL · auto-refreshes every "
         f"{POLL_INTERVAL_S}s"
     )
@@ -1726,11 +1785,10 @@ def page_performance() -> None:
         "Signals, open-trade entry/TP/SL and closed-trade markers on price — "
         "recent (~24h) context. Refreshes each cycle (not tick-live)."
     )
-    tab_btc, tab_mes = st.tabs(["BTCUSDT", "MES"])
-    with tab_btc:
-        render_performance_tab("BTCUSDT")
-    with tab_mes:
-        render_performance_tab("MES")
+    perf_symbols = _discover_symbols()
+    for tab, sym in zip(st.tabs(perf_symbols), perf_symbols):
+        with tab:
+            render_performance_tab(sym)
 
 
 # ── Accounts ────────────────────────────────────────────────────────────────────
