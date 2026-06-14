@@ -195,6 +195,40 @@ def _fetch(path: str) -> tuple[Any, str | None]:
         return None, f"Bad JSON from {path}: {e}"
 
 
+def _fetch_parallel(
+    paths: list[str], timeout: float = TIMEOUT_S
+) -> dict[str, tuple[Any, str | None]]:
+    """Fetch several endpoints CONCURRENTLY with a per-request timeout.
+
+    For pages that need multiple independent reads (e.g. the Positions join
+    data), firing them in parallel bounds the page's blocking time to the
+    slowest single call instead of their sum — so a slow endpoint can't stack
+    past the auto-refresh interval and wedge the page in a perpetual reload.
+    Plain ``requests`` (not the cached ``_fetch``) so it's safe off the main
+    thread; each value is ``(json, None)`` or ``(None, error_str)``.
+    """
+    import concurrent.futures
+
+    out: dict[str, tuple[Any, str | None]] = {}
+    if not paths:
+        return out
+
+    def _one(path: str) -> tuple[str, tuple[Any, str | None]]:
+        try:
+            r = requests.get(f"{BOT_API}{path}", timeout=timeout)
+            r.raise_for_status()
+            return path, (r.json(), None)
+        except requests.RequestException as e:
+            return path, (None, f"{type(e).__name__} on {path}")
+        except ValueError:
+            return path, (None, f"Bad JSON from {path}")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(6, len(paths))) as ex:
+        for path, res in ex.map(_one, paths):
+            out[path] = res
+    return out
+
+
 def _discover_symbols() -> list[str]:
     """Every symbol the bot trades, derived live from the API — never hardcoded.
 
@@ -1987,10 +2021,18 @@ def page_positions() -> None:
 
     segment = _segment_picker("pos_segment")
 
-    # Shared join maps + signal feed, fetched once for every card on the page.
-    op_map = _order_package_by_trade()
-    scores_map = _models_by_trade()
-    signals, _ = _fetch("/api/bot/signals")
+    # Shared join data for the trade cards (reasoning / models / signal).
+    # Fetched CONCURRENTLY with small limits + a short timeout so a slow
+    # endpoint (trades/scores, or the larger order-packages payload) can't
+    # stack past the auto-refresh interval and wedge the page in a reload
+    # loop. Cards degrade gracefully ("No reasoning…") if a join is slow.
+    _op_path = "/api/bot/order-packages?" + urlencode({"limit": 50, "include_demo": "true"})
+    _sc_path = "/api/bot/trades/scores?limit=50&include_open=true"
+    _sig_path = "/api/bot/signals"
+    _joins = _fetch_parallel([_op_path, _sc_path, _sig_path], timeout=6.0)
+    op_map = _order_package_map(_joins.get(_op_path, (None, None))[0])
+    scores_map = _models_map(_joins.get(_sc_path, (None, None))[0])
+    signals = _joins.get(_sig_path, (None, None))[0] or []
 
     st.subheader("Open")
     rows, err = _fetch("/api/bot/positions?include_demo=true")
@@ -2166,11 +2208,9 @@ def _df_row_selection_supported() -> bool:
         return False
 
 
-def _order_package_by_trade() -> dict[str, dict]:
-    """linkedTradeId → its order package (newest wins). One fetch per render."""
-    payload, _ = _fetch("/api/bot/order-packages?" + urlencode({
-        "limit": ANALYTICS_MAX_ROWS, "include_demo": "true",
-    }))
+def _order_package_map(payload: Any) -> dict[str, dict]:
+    """linkedTradeId → its order package (newest wins). Pure builder over an
+    already-fetched /api/bot/order-packages payload."""
     out: dict[str, dict] = {}
     for p in (payload or {}).get("rows", []):
         ltid = p.get("linkedTradeId")
@@ -2179,9 +2219,9 @@ def _order_package_by_trade() -> dict[str, dict]:
     return out
 
 
-def _models_by_trade() -> dict[str, list[dict]]:
-    """trade_id → list of per-model shadow-score dicts (open trades included)."""
-    payload, _ = _fetch("/api/bot/trades/scores?limit=200&include_open=true")
+def _models_map(payload: Any) -> dict[str, list[dict]]:
+    """trade_id → list of per-model shadow-score dicts. Pure builder over an
+    already-fetched /api/bot/trades/scores payload."""
     out: dict[str, list[dict]] = {}
     for t in (payload or {}).get("trades", []):
         scores = t.get("scores") or []
