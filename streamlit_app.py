@@ -14,6 +14,7 @@ import calendar
 import datetime as dt
 import json
 import os
+import re
 import time
 from typing import Any, Optional
 from urllib.parse import quote, urlencode
@@ -234,6 +235,26 @@ def _discover_symbols() -> list[str]:
     return symbols or ["BTCUSDT", "MES"]
 
 
+def _overview_chart_symbols(positions: list[dict] | None) -> list[str]:
+    """Active symbols for the Overview, with open-position symbols first.
+
+    Same active-symbol set as ``_discover_symbols()`` (every instrument the
+    bot is paper/live-trading), re-ordered so any symbol that currently holds
+    an open position floats to the top — what's at risk right now is seen
+    first. The remainder keeps config-declaration order. ``positions`` is
+    passed in (already fetched by the caller) to avoid a duplicate API call.
+    """
+    symbols = _discover_symbols()
+    open_syms = {
+        str(p.get("symbol") or "").strip().upper()
+        for p in (positions or [])
+        if isinstance(p, dict)
+    }
+    with_pos = [s for s in symbols if s in open_syms]
+    without_pos = [s for s in symbols if s not in open_syms]
+    return with_pos + without_pos
+
+
 def _fetch_candles(
     symbol: str, interval: str, limit: int = 200
 ) -> tuple[pd.DataFrame | None, str | None]:
@@ -433,7 +454,7 @@ def render_sidebar() -> str:
         # Deploy marker — bump on each release so a stale Streamlit Cloud
         # instance is obvious at a glance. If this date is old, the app
         # needs a reboot/redeploy.
-        st.caption("build 2026-05-25 · live-data toggle")
+        st.caption("build 2026-06-14 · per-symbol overview charts")
 
     return page  # type: ignore[return-value]
 
@@ -521,11 +542,21 @@ def _lc_markers(
             sub["ts_utc"] = pd.to_datetime(sub[close_col], errors="coerce", utc=True)
             sub = sub.dropna(subset=["ts_utc"])
             for _, row in sub.iterrows():
-                pnl = row.get(pnl_col, 0) if pnl_col else 0
+                # realizedPnl is nullable (reconciler-incomplete close shape,
+                # ict-trading-bot #2759). A null PnL is "not measured", not a
+                # loss — paint it neutral grey rather than fabricating a red
+                # loss marker. Green only on a measured profit, red on a
+                # measured non-profit.
+                raw_pnl = row.get(pnl_col) if pnl_col else None
+                try:
+                    pnl = None if raw_pnl is None or pd.isna(raw_pnl) else float(raw_pnl)
+                except (TypeError, ValueError):
+                    pnl = None
+                color = _TV_TEXT if pnl is None else (_TV_GREEN if pnl > 0 else _TV_RED)
                 markers.append({
                     "time":     int(row["ts_utc"].timestamp()),
                     "position": "aboveBar",
-                    "color":    _TV_GREEN if (pnl or 0) > 0 else _TV_RED,
+                    "color":    color,
                     "shape":    "arrowDown",
                     "text":     "Exit",
                 })
@@ -692,6 +723,10 @@ _TV_CHART_HTML = """<!doctype html>
 <script>
 (function(){
   var D = __PAYLOAD__;
+  // Per-symbol localStorage namespace so multiple charts on one page (the
+  // Overview renders one chart per active symbol) keep independent scroll
+  // position + overlay-toggle state instead of clobbering a shared key.
+  var SK = D.storageKey || 'tvc';
   var el = document.getElementById('chart');
   if (typeof LightweightCharts === 'undefined') {
     document.getElementById('err').textContent = 'Chart library failed to load.';
@@ -723,7 +758,7 @@ _TV_CHART_HTML = """<!doctype html>
     // scrollable; persist the scroll position across the 10s auto-refresh so
     // scrolling back doesn't snap to "now" on every reload.
     var TS = chart.timeScale();
-    var saved = localStorage.getItem('tvc_lrange');
+    var saved = localStorage.getItem(SK + '_lrange');
     var applied = false;
     if (saved) { try { TS.setVisibleLogicalRange(JSON.parse(saved)); applied = true; } catch (e) {} }
     if (!applied) {
@@ -731,15 +766,15 @@ _TV_CHART_HTML = """<!doctype html>
       if (n) TS.setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 2 });
     }
     TS.subscribeVisibleLogicalRangeChange(function(r){
-      if (r) { try { localStorage.setItem('tvc_lrange', JSON.stringify(r)); } catch (e) {} }
+      if (r) { try { localStorage.setItem(SK + '_lrange', JSON.stringify(r)); } catch (e) {} }
     });
   } catch (e) {
     document.getElementById('err').textContent = 'Chart error: ' + e;
     return;
   }
 
-  function pref(k, d){ var v = localStorage.getItem('tvc_'+k); return v === null ? d : v === '1'; }
-  function setPref(k, v){ localStorage.setItem('tvc_'+k, v ? '1' : '0'); }
+  function pref(k, d){ var v = localStorage.getItem(SK+'_'+k); return v === null ? d : v === '1'; }
+  function setPref(k, v){ localStorage.setItem(SK+'_'+k, v ? '1' : '0'); }
 
   function mkLine(pl){
     return candle.createPriceLine({
@@ -856,6 +891,10 @@ def render_tv_chart(
         "tradeMarkers": _lc_markers(None, trades, symbol),
         "priceLines": _lc_price_lines(positions, df, symbol),
         "zoneLines": _lc_zone_lines(signals, symbol),
+        # Namespace the chart's localStorage (scroll range + overlay toggles)
+        # per symbol so the Overview's stacked per-symbol charts persist
+        # independently instead of sharing one global key.
+        "storageKey": "tvc_" + re.sub(r"[^A-Za-z0-9]", "", symbol),
         "theme": {
             "bg": _TV_BG, "text": _TV_TEXT, "gridH": _LC_GRID_H, "gridV": _LC_GRID_V,
             "green": _TV_GREEN, "red": _TV_RED, "ema": _TV_EMA20,
@@ -1422,56 +1461,78 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     # _render_overview_insight_card for the placeholder handling.
     _render_overview_insight_card()
 
-    # ââ Live chart (top of page) ââââââââââââââââââââââââââââââââââââââââââââââââ
-    oc1, oc2 = st.columns(2)
-    with oc1:
-        ov_symbol = st.selectbox("Symbol", _discover_symbols(), key="ov_symbol")
-    with oc2:
-        ov_interval = st.selectbox(
-            "Interval", CHART_INTERVALS,
-            index=CHART_INTERVALS.index("15m") if "15m" in CHART_INTERVALS else 0,
-            key="ov_interval",
-        )
-
-    df, candles_err = _fetch_candles(ov_symbol, ov_interval, limit=1000)
+    # ── Live charts (top of page) ──────────────────────────────────────────────
+    # One chart per ACTIVE symbol (anything a strategy is paper/live-trading,
+    # enumerated live via _discover_symbols()). Symbols with an OPEN POSITION are
+    # floated to the top so what's at risk right now is seen first; the rest keep
+    # config-declaration order. A single interval selector drives every chart.
     positions, _ = _fetch("/api/bot/positions")
-    sym_positions = [p for p in (positions or []) if p.get("symbol") == ov_symbol]
-    last_price = None
-    if df is not None and not df.empty:
-        try:
-            last_price = float(df["close"].iloc[-1])
-        except (KeyError, IndexError, ValueError, TypeError):
-            last_price = None
+    ov_symbols = _overview_chart_symbols(positions)
 
-    if sym_positions:
-        net_pnl = sum(_position_upnl(p, last_price) for p in sym_positions)
-        pc1, pc2 = st.columns([1, 3])
-        pc1.metric(f"Live PnL · {ov_symbol}", fmt_usd(net_pnl), delta=round(net_pnl, 2))
-        # Each open position rendered as "SIDE qty @ entry · strategy"
-        # (pattern is nullable per the API contract — fall back to "?"
-        # so a missing strategy stays visible rather than silently dropped).
-        def _pos_caption(p: dict) -> str:
-            side = str(p.get("side", "")).upper()
-            qty = p.get("qty", "?")
-            entry = p.get("entryPrice", "?")
-            strat = p.get("pattern") or "?"
-            return f"{side} {qty} @ {entry} · {strat}"
-        pc2.caption(" · ".join(_pos_caption(p) for p in sym_positions))
+    ov_interval = st.selectbox(
+        "Interval", CHART_INTERVALS,
+        index=CHART_INTERVALS.index("15m") if "15m" in CHART_INTERVALS else 0,
+        key="ov_interval",
+    )
 
-    if candles_err:
-        st.warning(f"Candles unavailable: {candles_err}")
-    elif df is None or df.empty:
-        st.caption("No candle data.")
-    else:
-        # All overlays sent to the component; its on-canvas checkboxes toggle them.
-        sig_data, _ = _fetch("/api/bot/signals")
-        trade_data, _ = _fetch(f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}")
-        render_tv_chart(df, sig_data, trade_data, ov_symbol, positions=sym_positions)
-        st.caption(
-            f"{ov_symbol} · {ov_interval} · candles from the bot's exchange feed "
-            f"(yfinance fallback) · overlay toggles + fullscreen on the chart · "
-            f"auto-refreshes every {POLL_INTERVAL_S}s"
-        )
+    # Trade-context overlays are symbol-agnostic on the wire — fetch each once
+    # and let render_tv_chart filter per symbol, rather than re-fetching per chart.
+    sig_data, _ = _fetch("/api/bot/signals")
+    trade_data, _ = _fetch(f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}")
+
+    def _pos_caption(p: dict) -> str:
+        # "SIDE qty @ entry · strategy" — pattern is nullable per the API
+        # contract, so fall back to "?" rather than silently dropping it.
+        side = str(p.get("side", "")).upper()
+        qty = p.get("qty", "?")
+        entry = p.get("entryPrice", "?")
+        strat = p.get("pattern") or "?"
+        return f"{side} {qty} @ {entry} · {strat}"
+
+    if not ov_symbols:
+        st.caption("No active symbols — the bot isn't trading any instrument.")
+
+    # Last candle close per symbol, reused by the open-positions snapshot below
+    # to mark-to-market off-chart rows (each symbol's own price, not just one).
+    last_price_by_symbol: dict[str, float] = {}
+
+    for ov_symbol in ov_symbols:
+        sym_positions = [p for p in (positions or []) if p.get("symbol") == ov_symbol]
+        df, candles_err = _fetch_candles(ov_symbol, ov_interval, limit=1000)
+        last_price = None
+        if df is not None and not df.empty:
+            try:
+                last_price = float(df["close"].iloc[-1])
+            except (KeyError, IndexError, ValueError, TypeError):
+                last_price = None
+        if last_price is not None:
+            last_price_by_symbol[ov_symbol] = last_price
+
+        # Header: symbol name + an "open" badge when it carries a live position;
+        # when open, the net live PnL + a per-position summary line.
+        badge = " · 🟢 open" if sym_positions else ""
+        st.markdown(f"#### {ov_symbol}{badge}")
+        if sym_positions:
+            net_pnl = sum(_position_upnl(p, last_price) for p in sym_positions)
+            pc1, pc2 = st.columns([1, 3])
+            pc1.metric(f"Live PnL · {ov_symbol}", fmt_usd(net_pnl),
+                       delta=round(net_pnl, 2))
+            pc2.caption(" · ".join(_pos_caption(p) for p in sym_positions))
+
+        if candles_err:
+            st.warning(f"{ov_symbol}: candles unavailable: {candles_err}")
+        elif df is None or df.empty:
+            st.caption(f"{ov_symbol}: no candle data.")
+        else:
+            # All overlays sent to the component; its on-canvas checkboxes
+            # toggle them. Overlays are filtered to this symbol inside the embed.
+            render_tv_chart(df, sig_data, trade_data, ov_symbol,
+                            positions=sym_positions)
+            st.caption(
+                f"{ov_symbol} · {ov_interval} · candles from the bot's exchange "
+                f"feed (yfinance fallback) · overlay toggles + fullscreen on the "
+                f"chart · auto-refreshes every {POLL_INTERVAL_S}s"
+            )
 
     st.divider()
 
@@ -1514,11 +1575,11 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             pdf = pd.DataFrame(positions)
             # Per-row uPnL via _position_upnl so broker-truth values
             # (ict-trading-bot #2953) or computed-from-mark fallbacks
-            # display consistently. last_price here is the Overview
-            # chart's selected symbol — off-symbol rows fall through
-            # to the broker value when present, else $0.
+            # display consistently. Each row marks to its OWN symbol's last
+            # candle close (captured per chart above); rows whose symbol had
+            # no candle data fall through to the broker value, else $0.
             pdf["uPnL"] = [
-                _position_upnl(p, last_price if p.get("symbol") == ov_symbol else None)
+                _position_upnl(p, last_price_by_symbol.get(p.get("symbol")))
                 for p in positions
             ]
             cmap = {"symbol": "Symbol", "side": "Side", "qty": "Qty",
@@ -1653,10 +1714,18 @@ def _add_closed_trade_markers(fig: go.Figure, symbol: str) -> None:
         sub["closedAt"] = pd.to_datetime(sub["closedAt"], errors="coerce", utc=True).dt.tz_localize(None)
         sub = sub.dropna(subset=["closedAt", "exitPrice"])
         if not sub.empty:
-            colors = [
-                _TV_GREEN if (pnl_col and (r.get(pnl_col) or 0) > 0) else _TV_RED
-                for _, r in sub.iterrows()
-            ]
+            # realizedPnl is nullable (ict-trading-bot #2759) — paint an
+            # unmeasured close neutral grey, not a fabricated red loss.
+            def _exit_color(r: dict) -> str:
+                raw = r.get(pnl_col) if pnl_col else None
+                try:
+                    pnl = None if raw is None or pd.isna(raw) else float(raw)
+                except (TypeError, ValueError):
+                    pnl = None
+                if pnl is None:
+                    return _TV_TEXT
+                return _TV_GREEN if pnl > 0 else _TV_RED
+            colors = [_exit_color(r) for _, r in sub.iterrows()]
             fig.add_trace(go.Scatter(
                 x=sub["closedAt"], y=sub["exitPrice"], mode="markers", name="Trade exit",
                 marker=dict(symbol="x", size=9, color=colors, line=dict(width=2)),
@@ -1765,9 +1834,9 @@ def render_performance_tab(symbol: str) -> None:
         key=f"perf_chart_{symbol}",
     )
     st.caption(
-        f"Yahoo Finance · {_yf_ticker(symbol)} · {interval} · "
-        f"signals + open-trade entry/TP/SL + live PnL · auto-refreshes every "
-        f"{POLL_INTERVAL_S}s"
+        f"{symbol} · {interval} · candles from the bot's exchange feed "
+        f"(yfinance fallback) · signals + open-trade entry/TP/SL + live PnL · "
+        f"auto-refreshes every {POLL_INTERVAL_S}s"
     )
 
 
@@ -2946,7 +3015,8 @@ def page_backtesting() -> None:
     m1, m2, m3, m4, m5 = st.columns(5)
     m1.metric("Total runs", len(df))
     m2.metric("Avg win rate",      fmt_pct(df["winRate"].mean()       if "winRate"      in df else None))
-    m3.metric("Avg profit factor", f"{df['profitFactor'].mean():.2f}" if "profitFactor" in df else "—")
+    m3.metric("Avg profit factor",
+              _fmt_num_or_dash(df["profitFactor"].mean()) if "profitFactor" in df else "—")
     m4.metric("Best PnL",  fmt_usd(df["totalPnl"].max() if "totalPnl" in df else None))
     m5.metric("Worst PnL", fmt_usd(df["totalPnl"].min() if "totalPnl" in df else None))
 
@@ -2993,7 +3063,7 @@ def page_backtesting() -> None:
             d1.metric("Total Trades",  row.get("totalTrades", "—"))
             d2.metric("Win Rate",      fmt_pct(row.get("winRate")))
             d3.metric("Total PnL",    fmt_usd(row.get("totalPnl")))
-            d4.metric("Profit Factor", f"{row.get('profitFactor', 0):.2f}")
+            d4.metric("Profit Factor", _fmt_num_or_dash(row.get("profitFactor")))
             d5, d6, d7, d8 = st.columns(4)
             d5.metric("Winning",    row.get("winningTrades", "—"))
             d6.metric("Losing",     row.get("losingTrades",  "—"))
@@ -3029,9 +3099,12 @@ def _fmt_num_or_dash(v: Optional[float], decimals: int = 2) -> str:
     if v is None:
         return "—"
     try:
-        return f"{float(v):.{decimals}f}"
+        f = float(v)
     except (TypeError, ValueError):
         return "—"
+    if f != f:  # NaN (e.g. an all-null column's .mean())
+        return "—"
+    return f"{f:.{decimals}f}"
 
 
 def _render_strategy_review(name: str) -> None:
@@ -3681,10 +3754,15 @@ def page_insights() -> None:
     strategies_payload, strategies_err = _fetch("/api/bot/strategies")
     strategy_names: list[str] = []
     if isinstance(strategies_payload, dict):
-        per = strategies_payload.get("strategies") or {}
-        if isinstance(per, dict):
+        # /api/bot/strategies returns `strategies` as a LIST of dicts, each
+        # with a `name` (same shape page_strategies + _render_strategy_snapshot
+        # consume). The strategy-insight endpoint only accepts [a-z0-9_]+ names.
+        per = strategies_payload.get("strategies") or []
+        if isinstance(per, list):
             strategy_names = sorted(
-                name for name in per
+                name for s in per
+                if isinstance(s, dict)
+                for name in [s.get("name")]
                 if isinstance(name, str)
                 and name.replace("_", "").isalnum()
                 and name.islower()
