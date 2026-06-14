@@ -488,7 +488,7 @@ def render_sidebar() -> str:
         # Deploy marker — bump on each release so a stale Streamlit Cloud
         # instance is obvious at a glance. If this date is old, the app
         # needs a reboot/redeploy.
-        st.caption("build 2026-06-14 · open-trade detail cards")
+        st.caption("build 2026-06-14 · trade cards v2 (fast + clearer)")
 
     return page  # type: ignore[return-value]
 
@@ -2020,18 +2020,29 @@ def page_positions() -> None:
                "Use the segment picker to switch between live and demo.")
 
     segment = _segment_picker("pos_segment")
+    # Per-model shadow scores are COMPILED from the prediction log on each
+    # request (not a journal pull), so they're the slow part — opt-in, default
+    # off, so the page loads fast from the journal/DB by default.
+    show_models = st.checkbox(
+        "Include model scores",
+        value=False,
+        key="pos_show_models",
+        help="Per-model shadow scores are aggregated from the prediction log "
+             "on demand (slower). Reasoning + signal load fast from the journal "
+             "regardless.",
+    )
 
-    # Shared join data for the trade cards (reasoning / models / signal).
-    # Fetched CONCURRENTLY with small limits + a short timeout so a slow
-    # endpoint (trades/scores, or the larger order-packages payload) can't
-    # stack past the auto-refresh interval and wedge the page in a reload
-    # loop. Cards degrade gracefully ("No reasoning…") if a join is slow.
+    # Shared join data for the trade cards (reasoning / signal — fast journal
+    # pulls; models only when opted in). Fetched CONCURRENTLY with small limits
+    # + a short timeout so no single read can stack past the auto-refresh
+    # interval and wedge the page. Cards degrade gracefully if a join is slow.
     _op_path = "/api/bot/order-packages?" + urlencode({"limit": 50, "include_demo": "true"})
     _sc_path = "/api/bot/trades/scores?limit=50&include_open=true"
     _sig_path = "/api/bot/signals"
-    _joins = _fetch_parallel([_op_path, _sc_path, _sig_path], timeout=6.0)
+    _join_paths = [_op_path, _sig_path] + ([_sc_path] if show_models else [])
+    _joins = _fetch_parallel(_join_paths, timeout=6.0)
     op_map = _order_package_map(_joins.get(_op_path, (None, None))[0])
-    scores_map = _models_map(_joins.get(_sc_path, (None, None))[0])
+    scores_map = _models_map(_joins.get(_sc_path, (None, None))[0]) if show_models else {}
     signals = _joins.get(_sig_path, (None, None))[0] or []
 
     st.subheader("Open")
@@ -2050,7 +2061,7 @@ def page_positions() -> None:
             for p in rows:
                 _render_trade_card(
                     p, is_open=True, op_map=op_map, scores_map=scores_map,
-                    signals=signals, last_price=None,
+                    signals=signals, last_price=None, models_enabled=show_models,
                 )
 
     st.subheader("Closed positions")
@@ -2116,7 +2127,7 @@ def page_positions() -> None:
             st.markdown("#### Selected trade")
             _render_trade_card(
                 closed[sel_idx], is_open=False, op_map=op_map,
-                scores_map=scores_map, signals=signals,
+                scores_map=scores_map, signals=signals, models_enabled=show_models,
             )
 
 
@@ -2263,6 +2274,55 @@ def _correlated_signal(
     return sorted(cands, key=_key)[0]
 
 
+def _trade_geometry(
+    entry: Any, sl: Any, tp: Any
+) -> tuple[float | None, float | None, float | None]:
+    """(risk:reward, stop-distance %, target-distance %) from the trade's
+    levels — all None-safe. Distances are absolute % moves from entry, so a
+    user can size up the trade without doing the arithmetic."""
+    try:
+        e = float(entry)
+    except (TypeError, ValueError):
+        return None, None, None
+    if not e:
+        return None, None, None
+    risk = reward = None
+    try:
+        if sl is not None:
+            risk = abs(e - float(sl))
+    except (TypeError, ValueError):
+        risk = None
+    try:
+        if tp is not None:
+            reward = abs(float(tp) - e)
+    except (TypeError, ValueError):
+        reward = None
+    rr = (reward / risk) if (risk and reward and risk > 0) else None
+    risk_pct = (risk / e * 100.0) if risk is not None else None
+    reward_pct = (reward / e * 100.0) if reward is not None else None
+    return rr, risk_pct, reward_pct
+
+
+def _signal_logic_text(sl: Any) -> str | None:
+    """Human-readable one-liner from an order package's ``signalLogic`` —
+    handles the plain-string and structured-dict shapes the writer may use."""
+    if sl is None:
+        return None
+    if isinstance(sl, str):
+        return sl.strip() or None
+    if isinstance(sl, dict):
+        for k in ("reason", "logic", "summary", "note", "explanation"):
+            v = sl.get(k)
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        flat = ", ".join(
+            f"{k}={v}" for k, v in sl.items()
+            if not isinstance(v, (dict, list))
+        )
+        return flat[:300] or None
+    return None
+
+
 def _render_trade_card(
     trade: dict,
     *,
@@ -2271,138 +2331,156 @@ def _render_trade_card(
     scores_map: dict[str, list[dict]],
     signals: list[dict] | None,
     last_price: float | None = None,
+    models_enabled: bool = True,
 ) -> None:
-    """Render one trade as a bordered detail card (open or closed)."""
+    """Render one trade as a bordered, scannable detail card (open or closed)."""
     sym = trade.get("symbol", "?")
-    side = str(trade.get("side", "")).upper() or "—"
+    side_raw = str(trade.get("side", "")).lower()
+    if side_raw in ("buy", "long"):
+        side_lbl, side_dot = "LONG", "🟢"
+    elif side_raw in ("sell", "short"):
+        side_lbl, side_dot = "SHORT", "🔴"
+    else:
+        side_lbl, side_dot = (side_raw.upper() or "—"), "⚪"
     strat = trade.get("pattern") or "?"
     account = trade.get("account") or "?"
     tid = str(trade["id"]) if trade.get("id") is not None else None
     op = op_map.get(tid) if tid else None
     scores = scores_map.get(tid) if tid else None
 
-    with st.container(border=True):
-        demo = " · 🧪 demo" if trade.get("isDemo") else ""
-        state = "🟢 OPEN" if is_open else "⚪ CLOSED"
-        st.markdown(
-            f"**{sym}** · {side} · {state} · strategy `{strat}` · "
-            f"account `{account}`{demo}"
-        )
+    entry, sl_lvl, tp_lvl = trade.get("entryPrice"), trade.get("stopLoss"), trade.get("takeProfit")
+    rr, risk_pct, reward_pct = _trade_geometry(entry, sl_lvl, tp_lvl)
 
-        # ── Headline metrics ───────────────────────────────────────────
+    with st.container(border=True):
+        # ── Header: symbol + side, PnL on the right ────────────────────
+        demo = " · 🧪 demo" if trade.get("isDemo") else ""
+        h1, h2 = st.columns([3, 1])
+        h1.markdown(f"### {side_dot} {sym} · {side_lbl}")
         if is_open:
             upnl = _position_upnl(trade, last_price)
-            m = st.columns(5)
-            m[0].metric("Entry", fmt_num(trade.get("entryPrice")))
-            m[1].metric("Stop loss", fmt_num(trade.get("stopLoss")))
-            m[2].metric("Take profit", fmt_num(trade.get("takeProfit")))
-            m[3].metric("Qty", fmt_num(trade.get("qty")))
-            m[4].metric("Unrealized PnL", fmt_usd(upnl),
-                        delta=round(upnl, 2) if upnl else None)
-            src = str(trade.get("unrealizedPnlSource") or "").lower()
-            src_note = "broker" if src == "broker" else "computed from last close"
+            h2.metric("Unrealized PnL", fmt_usd(upnl),
+                      delta=round(upnl, 2) if upnl else None)
+        else:
+            rp = trade.get("realizedPnl")
+            h2.metric("Realized PnL", fmt_usd(rp) if rp is not None else "—")
+        st.caption(
+            f"strategy **{strat}** · account **{account}** · "
+            + ("🟢 open" if is_open else "⚪ closed")
+            + (f" · pkg {op['status']}" if op and op.get("status") else "")
+            + demo
+        )
+
+        # ── Levels ─────────────────────────────────────────────────────
+        lv = st.columns(4)
+        lv[0].metric("Entry", fmt_num(entry))
+        if is_open:
+            lv[1].metric("Stop loss", fmt_num(sl_lvl))
+            lv[2].metric("Take profit", fmt_num(tp_lvl))
+        else:
+            lv[1].metric("Exit", fmt_num(trade.get("exitPrice")))
+            lv[2].metric("Stop / TP", f"{fmt_num(sl_lvl)} / {fmt_num(tp_lvl)}")
+        lv[3].metric("Qty", fmt_num(trade.get("qty")))
+
+        # ── Evaluation row — R:R, distances, confidence/PnL% ───────────
+        ev = st.columns(4)
+        ev[0].metric("Risk : Reward", f"1 : {rr:.2f}" if rr else "—")
+        ev[1].metric("Stop dist", f"{risk_pct:.2f}%" if risk_pct is not None else "—")
+        ev[2].metric("Target dist", f"{reward_pct:.2f}%" if reward_pct is not None else "—")
+        if is_open:
+            conf = op.get("confidence") if op else None
+            ev[3].metric("Confidence", f"{conf:.2f}" if isinstance(conf, (int, float)) else "—")
+        else:
+            ev[3].metric("PnL %", fmt_pct(trade.get("realizedPnlPct")))
+
+        if is_open:
             st.caption(
-                f"Opened {trade.get('openedAt') or '—'} · uPnL: {src_note} · "
-                "SL/TP set at entry (the bot doesn't trail or modify them "
-                "post-open, so there's no later SL/TP update)"
+                f"opened {trade.get('openedAt') or '—'} · SL/TP set at entry "
+                "(not trailed or modified post-open)"
             )
         else:
-            m = st.columns(5)
-            m[0].metric("Entry", fmt_num(trade.get("entryPrice")))
-            m[1].metric("Exit", fmt_num(trade.get("exitPrice")))
-            rp = trade.get("realizedPnl")
-            m[2].metric("Realized PnL", fmt_usd(rp) if rp is not None else "—")
-            m[3].metric("PnL %", fmt_pct(trade.get("realizedPnlPct")))
-            m[4].metric("Qty", fmt_num(trade.get("qty")))
             st.caption(
-                f"Opened {trade.get('openedAt') or '—'} · "
-                f"closed {trade.get('closedAt') or '—'} · "
-                f"close reason: {trade.get('closeReason') or '—'}"
+                f"opened {trade.get('openedAt') or '—'} · closed "
+                f"{trade.get('closedAt') or '—'} · close reason: "
+                f"**{trade.get('closeReason') or '—'}**"
             )
 
-        # ── Decision / reasoning (from the linked order package) ────────
-        st.markdown("**Decision & reasoning**")
+        st.divider()
+
+        # ── Decision & reasoning (fast pull from order_packages) ───────
+        st.markdown("**🧠 Decision & reasoning**")
         if op:
             meta = op.get("meta") if isinstance(op.get("meta"), dict) else {}
-            bits: list[str] = []
-            conf = op.get("confidence")
-            if isinstance(conf, (int, float)):
-                bits.append(f"confidence {conf:.2f}")
-            if op.get("status"):
-                bits.append(f"pkg status: {op['status']}")
-            for k in ("setup_type", "killzone", "bias", "session"):
-                v = meta.get(k)
+            chips = []
+            for label, key in (("Setup", "setup_type"), ("Killzone", "killzone"),
+                               ("Bias", "bias"), ("Session", "session")):
+                v = meta.get(key)
                 if v:
-                    bits.append(f"{k.replace('_', ' ')}: {v}")
-            if bits:
-                st.caption(" · ".join(bits))
-            sl = op.get("signalLogic")
-            if isinstance(sl, str) and sl.strip():
-                st.markdown(f"> {sl.strip()}")
-            elif isinstance(sl, dict) and sl:
-                # Structured signal logic — surface a short reason line if present.
-                reason = sl.get("reason") or sl.get("logic") or sl.get("summary")
-                if reason:
-                    st.markdown(f"> {reason}")
+                    chips.append(f"**{label}:** {v}")
+            if chips:
+                st.markdown(" &nbsp;·&nbsp; ".join(chips))
+            logic = _signal_logic_text(op.get("signalLogic"))
+            if logic:
+                st.markdown(f"> {logic}")
             claude = op.get("claudeScore") or {}
-            if claude.get("rationale"):
-                st.caption(f"Claude {_claude_cell(claude)}: {claude['rationale']}")
-            if not bits and not sl and not claude.get("rationale"):
-                st.caption("No reasoning recorded on the order package.")
+            if claude.get("grade") or claude.get("rationale"):
+                grade = _claude_cell(claude)
+                rat = claude.get("rationale") or ""
+                st.markdown(f"**Claude review — {grade}** · {rat}" if rat
+                            else f"**Claude review — {grade}**")
+            if not chips and not logic and not (claude.get("grade") or claude.get("rationale")):
+                st.caption("No reasoning recorded for this decision.")
         else:
             st.caption("No linked order package found for this trade.")
 
-        # ── Models scored on the trade ─────────────────────────────────
-        st.markdown("**Models scored**")
-        if scores:
-            mdf = pd.DataFrame([{
-                "Model": _short_model(sc.get("model_id")),
-                "Stage": sc.get("stage") or "—",
-                "Last": sc.get("score_last") if sc.get("score_last") is not None
-                else sc.get("score_mean"),
-                "Min": sc.get("score_min"),
-                "Max": sc.get("score_max"),
-                "n": sc.get("count"),
-            } for sc in scores])
-            st.dataframe(mdf, hide_index=True, use_container_width=True)
-        else:
-            st.caption("No shadow-model scores logged for this trade.")
+        # ── Models scored (opt-in — compiled from the prediction log) ──
+        if models_enabled:
+            st.markdown("**🤖 Models scored**")
+            if scores:
+                mdf = pd.DataFrame([{
+                    "Model": _short_model(sc.get("model_id")),
+                    "Stage": sc.get("stage") or "—",
+                    "Score": sc.get("score_last") if sc.get("score_last") is not None
+                    else sc.get("score_mean"),
+                    "Min": sc.get("score_min"),
+                    "Max": sc.get("score_max"),
+                    "n": sc.get("count"),
+                } for sc in scores])
+                st.dataframe(mdf, hide_index=True, use_container_width=True)
+            else:
+                st.caption("No shadow-model scores logged for this trade.")
 
-        # ── Triggering signal (best-effort correlation) ────────────────
+        # ── Triggering signal (best-effort correlation) ───────────────
         sig = _correlated_signal(signals, sym, trade.get("pattern"),
                                  trade.get("openedAt"))
-        st.markdown("**Triggering signal** · matched by symbol + strategy + time")
         if sig:
             sbits = []
             if sig.get("pattern"):
-                sbits.append(f"pattern: {sig['pattern']}")
+                sbits.append(f"**{sig['pattern']}**")
             if sig.get("confidence") is not None:
                 sbits.append(f"conf {sig['confidence']}")
             if sig.get("price") is not None:
                 sbits.append(f"@ {fmt_num(sig['price'])}")
             if sig.get("timestamp"):
                 sbits.append(str(sig["timestamp"]))
-            st.caption(" · ".join(sbits) or "—")
             zones = sig.get("zones") or []
-            if zones:
-                zbits = []
-                for z in zones:
-                    kind = z.get("kind")
-                    if kind == "fvg":
-                        zbits.append(f"FVG {fmt_num(z.get('low'))}–{fmt_num(z.get('high'))}")
-                    elif kind == "sweep":
-                        zbits.append(f"sweep {fmt_num(z.get('price'))}")
-                    elif kind:
-                        zbits.append(str(kind))
-                if zbits:
-                    st.caption("zones: " + " · ".join(zbits))
-        else:
-            st.caption("No correlated signal in the recent feed.")
+            zbits = []
+            for z in zones:
+                kind = z.get("kind")
+                if kind == "fvg":
+                    zbits.append(f"FVG {fmt_num(z.get('low'))}–{fmt_num(z.get('high'))}")
+                elif kind == "sweep":
+                    zbits.append(f"sweep {fmt_num(z.get('price'))}")
+                elif kind:
+                    zbits.append(str(kind))
+            line = "**📡 Triggering signal:** " + " · ".join(sbits)
+            if zbits:
+                line += "  ·  zones: " + " · ".join(zbits)
+            st.caption(line + "  _(matched by symbol+strategy+time)_")
 
-        # ── Raw payloads (drill-down) ──────────────────────────────────
-        with st.expander("Raw order package + model scores"):
+        # ── Raw drill-down ─────────────────────────────────────────────
+        with st.expander("Raw order package" + (" + model scores" if models_enabled else "")):
             st.json(op or {"note": "no linked order package"})
-            if scores:
+            if models_enabled and scores:
                 st.json(scores)
 
 
