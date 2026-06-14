@@ -2001,21 +2001,14 @@ def page_positions() -> None:
         if not rows:
             st.caption(f"No open {segment if segment != 'all' else ''} positions.".strip())
         else:
-            # One detail card per open position. Mark each to its own symbol's
-            # last candle close for the uPnL fallback (broker value wins when set).
-            last_price_by_symbol: dict[str, float] = {}
-            for sym in {p.get("symbol") for p in rows if p.get("symbol")}:
-                df_c, _ = _fetch_candles(sym, "15m", limit=2)
-                if df_c is not None and not df_c.empty:
-                    try:
-                        last_price_by_symbol[sym] = float(df_c["close"].iloc[-1])
-                    except (KeyError, IndexError, ValueError, TypeError):
-                        pass
+            # One detail card per open position. uPnL uses the broker-truth
+            # value the bot already provides (Position.unrealizedPnl); we
+            # deliberately do NOT fetch candles here — per-symbol candle pulls
+            # (especially MES→IBKR through the bot) made the page slow to load.
             for p in rows:
                 _render_trade_card(
                     p, is_open=True, op_map=op_map, scores_map=scores_map,
-                    signals=signals,
-                    last_price=last_price_by_symbol.get(p.get("symbol")),
+                    signals=signals, last_price=None,
                 )
 
     st.subheader("Closed positions")
@@ -2044,27 +2037,45 @@ def page_positions() -> None:
             "realizedPnl": "PnL", "realizedPnlPct": "PnL %", "closeReason": "Close",
         }
         cols = [c for c in col_map if c in cdf.columns]
-        st.caption(f"{len(closed)} closed trade(s) · {wlabel.lower()}"
-                   + (f" · capped at {ANALYTICS_MAX_ROWS}" if len(closed) >= ANALYTICS_MAX_ROWS else "")
-                   + " · click a row for the full trade card")
-        event = st.dataframe(
-            cdf[cols].rename(columns=col_map) if cols else cdf,
-            hide_index=True, use_container_width=True,
-            on_select="rerun", selection_mode="single-row", key="pos_closed_df",
-        )
-        sel = []
-        try:
-            sel = event.selection.rows  # type: ignore[union-attr]
-        except AttributeError:
-            sel = []
-        if sel:
-            idx = sel[0]
-            if 0 <= idx < len(closed):
-                st.markdown("#### Selected trade")
-                _render_trade_card(
-                    closed[idx], is_open=False, op_map=op_map,
-                    scores_map=scores_map, signals=signals,
-                )
+        disp = cdf[cols].rename(columns=col_map) if cols else cdf
+        sel_idx: int | None = None
+        if _df_row_selection_supported():
+            st.caption(f"{len(closed)} closed trade(s) · {wlabel.lower()}"
+                       + (f" · capped at {ANALYTICS_MAX_ROWS}" if len(closed) >= ANALYTICS_MAX_ROWS else "")
+                       + " · click a row for the full trade card")
+            event = st.dataframe(
+                disp, hide_index=True, use_container_width=True,
+                on_select="rerun", selection_mode="single-row", key="pos_closed_df",
+            )
+            try:
+                rows_sel = event.selection.rows  # type: ignore[union-attr]
+            except AttributeError:
+                rows_sel = []
+            if rows_sel:
+                sel_idx = rows_sel[0]
+        else:
+            # Older Streamlit without dataframe row-selection — render the
+            # table plus a selectbox so the full card is still reachable.
+            st.caption(f"{len(closed)} closed trade(s) · {wlabel.lower()}"
+                       + (f" · capped at {ANALYTICS_MAX_ROWS}" if len(closed) >= ANALYTICS_MAX_ROWS else "")
+                       + " · pick a trade below for the full card")
+            st.dataframe(disp, hide_index=True, use_container_width=True)
+            pick = st.selectbox(
+                "Open full card for…", [None, *range(len(closed))],
+                format_func=lambda i: "—" if i is None else (
+                    f"{closed[i].get('symbol')} "
+                    f"{str(closed[i].get('side', '')).upper()} · "
+                    f"{closed[i].get('closedAt') or ''}"
+                ),
+                key="pos_closed_pick",
+            )
+            sel_idx = pick
+        if sel_idx is not None and 0 <= sel_idx < len(closed):
+            st.markdown("#### Selected trade")
+            _render_trade_card(
+                closed[sel_idx], is_open=False, op_map=op_map,
+                scores_map=scores_map, signals=signals,
+            )
 
 
 # ── Signals ────────────────────────────────────────────────────────────────────
@@ -2140,6 +2151,19 @@ def _claude_cell(cs: dict | None) -> str:
 # Account is always shown next to the strategy. SL/TP carry an "set at entry"
 # note because the bot doesn't trail/modify them post-open (no modification
 # history exists anywhere — verified, so we don't fabricate a "last update").
+
+
+def _df_row_selection_supported() -> bool:
+    """True when this Streamlit build supports ``st.dataframe(on_select=…)``
+    (added 1.35). Streamlit Community Cloud may run an older build than the
+    pin requests during a rollout window, and calling the kwarg there raises —
+    so feature-detect and fall back to a selectbox instead of crashing the page.
+    """
+    import inspect
+    try:
+        return "on_select" in inspect.signature(st.dataframe).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def _order_package_by_trade() -> dict[str, dict]:
