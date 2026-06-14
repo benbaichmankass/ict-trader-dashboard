@@ -454,7 +454,7 @@ def render_sidebar() -> str:
         # Deploy marker — bump on each release so a stale Streamlit Cloud
         # instance is obvious at a glance. If this date is old, the app
         # needs a reboot/redeploy.
-        st.caption("build 2026-06-14 · per-symbol overview charts")
+        st.caption("build 2026-06-14 · open-trade detail cards")
 
     return page  # type: ignore[return-value]
 
@@ -1481,13 +1481,15 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     trade_data, _ = _fetch(f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}")
 
     def _pos_caption(p: dict) -> str:
-        # "SIDE qty @ entry · strategy" — pattern is nullable per the API
-        # contract, so fall back to "?" rather than silently dropping it.
+        # "SIDE qty @ entry · strategy · acct" — pattern is nullable per the
+        # API contract, so fall back to "?" rather than silently dropping it.
+        # Account is always shown next to the strategy for an open trade.
         side = str(p.get("side", "")).upper()
         qty = p.get("qty", "?")
         entry = p.get("entryPrice", "?")
         strat = p.get("pattern") or "?"
-        return f"{side} {qty} @ {entry} · {strat}"
+        acct = p.get("account") or "?"
+        return f"{side} {qty} @ {entry} · {strat} · acct {acct}"
 
     if not ov_symbols:
         st.caption("No active symbols — the bot isn't trading any instrument.")
@@ -1584,7 +1586,7 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             ]
             cmap = {"symbol": "Symbol", "side": "Side", "qty": "Qty",
                     "entryPrice": "Entry", "uPnL": "uPnL",
-                    "pattern": "Strategy"}
+                    "pattern": "Strategy", "account": "Account"}
             cols = [c for c in cmap if c in pdf.columns]
             st.dataframe(pdf[cols].rename(columns=cmap), hide_index=True,
                          use_container_width=True)
@@ -1648,8 +1650,12 @@ def _render_open_trade_header(
     c4.metric("Entry", fmt_num(p.get("entryPrice")))
     c5.metric("SL · TP", f"{fmt_num(p.get('stopLoss'))} · {fmt_num(p.get('takeProfit'))}")
     pat = p.get("pattern")
-    if pat:
-        st.caption(f"Active strategy on primary leg: **{pat}**")
+    acct = p.get("account")
+    if pat or acct:
+        st.caption(
+            f"Active strategy on primary leg: **{pat or '?'}** · "
+            f"account **{acct or '?'}**"
+        )
 
 
 def _add_signal_markers(fig: go.Figure, symbol: str, last_price: float) -> None:
@@ -1981,6 +1987,11 @@ def page_positions() -> None:
 
     segment = _segment_picker("pos_segment")
 
+    # Shared join maps + signal feed, fetched once for every card on the page.
+    op_map = _order_package_by_trade()
+    scores_map = _models_by_trade()
+    signals, _ = _fetch("/api/bot/signals")
+
     st.subheader("Open")
     rows, err = _fetch("/api/bot/positions?include_demo=true")
     if err:
@@ -1990,7 +2001,22 @@ def page_positions() -> None:
         if not rows:
             st.caption(f"No open {segment if segment != 'all' else ''} positions.".strip())
         else:
-            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+            # One detail card per open position. Mark each to its own symbol's
+            # last candle close for the uPnL fallback (broker value wins when set).
+            last_price_by_symbol: dict[str, float] = {}
+            for sym in {p.get("symbol") for p in rows if p.get("symbol")}:
+                df_c, _ = _fetch_candles(sym, "15m", limit=2)
+                if df_c is not None and not df_c.empty:
+                    try:
+                        last_price_by_symbol[sym] = float(df_c["close"].iloc[-1])
+                    except (KeyError, IndexError, ValueError, TypeError):
+                        pass
+            for p in rows:
+                _render_trade_card(
+                    p, is_open=True, op_map=op_map, scores_map=scores_map,
+                    signals=signals,
+                    last_price=last_price_by_symbol.get(p.get("symbol")),
+                )
 
     st.subheader("Closed positions")
     wlabel = st.selectbox("History window", list(_CLOSED_WINDOWS), index=1,
@@ -2008,6 +2034,8 @@ def page_positions() -> None:
     elif not closed:
         st.caption(f"No trades closed in the {wlabel.lower()}.")
     else:
+        # _format_closed_trades_df preserves row order, so the dataframe's
+        # selection index maps 1:1 back to `closed` → click a row for its card.
         cdf = _format_closed_trades_df(pd.DataFrame(closed))
         col_map = {
             "closedAt": "Closed", "openedAt": "Opened", "account": "Account",
@@ -2017,11 +2045,26 @@ def page_positions() -> None:
         }
         cols = [c for c in col_map if c in cdf.columns]
         st.caption(f"{len(closed)} closed trade(s) · {wlabel.lower()}"
-                   + (f" · capped at {ANALYTICS_MAX_ROWS}" if len(closed) >= ANALYTICS_MAX_ROWS else ""))
-        st.dataframe(
+                   + (f" · capped at {ANALYTICS_MAX_ROWS}" if len(closed) >= ANALYTICS_MAX_ROWS else "")
+                   + " · click a row for the full trade card")
+        event = st.dataframe(
             cdf[cols].rename(columns=col_map) if cols else cdf,
             hide_index=True, use_container_width=True,
+            on_select="rerun", selection_mode="single-row", key="pos_closed_df",
         )
+        sel = []
+        try:
+            sel = event.selection.rows  # type: ignore[union-attr]
+        except AttributeError:
+            sel = []
+        if sel:
+            idx = sel[0]
+            if 0 <= idx < len(closed):
+                st.markdown("#### Selected trade")
+                _render_trade_card(
+                    closed[idx], is_open=False, op_map=op_map,
+                    scores_map=scores_map, signals=signals,
+                )
 
 
 # ── Signals ────────────────────────────────────────────────────────────────────
@@ -2079,6 +2122,224 @@ def _claude_cell(cs: dict | None) -> str:
     if isinstance(score, (int, float)):
         txt = f"{txt} ({score:.2f})".strip()
     return txt or "—"
+
+
+# ── Trade detail card (shared by open + closed trades) ─────────────────────────
+#
+# A single rich card per trade, joining everything the public API can supply for
+# one trade id:
+#   * /api/bot/positions (open) or /api/bot/trades/closed (closed) — the leg
+#   * /api/bot/order-packages   — the decision (confidence, status, reasoning:
+#                                  signalLogic + meta{setup_type,killzone,bias},
+#                                  Claude review) joined by linkedTradeId == id
+#   * /api/bot/trades/scores    — the shadow MODELS scored on the trade, by
+#                                  trade_id == id
+#   * /api/bot/signals          — the triggering signal, best-effort correlated
+#                                  by symbol+strategy+time (no id-level link
+#                                  exists on the public surface)
+# Account is always shown next to the strategy. SL/TP carry an "set at entry"
+# note because the bot doesn't trail/modify them post-open (no modification
+# history exists anywhere — verified, so we don't fabricate a "last update").
+
+
+def _order_package_by_trade() -> dict[str, dict]:
+    """linkedTradeId → its order package (newest wins). One fetch per render."""
+    payload, _ = _fetch("/api/bot/order-packages?" + urlencode({
+        "limit": ANALYTICS_MAX_ROWS, "include_demo": "true",
+    }))
+    out: dict[str, dict] = {}
+    for p in (payload or {}).get("rows", []):
+        ltid = p.get("linkedTradeId")
+        if ltid is not None:
+            out.setdefault(str(ltid), p)  # rows are newest-first → first wins
+    return out
+
+
+def _models_by_trade() -> dict[str, list[dict]]:
+    """trade_id → list of per-model shadow-score dicts (open trades included)."""
+    payload, _ = _fetch("/api/bot/trades/scores?limit=200&include_open=true")
+    out: dict[str, list[dict]] = {}
+    for t in (payload or {}).get("trades", []):
+        scores = t.get("scores") or []
+        if scores:
+            out[str(t.get("trade_id"))] = scores
+    return out
+
+
+def _correlated_signal(
+    signals: list[dict] | None, symbol: str, strategy: str | None, opened_at: Any,
+) -> dict | None:
+    """Best-effort triggering signal for a trade. No id ties a signal to a
+    position/order-package on the public surface, so this matches by symbol
+    (+ strategy when both sides name one) and picks the signal nearest the
+    open time, preferring one at/just-before the open."""
+    if not signals:
+        return None
+    cands = []
+    for s in signals:
+        if s.get("symbol") != symbol:
+            continue
+        if strategy and s.get("strategy") and s.get("strategy") != strategy:
+            continue
+        cands.append(s)
+    if not cands:
+        return None
+    t0 = _parse_trade_ts(opened_at)
+    if t0 is None:
+        return cands[0]
+
+    def _key(s: dict) -> tuple[int, float]:
+        ts = _parse_trade_ts(s.get("timestamp"))
+        if ts is None:
+            return (2, 0.0)
+        delta = (t0 - ts).total_seconds()
+        # bucket 0: at/just-before open (within 5 min after counts too), nearest first
+        return (0, abs(delta)) if delta >= -300 else (1, abs(delta))
+
+    return sorted(cands, key=_key)[0]
+
+
+def _render_trade_card(
+    trade: dict,
+    *,
+    is_open: bool,
+    op_map: dict[str, dict],
+    scores_map: dict[str, list[dict]],
+    signals: list[dict] | None,
+    last_price: float | None = None,
+) -> None:
+    """Render one trade as a bordered detail card (open or closed)."""
+    sym = trade.get("symbol", "?")
+    side = str(trade.get("side", "")).upper() or "—"
+    strat = trade.get("pattern") or "?"
+    account = trade.get("account") or "?"
+    tid = str(trade["id"]) if trade.get("id") is not None else None
+    op = op_map.get(tid) if tid else None
+    scores = scores_map.get(tid) if tid else None
+
+    with st.container(border=True):
+        demo = " · 🧪 demo" if trade.get("isDemo") else ""
+        state = "🟢 OPEN" if is_open else "⚪ CLOSED"
+        st.markdown(
+            f"**{sym}** · {side} · {state} · strategy `{strat}` · "
+            f"account `{account}`{demo}"
+        )
+
+        # ── Headline metrics ───────────────────────────────────────────
+        if is_open:
+            upnl = _position_upnl(trade, last_price)
+            m = st.columns(5)
+            m[0].metric("Entry", fmt_num(trade.get("entryPrice")))
+            m[1].metric("Stop loss", fmt_num(trade.get("stopLoss")))
+            m[2].metric("Take profit", fmt_num(trade.get("takeProfit")))
+            m[3].metric("Qty", fmt_num(trade.get("qty")))
+            m[4].metric("Unrealized PnL", fmt_usd(upnl),
+                        delta=round(upnl, 2) if upnl else None)
+            src = str(trade.get("unrealizedPnlSource") or "").lower()
+            src_note = "broker" if src == "broker" else "computed from last close"
+            st.caption(
+                f"Opened {trade.get('openedAt') or '—'} · uPnL: {src_note} · "
+                "SL/TP set at entry (the bot doesn't trail or modify them "
+                "post-open, so there's no later SL/TP update)"
+            )
+        else:
+            m = st.columns(5)
+            m[0].metric("Entry", fmt_num(trade.get("entryPrice")))
+            m[1].metric("Exit", fmt_num(trade.get("exitPrice")))
+            rp = trade.get("realizedPnl")
+            m[2].metric("Realized PnL", fmt_usd(rp) if rp is not None else "—")
+            m[3].metric("PnL %", fmt_pct(trade.get("realizedPnlPct")))
+            m[4].metric("Qty", fmt_num(trade.get("qty")))
+            st.caption(
+                f"Opened {trade.get('openedAt') or '—'} · "
+                f"closed {trade.get('closedAt') or '—'} · "
+                f"close reason: {trade.get('closeReason') or '—'}"
+            )
+
+        # ── Decision / reasoning (from the linked order package) ────────
+        st.markdown("**Decision & reasoning**")
+        if op:
+            meta = op.get("meta") if isinstance(op.get("meta"), dict) else {}
+            bits: list[str] = []
+            conf = op.get("confidence")
+            if isinstance(conf, (int, float)):
+                bits.append(f"confidence {conf:.2f}")
+            if op.get("status"):
+                bits.append(f"pkg status: {op['status']}")
+            for k in ("setup_type", "killzone", "bias", "session"):
+                v = meta.get(k)
+                if v:
+                    bits.append(f"{k.replace('_', ' ')}: {v}")
+            if bits:
+                st.caption(" · ".join(bits))
+            sl = op.get("signalLogic")
+            if isinstance(sl, str) and sl.strip():
+                st.markdown(f"> {sl.strip()}")
+            elif isinstance(sl, dict) and sl:
+                # Structured signal logic — surface a short reason line if present.
+                reason = sl.get("reason") or sl.get("logic") or sl.get("summary")
+                if reason:
+                    st.markdown(f"> {reason}")
+            claude = op.get("claudeScore") or {}
+            if claude.get("rationale"):
+                st.caption(f"Claude {_claude_cell(claude)}: {claude['rationale']}")
+            if not bits and not sl and not claude.get("rationale"):
+                st.caption("No reasoning recorded on the order package.")
+        else:
+            st.caption("No linked order package found for this trade.")
+
+        # ── Models scored on the trade ─────────────────────────────────
+        st.markdown("**Models scored**")
+        if scores:
+            mdf = pd.DataFrame([{
+                "Model": _short_model(sc.get("model_id")),
+                "Stage": sc.get("stage") or "—",
+                "Last": sc.get("score_last") if sc.get("score_last") is not None
+                else sc.get("score_mean"),
+                "Min": sc.get("score_min"),
+                "Max": sc.get("score_max"),
+                "n": sc.get("count"),
+            } for sc in scores])
+            st.dataframe(mdf, hide_index=True, use_container_width=True)
+        else:
+            st.caption("No shadow-model scores logged for this trade.")
+
+        # ── Triggering signal (best-effort correlation) ────────────────
+        sig = _correlated_signal(signals, sym, trade.get("pattern"),
+                                 trade.get("openedAt"))
+        st.markdown("**Triggering signal** · matched by symbol + strategy + time")
+        if sig:
+            sbits = []
+            if sig.get("pattern"):
+                sbits.append(f"pattern: {sig['pattern']}")
+            if sig.get("confidence") is not None:
+                sbits.append(f"conf {sig['confidence']}")
+            if sig.get("price") is not None:
+                sbits.append(f"@ {fmt_num(sig['price'])}")
+            if sig.get("timestamp"):
+                sbits.append(str(sig["timestamp"]))
+            st.caption(" · ".join(sbits) or "—")
+            zones = sig.get("zones") or []
+            if zones:
+                zbits = []
+                for z in zones:
+                    kind = z.get("kind")
+                    if kind == "fvg":
+                        zbits.append(f"FVG {fmt_num(z.get('low'))}–{fmt_num(z.get('high'))}")
+                    elif kind == "sweep":
+                        zbits.append(f"sweep {fmt_num(z.get('price'))}")
+                    elif kind:
+                        zbits.append(str(kind))
+                if zbits:
+                    st.caption("zones: " + " · ".join(zbits))
+        else:
+            st.caption("No correlated signal in the recent feed.")
+
+        # ── Raw payloads (drill-down) ──────────────────────────────────
+        with st.expander("Raw order package + model scores"):
+            st.json(op or {"note": "no linked order package"})
+            if scores:
+                st.json(scores)
 
 
 def page_order_packages() -> None:
