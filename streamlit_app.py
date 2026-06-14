@@ -488,7 +488,7 @@ def render_sidebar() -> str:
         # Deploy marker — bump on each release so a stale Streamlit Cloud
         # instance is obvious at a glance. If this date is old, the app
         # needs a reboot/redeploy.
-        st.caption("build 2026-06-14 · trade cards v2 (fast + clearer)")
+        st.caption("build 2026-06-14 · model scores from order package")
 
     return page  # type: ignore[return-value]
 
@@ -2020,29 +2020,16 @@ def page_positions() -> None:
                "Use the segment picker to switch between live and demo.")
 
     segment = _segment_picker("pos_segment")
-    # Per-model shadow scores are COMPILED from the prediction log on each
-    # request (not a journal pull), so they're the slow part — opt-in, default
-    # off, so the page loads fast from the journal/DB by default.
-    show_models = st.checkbox(
-        "Include model scores",
-        value=False,
-        key="pos_show_models",
-        help="Per-model shadow scores are aggregated from the prediction log "
-             "on demand (slower). Reasoning + signal load fast from the journal "
-             "regardless.",
-    )
 
-    # Shared join data for the trade cards (reasoning / signal — fast journal
-    # pulls; models only when opted in). Fetched CONCURRENTLY with small limits
-    # + a short timeout so no single read can stack past the auto-refresh
-    # interval and wedge the page. Cards degrade gracefully if a join is slow.
+    # Join data for the trade cards — all fast journal/DB pulls now that the
+    # per-model ML scores are persisted ON the order package (modelScores),
+    # so there's no slow shadow-log recompile. order-packages carries the
+    # reasoning AND the model scores; signals adds the triggering-signal
+    # correlation. Fetched concurrently, time-boxed.
     _op_path = "/api/bot/order-packages?" + urlencode({"limit": 50, "include_demo": "true"})
-    _sc_path = "/api/bot/trades/scores?limit=50&include_open=true"
     _sig_path = "/api/bot/signals"
-    _join_paths = [_op_path, _sig_path] + ([_sc_path] if show_models else [])
-    _joins = _fetch_parallel(_join_paths, timeout=6.0)
+    _joins = _fetch_parallel([_op_path, _sig_path], timeout=6.0)
     op_map = _order_package_map(_joins.get(_op_path, (None, None))[0])
-    scores_map = _models_map(_joins.get(_sc_path, (None, None))[0]) if show_models else {}
     signals = _joins.get(_sig_path, (None, None))[0] or []
 
     st.subheader("Open")
@@ -2060,8 +2047,8 @@ def page_positions() -> None:
             # (especially MES→IBKR through the bot) made the page slow to load.
             for p in rows:
                 _render_trade_card(
-                    p, is_open=True, op_map=op_map, scores_map=scores_map,
-                    signals=signals, last_price=None, models_enabled=show_models,
+                    p, is_open=True, op_map=op_map,
+                    signals=signals, last_price=None,
                 )
 
     st.subheader("Closed positions")
@@ -2126,8 +2113,7 @@ def page_positions() -> None:
         if sel_idx is not None and 0 <= sel_idx < len(closed):
             st.markdown("#### Selected trade")
             _render_trade_card(
-                closed[sel_idx], is_open=False, op_map=op_map,
-                scores_map=scores_map, signals=signals, models_enabled=show_models,
+                closed[sel_idx], is_open=False, op_map=op_map, signals=signals,
             )
 
 
@@ -2230,17 +2216,6 @@ def _order_package_map(payload: Any) -> dict[str, dict]:
     return out
 
 
-def _models_map(payload: Any) -> dict[str, list[dict]]:
-    """trade_id → list of per-model shadow-score dicts. Pure builder over an
-    already-fetched /api/bot/trades/scores payload."""
-    out: dict[str, list[dict]] = {}
-    for t in (payload or {}).get("trades", []):
-        scores = t.get("scores") or []
-        if scores:
-            out[str(t.get("trade_id"))] = scores
-    return out
-
-
 def _correlated_signal(
     signals: list[dict] | None, symbol: str, strategy: str | None, opened_at: Any,
 ) -> dict | None:
@@ -2328,12 +2303,14 @@ def _render_trade_card(
     *,
     is_open: bool,
     op_map: dict[str, dict],
-    scores_map: dict[str, list[dict]],
     signals: list[dict] | None,
     last_price: float | None = None,
-    models_enabled: bool = True,
 ) -> None:
-    """Render one trade as a bordered, scannable detail card (open or closed)."""
+    """Render one trade as a bordered, scannable detail card (open or closed).
+
+    Model scores come straight off the linked order package's ``modelScores``
+    (persisted at decision time — a cheap read), not a per-request recompile.
+    """
     sym = trade.get("symbol", "?")
     side_raw = str(trade.get("side", "")).lower()
     if side_raw in ("buy", "long"):
@@ -2346,7 +2323,9 @@ def _render_trade_card(
     account = trade.get("account") or "?"
     tid = str(trade["id"]) if trade.get("id") is not None else None
     op = op_map.get(tid) if tid else None
-    scores = scores_map.get(tid) if tid else None
+    # Per-model ML scores persisted on the order package at decision time:
+    # {model_id: {stage, score}}. Cheap read — no shadow-log recompile.
+    model_scores = op.get("modelScores") if isinstance(op, dict) else None
 
     entry, sl_lvl, tp_lvl = trade.get("entryPrice"), trade.get("stopLoss"), trade.get("takeProfit")
     rr, risk_pct, reward_pct = _trade_geometry(entry, sl_lvl, tp_lvl)
@@ -2432,22 +2411,17 @@ def _render_trade_card(
         else:
             st.caption("No linked order package found for this trade.")
 
-        # ── Models scored (opt-in — compiled from the prediction log) ──
-        if models_enabled:
-            st.markdown("**🤖 Models scored**")
-            if scores:
-                mdf = pd.DataFrame([{
-                    "Model": _short_model(sc.get("model_id")),
-                    "Stage": sc.get("stage") or "—",
-                    "Score": sc.get("score_last") if sc.get("score_last") is not None
-                    else sc.get("score_mean"),
-                    "Min": sc.get("score_min"),
-                    "Max": sc.get("score_max"),
-                    "n": sc.get("count"),
-                } for sc in scores])
-                st.dataframe(mdf, hide_index=True, use_container_width=True)
-            else:
-                st.caption("No shadow-model scores logged for this trade.")
+        # ── Models scored (persisted on the order package — cheap read) ─
+        st.markdown("**🤖 Models scored**")
+        if isinstance(model_scores, dict) and model_scores:
+            mdf = pd.DataFrame([{
+                "Model": _short_model(mid),
+                "Stage": (sc or {}).get("stage") or "—",
+                "Score": (sc or {}).get("score"),
+            } for mid, sc in model_scores.items()])
+            st.dataframe(mdf, hide_index=True, use_container_width=True)
+        else:
+            st.caption("No model scores recorded for this trade.")
 
         # ── Triggering signal (best-effort correlation) ───────────────
         sig = _correlated_signal(signals, sym, trade.get("pattern"),
@@ -2478,10 +2452,8 @@ def _render_trade_card(
             st.caption(line + "  _(matched by symbol+strategy+time)_")
 
         # ── Raw drill-down ─────────────────────────────────────────────
-        with st.expander("Raw order package" + (" + model scores" if models_enabled else "")):
+        with st.expander("Raw order package"):
             st.json(op or {"note": "no linked order package"})
-            if models_enabled and scores:
-                st.json(scores)
 
 
 def page_order_packages() -> None:
