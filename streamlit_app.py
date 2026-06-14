@@ -488,7 +488,7 @@ def render_sidebar() -> str:
         # Deploy marker — bump on each release so a stale Streamlit Cloud
         # instance is obvious at a glance. If this date is old, the app
         # needs a reboot/redeploy.
-        st.caption("build 2026-06-14 · model scores from order package")
+        st.caption("build 2026-06-14 · live uPnL fallback for IBKR symbols")
 
     return page  # type: ignore[return-value]
 
@@ -982,6 +982,38 @@ def _position_upnl(p: dict, last_price: float | None) -> float:
         return (last_price - entry) * qty * sign
     except (TypeError, ValueError):
         return 0.0
+
+
+def _open_upnl(p: dict, last_price: float | None) -> tuple[float, bool]:
+    """Like :func:`_position_upnl` but also returns whether the value is
+    actually KNOWN, so the detail card can show "—" instead of a misleading
+    $0.00 when the broker value is "unavailable" and there's no mark price
+    (e.g. an IBKR-paper symbol while the gateway is offline)."""
+    source = str(p.get("unrealizedPnlSource") or "").lower()
+    raw = p.get("unrealizedPnl")
+    if source == "broker" and raw is not None:
+        try:
+            return float(raw), True
+        except (TypeError, ValueError):
+            pass
+    # Legacy API (no source tag): trust a non-zero value as broker truth.
+    if not source and raw is not None:
+        try:
+            v = float(raw)
+            if v != 0.0:
+                return v, True
+        except (TypeError, ValueError):
+            pass
+    # Compute mark-to-market from the latest price when we have one.
+    if last_price is not None:
+        try:
+            entry = float(p.get("entryPrice"))
+            qty = float(p.get("qty") or 0.0)
+            sign = 1.0 if str(p.get("side", "")).lower() in ("buy", "long") else -1.0
+            return (last_price - entry) * qty * sign, True
+        except (TypeError, ValueError):
+            pass
+    return 0.0, False
 
 
 # ── Overview analytics (trade-performance visualizations) ───────────────────────
@@ -2041,14 +2073,33 @@ def page_positions() -> None:
         if not rows:
             st.caption(f"No open {segment if segment != 'all' else ''} positions.".strip())
         else:
-            # One detail card per open position. uPnL uses the broker-truth
-            # value the bot already provides (Position.unrealizedPnl); we
-            # deliberately do NOT fetch candles here — per-symbol candle pulls
-            # (especially MES→IBKR through the bot) made the page slow to load.
+            # Live mark price per open symbol, for the uPnL fallback when the
+            # broker's unrealizedPnl is "unavailable" (e.g. IBKR paper symbols
+            # like MES/MGC/MHG). Fetched CONCURRENTLY + time-boxed from the
+            # bot's candle endpoint so it can't wedge the page the way the old
+            # sequential per-symbol pulls did. A symbol with no price in time
+            # falls through to the broker value, else the card shows "—".
+            _open_syms = sorted({p.get("symbol") for p in rows if p.get("symbol")})
+            _price_paths = {
+                s: "/api/bot/candles?" + urlencode(
+                    {"symbol": s, "interval": "15m", "limit": 2})
+                for s in _open_syms
+            }
+            _price_res = _fetch_parallel(list(_price_paths.values()), timeout=6.0)
+            last_price_by_symbol: dict[str, float] = {}
+            for s, path in _price_paths.items():
+                data = _price_res.get(path, (None, None))[0]
+                candles = data.get("candles") if isinstance(data, dict) else None
+                if candles:
+                    try:
+                        last_price_by_symbol[s] = float(candles[-1]["close"])
+                    except (KeyError, IndexError, ValueError, TypeError):
+                        pass
+            # One detail card per open position.
             for p in rows:
                 _render_trade_card(
-                    p, is_open=True, op_map=op_map,
-                    signals=signals, last_price=None,
+                    p, is_open=True, op_map=op_map, signals=signals,
+                    last_price=last_price_by_symbol.get(p.get("symbol")),
                 )
 
     st.subheader("Closed positions")
@@ -2336,9 +2387,12 @@ def _render_trade_card(
         h1, h2 = st.columns([3, 1])
         h1.markdown(f"### {side_dot} {sym} · {side_lbl}")
         if is_open:
-            upnl = _position_upnl(trade, last_price)
-            h2.metric("Unrealized PnL", fmt_usd(upnl),
-                      delta=round(upnl, 2) if upnl else None)
+            upnl, upnl_known = _open_upnl(trade, last_price)
+            h2.metric(
+                "Unrealized PnL",
+                fmt_usd(upnl) if upnl_known else "—",
+                delta=round(upnl, 2) if (upnl_known and upnl) else None,
+            )
         else:
             rp = trade.get("realizedPnl")
             h2.metric("Realized PnL", fmt_usd(rp) if rp is not None else "—")
