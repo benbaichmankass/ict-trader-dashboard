@@ -32,7 +32,7 @@ try:
 except ImportError:
     _AUTOREFRESH_AVAILABLE = False
 
-BOT_API = os.environ.get("BOT_API_URL", "http://158.178.210.252:8001")
+BOT_API = os.environ.get("BOT_API_URL", "http://141.145.193.91:8001")
 TIMEOUT_S = 10.0
 POLL_INTERVAL_S = 10
 DEFAULT_LIMIT = 50

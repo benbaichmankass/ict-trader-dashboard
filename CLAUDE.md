@@ -69,7 +69,7 @@ unset → Live data defaults ON (auto-refresh every `POLL_INTERVAL_S`).
 
 ```
 Browser ──HTTPS──▶ Streamlit Community Cloud (Python) ──HTTP──▶ Bot FastAPI :8001
-                                                                 (158.178.210.252)
+                                                                 (141.145.193.91)
 ```
 
 Streamlit's Python server makes the upstream call directly. The browser
@@ -223,6 +223,7 @@ BOT_API_URL=http://localhost:8001 streamlit run streamlit_app.py
 ```
 
 The `BOT_API_URL` env var overrides the default
-`http://158.178.210.252:8001`. On Streamlit Cloud, set it in
-**Settings → Secrets** if the VPS IP ever changes; otherwise the
-hardcoded default is fine.
+`http://141.145.193.91:8001` (the Ampere live trader `ict-bot-arm` since
+the 2026-06-14 cutover; was the retired x86 micro `158.178.210.252`). On
+Streamlit Cloud, set it in **Settings → Secrets** if the VPS IP ever
+changes; otherwise the hardcoded default is fine.
