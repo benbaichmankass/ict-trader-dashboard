@@ -1056,8 +1056,19 @@ def _parse_trade_ts(value: Any) -> dt.datetime | None:
     return d
 
 
+def _row_account_class(d: dict) -> str:
+    """Normalize a row's paper/real-money category.
+
+    The bot dual-emits the new ``accountClass`` ("paper" | "real_money")
+    field alongside the legacy ``isDemo`` boolean. Prefer ``accountClass``;
+    fall back to ``isDemo`` (paper when truthy, else real_money) for rows
+    from an older API that hasn't grown the field yet.
+    """
+    return str(d.get("accountClass") or ("paper" if d.get("isDemo") else "real_money")).lower()
+
+
 def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
-    """One row per closed trade — strategy, pnl, ts (UTC), outcome, isDemo.
+    """One row per closed trade — strategy, pnl, ts (UTC), outcome, accountClass, isDemo.
 
     ``realizedPnl`` is nullable on the wire (bot emits ``null`` for the
     reconciler-incomplete close shape, see ict-trading-bot #2759). Keep
@@ -1068,7 +1079,7 @@ def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
     """
     import math
 
-    cols = ["strategy", "pnl", "ts", "outcome", "isDemo"]
+    cols = ["strategy", "pnl", "ts", "outcome", "accountClass", "isDemo"]
     records = []
     for t in trades or []:
         ts = _parse_trade_ts(t.get("closedAt") or t.get("openedAt"))
@@ -1095,6 +1106,7 @@ def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
             "pnl": pnl,
             "ts": ts,
             "outcome": outcome,
+            "accountClass": _row_account_class(t),
             "isDemo": bool(t.get("isDemo", False)),
         })
     if not records:
@@ -1117,60 +1129,62 @@ def _format_closed_trades_df(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-# 2026-06-04 reporting-cleanup — live/demo segment helpers.
+# 2026-06-04 reporting-cleanup — paper/real-money segment helpers.
 #
-# Every reporting surface that mixes live + demo accounts now offers
-# a "Live money / Demo / All" picker. The bot API ships an ``isDemo``
-# flag per trade/position/order-package row (see ict-trading-bot PR
-# #2759) so we fetch with ``?include_demo=true`` and filter client-side.
-# Default segment is **Live money** — operators see live by default
-# and opt into demo when they explicitly want it.
+# Every reporting surface that mixes paper + real-money accounts now
+# offers a "Real money / Paper / All" picker. The category axis is
+# orthogonal to the technical live/dry EXECUTION mode. The bot dual-emits
+# a per-row ``accountClass`` ("paper" | "real_money") alongside the legacy
+# ``isDemo`` boolean (see ict-trading-bot PR #2759), so we fetch with
+# ``?include_paper=true`` and filter client-side on ``accountClass`` (with
+# an ``isDemo`` fallback). Default segment is **Real money** — operators
+# see real-money activity by default and opt into paper explicitly.
 
-_SEGMENT_CHOICES: list[str] = ["Live money", "Demo", "All"]
-_SEGMENT_SLUG: dict[str, str] = {"Live money": "live", "Demo": "demo", "All": "all"}
+_SEGMENT_CHOICES: list[str] = ["Real money", "Paper", "All"]
+_SEGMENT_SLUG: dict[str, str] = {"Real money": "real", "Paper": "paper", "All": "all"}
 
 
 def _segment_picker(key: str) -> str:
-    """Render a Live / Demo / All radio at the top of a reporting page.
+    """Render a Real money / Paper / All radio at the top of a reporting page.
 
-    Returns ``"live"`` / ``"demo"`` / ``"all"`` so callers can pass it
-    through to ``_segment_filter`` and to API ``include_demo`` params.
+    Returns ``"real"`` / ``"paper"`` / ``"all"`` so callers can pass it
+    through to ``_segment_filter`` and to API ``include_paper`` params.
     """
     label = st.radio(
         "Segment",
         _SEGMENT_CHOICES,
-        index=0,  # Live money by default
+        index=0,  # Real money by default
         horizontal=True,
         key=key,
         help=(
-            "Live money = real-money accounts. Demo = the bybit_1 demo "
-            "account (configured ``demo: true`` in accounts.yaml). All "
-            "merges both."
+            "Real money = real-money accounts; Paper = paper-trading "
+            "accounts (``account_class: paper`` in the bot config — e.g. the "
+            "broker demo/practice/paper venues). All merges both."
         ),
     )
     return _SEGMENT_SLUG[label]
 
 
 def _segment_filter_rows(rows: list[dict], segment: str) -> list[dict]:
-    """Filter a list of row-dicts by segment using each row's ``isDemo``.
+    """Filter a list of row-dicts by segment using each row's category.
 
-    Rows missing the ``isDemo`` key are treated as live (False) — the
-    bot returns ``isDemo: false`` for non-demo accounts, but older API
-    versions or other sources may omit it entirely.
+    Classifies via :func:`_row_account_class` — the new ``accountClass``
+    field with an ``isDemo`` fallback — so rows from an older API still
+    sort correctly (paper when ``isDemo`` truthy, else real_money).
     """
     if segment == "all":
         return rows
-    want_demo = (segment == "demo")
-    return [r for r in (rows or []) if bool(r.get("isDemo", False)) == want_demo]
+    want = "paper" if segment == "paper" else "real_money"
+    return [r for r in (rows or []) if _row_account_class(r) == want]
 
 
 def _segment_filter_frame(df: pd.DataFrame, segment: str) -> pd.DataFrame:
     """Same as :func:`_segment_filter_rows` for a pandas DataFrame with
-    an ``isDemo`` column."""
-    if segment == "all" or "isDemo" not in df.columns:
+    an ``accountClass`` column."""
+    if segment == "all" or "accountClass" not in df.columns:
         return df
-    want_demo = (segment == "demo")
-    return df[df["isDemo"] == want_demo].reset_index(drop=True)
+    want = "paper" if segment == "paper" else "real_money"
+    return df[df["accountClass"] == want].reset_index(drop=True)
 
 
 def _filter_strategy(df: pd.DataFrame, strategy: str) -> pd.DataFrame:
@@ -1367,20 +1381,20 @@ def _strategy_breakdown(df: pd.DataFrame) -> pd.DataFrame:
 
 
 @st.cache_data(ttl=POLL_INTERVAL_S, show_spinner=False)
-def _analytics_frame(include_demo: bool = False) -> tuple[pd.DataFrame, int, str | None]:
+def _analytics_frame(include_paper: bool = False) -> tuple[pd.DataFrame, int, str | None]:
     """One closed-trade fetch (capped) → tidy frame, for the analytics widgets.
 
-    ``include_demo=True`` opts into the live+demo response so the page
-    can offer a Live / Demo / All segment picker over a single fetch.
+    ``include_paper=True`` opts into the real+paper response so the page
+    can offer a Real money / Paper / All segment picker over a single fetch.
     """
     since = (dt.datetime.utcnow()
              - dt.timedelta(days=ANALYTICS_LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
     params: dict[str, str] = {"limit": str(ANALYTICS_MAX_ROWS), "since": since}
-    if include_demo:
-        params["include_demo"] = "true"
+    if include_paper:
+        params["include_paper"] = "true"
     trades, err = _fetch("/api/bot/trades/closed?" + urlencode(params))
     if err:
-        return pd.DataFrame(columns=["strategy", "pnl", "ts", "outcome", "isDemo"]), 0, err
+        return pd.DataFrame(columns=["strategy", "pnl", "ts", "outcome", "accountClass", "isDemo"]), 0, err
     trades = trades or []
     return _closed_trades_frame(trades), len(trades), None
 
@@ -1389,21 +1403,21 @@ def render_trade_analytics() -> None:
     """The performance deep-dive: filter + headline metrics + equity curve +
     calendar + win/loss bar + strategy pie + per-strategy breakdown.
 
-    Renders a Live / Demo / All segment picker first so the operator can
-    inspect each segment in isolation without mixing real-money KPIs with
-    demo activity.
+    Renders a Real money / Paper / All segment picker first so the operator
+    can inspect each segment in isolation without mixing real-money KPIs with
+    paper activity.
     """
     segment = _segment_picker("perf_segment")
-    df, raw_count, err = _analytics_frame(include_demo=True)
+    df, raw_count, err = _analytics_frame(include_paper=True)
     if err:
         st.info(f"Trade analytics unavailable: {err}")
         return
     df = _segment_filter_frame(df, segment)
     if df.empty:
-        if segment == "live":
-            st.caption("No closed live-money trades yet — analytics will populate as trades close.")
-        elif segment == "demo":
-            st.caption("No closed demo trades in the lookback window.")
+        if segment == "real":
+            st.caption("No closed real-money trades yet — analytics will populate as trades close.")
+        elif segment == "paper":
+            st.caption("No closed paper trades in the lookback window.")
         else:
             st.caption("No closed trades yet — analytics will populate as trades close.")
         return
@@ -1937,9 +1951,9 @@ def page_performance() -> None:
 def page_accounts() -> None:
     st.header("Accounts")
     st.caption(
-        "Every configured account — live/dry status, balance, PnL, and a "
-        "recent-trades log. All values are read live from the bot; nothing here "
-        "is hardcoded."
+        "Every configured account — the paper/real-money category, live/dry "
+        "execution status, balance, PnL, and a recent-trades log. All values "
+        "are read live from the bot; nothing here is hardcoded."
     )
 
     cfg, cfg_err = _fetch("/api/bot/config")
@@ -1973,6 +1987,12 @@ def page_accounts() -> None:
         exchange  = acc.get("exchange", "—")
         market    = acc.get("market_type", "—")
         strategies = acc.get("strategies") or []
+        # Paper/real-money CATEGORY — orthogonal to the live/dry EXECUTION
+        # mode above. Read from config's per-account ``account_class``;
+        # absent ⇒ real_money (back-compat with pre-field configs).
+        acct_class = str(acc.get("account_class") or "real_money").lower()
+        is_paper   = (acct_class == "paper")
+        class_tag  = "🧪 PAPER" if is_paper else "💵 REAL"
 
         bal_val = (balances.get(aid) or {}).get("balance")
         acc_positions = [p for p in positions if p.get("account") == aid]
@@ -1999,10 +2019,13 @@ def page_accounts() -> None:
                 realized = None
 
         dot = _row_dot("live" if is_live else "dry")
-        label = (f"{dot}  **{aid}**  ·  {'LIVE' if is_live else 'DRY'}  ·  "
+        label = (f"{dot}  **{aid}**  ·  {class_tag}  ·  "
+                 f"{'LIVE' if is_live else 'DRY'}  ·  "
                  f"30d {fmt_usd(realized)}  ·  {len(acc_positions)} open")
         with st.expander(label):
             st.caption(
+                f"{'Paper-trading' if is_paper else 'Real-money'} account · "
+                f"execution {'LIVE' if is_live else 'DRY'} · "
                 f"{exchange} · {market} · "
                 f"strategies: {', '.join(strategies) if strategies else '— (none assigned)'}"
             )
@@ -2049,7 +2072,7 @@ _CLOSED_WINDOWS = {"Last 24h": 1, "Last 7 days": 7, "Last 30 days": 30}
 def page_positions() -> None:
     st.header("Positions")
     st.caption("Live open positions on top; the closed-position history below. "
-               "Use the segment picker to switch between live and demo.")
+               "Use the segment picker to switch between real money and paper.")
 
     segment = _segment_picker("pos_segment")
 
@@ -2058,14 +2081,14 @@ def page_positions() -> None:
     # so there's no slow shadow-log recompile. order-packages carries the
     # reasoning AND the model scores; signals adds the triggering-signal
     # correlation. Fetched concurrently, time-boxed.
-    _op_path = "/api/bot/order-packages?" + urlencode({"limit": 50, "include_demo": "true"})
+    _op_path = "/api/bot/order-packages?" + urlencode({"limit": 50, "include_paper": "true"})
     _sig_path = "/api/bot/signals"
     _joins = _fetch_parallel([_op_path, _sig_path], timeout=6.0)
     op_map = _order_package_map(_joins.get(_op_path, (None, None))[0])
     signals = _joins.get(_sig_path, (None, None))[0] or []
 
     st.subheader("Open")
-    rows, err = _fetch("/api/bot/positions?include_demo=true")
+    rows, err = _fetch("/api/bot/positions?include_paper=true")
     if err:
         st.warning(err)
     else:
@@ -2109,7 +2132,7 @@ def page_positions() -> None:
     since = (dt.datetime.utcnow() - dt.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     closed, cerr = _fetch(
         "/api/bot/trades/closed?" + urlencode({
-            "limit": ANALYTICS_MAX_ROWS, "since": since, "include_demo": "true",
+            "limit": ANALYTICS_MAX_ROWS, "since": since, "include_paper": "true",
         })
     )
     closed = _segment_filter_rows(closed or [], segment)
@@ -2383,7 +2406,7 @@ def _render_trade_card(
 
     with st.container(border=True):
         # ── Header: symbol + side, PnL on the right ────────────────────
-        demo = " · 🧪 demo" if trade.get("isDemo") else ""
+        demo = " · 🧪 paper" if _row_account_class(trade) == "paper" else ""
         h1, h2 = st.columns([3, 1])
         h1.markdown(f"### {side_dot} {sym} · {side_lbl}")
         if is_open:
@@ -2521,7 +2544,7 @@ def page_order_packages() -> None:
     segment = _segment_picker("op_segment")
     payload, err = _fetch(
         "/api/bot/order-packages?" + urlencode({
-            "limit": ANALYTICS_MAX_ROWS, "include_demo": "true",
+            "limit": ANALYTICS_MAX_ROWS, "include_paper": "true",
         })
     )
     if err:
@@ -2533,10 +2556,10 @@ def page_order_packages() -> None:
     packages = (payload or {}).get("rows", [])
     packages = _segment_filter_rows(packages, segment)
     if not packages:
-        if segment == "live":
-            st.caption("No live-money order packages recorded yet.")
-        elif segment == "demo":
-            st.caption("No demo order packages recorded yet.")
+        if segment == "real":
+            st.caption("No real-money order packages recorded yet.")
+        elif segment == "paper":
+            st.caption("No paper order packages recorded yet.")
         else:
             st.caption("No order packages recorded yet.")
         return
