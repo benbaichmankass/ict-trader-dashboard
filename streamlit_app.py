@@ -1653,8 +1653,19 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     pos_col, strat_col = st.columns(2)
     with pos_col:
         st.markdown("**Open positions**")
-        if positions:
-            pdf = pd.DataFrame(positions)
+        # Snapshot-only fetch WITH paper rows so paper opens (e.g. IBKR
+        # ib_paper MGC/MHG) are visible here, not just on the Positions tab.
+        # Separate from the `positions` variable above (which feeds chart
+        # symbol discovery) so the chart behaviour is unchanged. Real-money
+        # rows sort first, then paper — a "Type" column labels each.
+        positions_all, _ = _fetch("/api/bot/positions?include_paper=true")
+        positions_all = positions_all or []
+        if positions_all:
+            pos_sorted = sorted(
+                positions_all,
+                key=lambda p: 0 if _row_account_class(p) == "real_money" else 1,
+            )
+            pdf = pd.DataFrame(pos_sorted)
             # Per-row uPnL via _position_upnl so broker-truth values
             # (ict-trading-bot #2953) or computed-from-mark fallbacks
             # display consistently. Each row marks to its OWN symbol's last
@@ -1662,11 +1673,16 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             # no candle data fall through to the broker value, else $0.
             pdf["uPnL"] = [
                 _position_upnl(p, last_price_by_symbol.get(p.get("symbol")))
-                for p in positions
+                for p in pos_sorted
+            ]
+            # Clear paper/real label derived from accountClass (isDemo fallback).
+            pdf["Type"] = [
+                "🧪 paper" if _row_account_class(p) == "paper" else "real"
+                for p in pos_sorted
             ]
             cmap = {"symbol": "Symbol", "side": "Side", "qty": "Qty",
                     "entryPrice": "Entry", "uPnL": "uPnL",
-                    "pattern": "Strategy", "account": "Account"}
+                    "pattern": "Strategy", "account": "Account", "Type": "Type"}
             cols = [c for c in cmap if c in pdf.columns]
             st.dataframe(pdf[cols].rename(columns=cmap), hide_index=True,
                          use_container_width=True)
@@ -1976,7 +1992,10 @@ def page_accounts() -> None:
     if bal_env.get("as_of"):
         st.caption(f"Balances tracked by the bot · snapshot as of {bal_env['as_of']}")
 
-    positions, _ = _fetch("/api/bot/positions")
+    # Include paper rows so a paper account (e.g. IBKR ib_paper) shows its
+    # true open-position count + unrealized PnL, not 0. Each card filters to
+    # its own account id below, so real-money cards are unaffected.
+    positions, _ = _fetch("/api/bot/positions?include_paper=true")
     positions = positions or []
 
     since_7d = (dt.datetime.utcnow() - dt.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
