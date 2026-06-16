@@ -943,74 +943,44 @@ def render_tv_chart(
     components.html(html, height=int(height) + 4, scrolling=False)
 
 
-def _position_upnl(p: dict, last_price: float | None) -> float:
-    """Unrealised PnL for a position — broker-truth first, else computed.
+def _position_upnl(p: dict) -> float:
+    """Unrealised PnL for a position — straight from the bot API.
 
-    The bot's `/api/bot/positions` endpoint sources `unrealizedPnl` from
-    the broker (Bybit / IB `unrealised_pnl`) and tags each row with
-    `unrealizedPnlSource ∈ {"broker", "unavailable"}` (ict-trading-bot
-    PR #2953, 2026-06-07). When the broker call lands, the wire value
-    is the truth — including a real $0.00 (price at exact entry); we
-    must not treat that as "unset".
+    `/api/bot/positions` returns a **multiplier-aware** `unrealizedPnl`:
+    broker-truth when the integration provides it
+    (`unrealizedPnlSource="broker"`), else a server-side mark-to-market
+    fallback computed with `contract_value_usd`
+    (`unrealizedPnlSource="markprice_local"`) — see the ict-trading-bot
+    PnL-resolution contract (2026-06-16, #3761). Both are correct, so the
+    dashboard simply trusts the value.
 
-    Fallback when the source is `"unavailable"` (or the field is
-    missing — legacy API): compute mark-to-market from the latest
-    candle close.
+    The old client-side `(last_price - entry) * qty` recompute was dropped
+    (BL-20260616-DASH-UPNL-MULTIPLIER): it was **multiplier-blind**, so a
+    futures move (MES/MGC/MHG `contract_value_usd` ≠ 1) rounded to ≈ $0 —
+    wrong, and now redundant since the API returns the correct figure.
+
+    Returns `0.0` when the API value is absent (`unavailable` — e.g. an
+    IBKR-paper symbol while the gateway is offline); use :func:`_open_upnl`
+    where the known/unknown distinction matters (em-dash vs a real $0.00).
     """
-    source = str(p.get("unrealizedPnlSource") or "").lower()
     raw = p.get("unrealizedPnl")
-    if source == "broker" and raw is not None:
+    if raw is not None:
         try:
             return float(raw)
         except (TypeError, ValueError):
             pass
-    # Legacy / pre-#2953 API didn't tag the source. Trust a non-zero
-    # value as broker truth; treat 0/null as "compute fallback" so the
-    # dashboard remains usable against an older bot deploy.
-    if not source:
-        try:
-            if raw is not None and float(raw) != 0.0:
-                return float(raw)
-        except (TypeError, ValueError):
-            pass
-    if last_price is None:
-        return 0.0
-    try:
-        entry = float(p.get("entryPrice"))
-        qty = float(p.get("qty") or 0.0)
-        sign = 1.0 if str(p.get("side", "")).lower() in ("buy", "long") else -1.0
-        return (last_price - entry) * qty * sign
-    except (TypeError, ValueError):
-        return 0.0
+    return 0.0
 
 
-def _open_upnl(p: dict, last_price: float | None) -> tuple[float, bool]:
+def _open_upnl(p: dict) -> tuple[float, bool]:
     """Like :func:`_position_upnl` but also returns whether the value is
     actually KNOWN, so the detail card can show "—" instead of a misleading
-    $0.00 when the broker value is "unavailable" and there's no mark price
-    (e.g. an IBKR-paper symbol while the gateway is offline)."""
-    source = str(p.get("unrealizedPnlSource") or "").lower()
+    $0.00 when the API value is "unavailable" (e.g. an IBKR-paper symbol while
+    the gateway is offline — broker read failed AND no mark price)."""
     raw = p.get("unrealizedPnl")
-    if source == "broker" and raw is not None:
+    if raw is not None:
         try:
             return float(raw), True
-        except (TypeError, ValueError):
-            pass
-    # Legacy API (no source tag): trust a non-zero value as broker truth.
-    if not source and raw is not None:
-        try:
-            v = float(raw)
-            if v != 0.0:
-                return v, True
-        except (TypeError, ValueError):
-            pass
-    # Compute mark-to-market from the latest price when we have one.
-    if last_price is not None:
-        try:
-            entry = float(p.get("entryPrice"))
-            qty = float(p.get("qty") or 0.0)
-            sign = 1.0 if str(p.get("side", "")).lower() in ("buy", "long") else -1.0
-            return (last_price - entry) * qty * sign, True
         except (TypeError, ValueError):
             pass
     return 0.0, False
@@ -1581,28 +1551,16 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     if not ov_symbols:
         st.caption("No active symbols — the bot isn't trading any instrument.")
 
-    # Last candle close per symbol, reused by the open-positions snapshot below
-    # to mark-to-market off-chart rows (each symbol's own price, not just one).
-    last_price_by_symbol: dict[str, float] = {}
-
     for ov_symbol in ov_symbols:
         sym_positions = [p for p in (positions or []) if p.get("symbol") == ov_symbol]
         df, candles_err = _fetch_candles(ov_symbol, ov_interval, limit=1000)
-        last_price = None
-        if df is not None and not df.empty:
-            try:
-                last_price = float(df["close"].iloc[-1])
-            except (KeyError, IndexError, ValueError, TypeError):
-                last_price = None
-        if last_price is not None:
-            last_price_by_symbol[ov_symbol] = last_price
 
         # Header: symbol name + an "open" badge when it carries a live position;
         # when open, the net live PnL + a per-position summary line.
         badge = " · 🟢 open" if sym_positions else ""
         st.markdown(f"#### {ov_symbol}{badge}")
         if sym_positions:
-            net_pnl = sum(_position_upnl(p, last_price) for p in sym_positions)
+            net_pnl = sum(_position_upnl(p) for p in sym_positions)
             pc1, pc2 = st.columns([1, 3])
             pc1.metric(f"Live PnL · {ov_symbol}", fmt_usd(net_pnl),
                        delta=round(net_pnl, 2))
@@ -1672,15 +1630,11 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
                 key=lambda p: 0 if _row_account_class(p) == "real_money" else 1,
             )
             pdf = pd.DataFrame(pos_sorted)
-            # Per-row uPnL via _position_upnl so broker-truth values
-            # (ict-trading-bot #2953) or computed-from-mark fallbacks
-            # display consistently. Each row marks to its OWN symbol's last
-            # candle close (captured per chart above); rows whose symbol had
-            # no candle data fall through to the broker value, else $0.
-            pdf["uPnL"] = [
-                _position_upnl(p, last_price_by_symbol.get(p.get("symbol")))
-                for p in pos_sorted
-            ]
+            # Per-row uPnL straight from the API's multiplier-aware
+            # unrealizedPnl (broker-truth or markprice_local; ict-trading-bot
+            # #3761). No client-side recompute — the old (price-entry)*qty was
+            # multiplier-blind for futures (BL-20260616-DASH-UPNL-MULTIPLIER).
+            pdf["uPnL"] = [_position_upnl(p) for p in pos_sorted]
             # Clear paper/real label derived from accountClass (isDemo fallback).
             pdf["Type"] = [
                 "🧪 paper" if _row_account_class(p) == "paper" else "real"
@@ -1737,9 +1691,9 @@ def _render_open_trade_header(
             "strategy signals and recent closed-trade context."
         )
         return
-    # Broker-truth uPnL when /api/bot/positions tagged the source
-    # (ict-trading-bot #2953); computed-from-mark fallback otherwise.
-    net_pnl = sum(_position_upnl(p, last_price) for p in positions)
+    # uPnL straight from the API's multiplier-aware unrealizedPnl
+    # (broker-truth or markprice_local; ict-trading-bot #3761).
+    net_pnl = sum(_position_upnl(p) for p in positions)
     p = positions[0]  # primary leg for the detail metrics
     side = str(p.get("side", "")).upper() or "—"
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -2021,13 +1975,11 @@ def page_accounts() -> None:
 
         bal_val = (balances.get(aid) or {}).get("balance")
         acc_positions = [p for p in positions if p.get("account") == aid]
-        # Broker-truth uPnL when /api/bot/positions tagged the source
-        # (ict-trading-bot #2953). last_price=None here means the
-        # client-side computed fallback returns 0 for any position
-        # whose broker value is "unavailable" — acceptable for the
-        # account-level summary; the per-symbol Performance header has
-        # the candle context for a richer fallback.
-        unrealized = sum(_position_upnl(p, None) for p in acc_positions)
+        # uPnL straight from the API's multiplier-aware unrealizedPnl
+        # (broker-truth or markprice_local; ict-trading-bot #3761). A position
+        # whose value is "unavailable" contributes 0 to this account-level
+        # summary (the API no longer leaves futures uPnL multiplier-blind).
+        unrealized = sum(_position_upnl(p) for p in acc_positions)
 
         # 30-day realised-PnL history via the no-session, account-filtered
         # endpoint. Rows are `{date, pnl, trades}` — `pnl`, not `realizedPnl`
@@ -2121,33 +2073,14 @@ def page_positions() -> None:
         if not rows:
             st.caption(f"No open {segment if segment != 'all' else ''} positions.".strip())
         else:
-            # Live mark price per open symbol, for the uPnL fallback when the
-            # broker's unrealizedPnl is "unavailable" (e.g. IBKR paper symbols
-            # like MES/MGC/MHG). Fetched CONCURRENTLY + time-boxed from the
-            # bot's candle endpoint so it can't wedge the page the way the old
-            # sequential per-symbol pulls did. A symbol with no price in time
-            # falls through to the broker value, else the card shows "—".
-            _open_syms = sorted({p.get("symbol") for p in rows if p.get("symbol")})
-            _price_paths = {
-                s: "/api/bot/candles?" + urlencode(
-                    {"symbol": s, "interval": "15m", "limit": 2})
-                for s in _open_syms
-            }
-            _price_res = _fetch_parallel(list(_price_paths.values()), timeout=6.0)
-            last_price_by_symbol: dict[str, float] = {}
-            for s, path in _price_paths.items():
-                data = _price_res.get(path, (None, None))[0]
-                candles = data.get("candles") if isinstance(data, dict) else None
-                if candles:
-                    try:
-                        last_price_by_symbol[s] = float(candles[-1]["close"])
-                    except (KeyError, IndexError, ValueError, TypeError):
-                        pass
-            # One detail card per open position.
+            # One detail card per open position. uPnL comes straight from the
+            # API's multiplier-aware unrealizedPnl (broker-truth or
+            # markprice_local) — no client-side mark-price fetch/recompute, so
+            # the old concurrent per-symbol candle pull (only used to feed the
+            # multiplier-blind fallback) is gone (BL-20260616-DASH-UPNL-MULTIPLIER).
             for p in rows:
                 _render_trade_card(
                     p, is_open=True, op_map=op_map, signals=signals,
-                    last_price=last_price_by_symbol.get(p.get("symbol")),
                 )
 
     st.subheader("Closed positions")
@@ -2403,7 +2336,6 @@ def _render_trade_card(
     is_open: bool,
     op_map: dict[str, dict],
     signals: list[dict] | None,
-    last_price: float | None = None,
 ) -> None:
     """Render one trade as a bordered, scannable detail card (open or closed).
 
@@ -2435,7 +2367,7 @@ def _render_trade_card(
         h1, h2 = st.columns([3, 1])
         h1.markdown(f"### {side_dot} {sym} · {side_lbl}")
         if is_open:
-            upnl, upnl_known = _open_upnl(trade, last_price)
+            upnl, upnl_known = _open_upnl(trade)
             h2.metric(
                 "Unrealized PnL",
                 fmt_usd(upnl) if upnl_known else "—",
