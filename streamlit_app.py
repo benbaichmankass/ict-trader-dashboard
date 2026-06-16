@@ -1546,7 +1546,11 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     # enumerated live via _discover_symbols()). Symbols with an OPEN POSITION are
     # floated to the top so what's at risk right now is seen first; the rest keep
     # config-declaration order. A single interval selector drives every chart.
-    positions, _ = _fetch("/api/bot/positions")
+    # include_paper=true so PAPER open trades (e.g. IBKR ib_paper MGC/MHG,
+    # demo bybit_1) also render on the charts — their entry/SL/TP lines and
+    # live PnL — not just real-money positions. The per-symbol summary line
+    # below tags paper rows so they read clearly as non-real-money.
+    positions, _ = _fetch("/api/bot/positions?include_paper=true")
     ov_symbols = _overview_chart_symbols(positions)
 
     ov_interval = st.selectbox(
@@ -1561,15 +1565,18 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     trade_data, _ = _fetch(f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}")
 
     def _pos_caption(p: dict) -> str:
-        # "SIDE qty @ entry · strategy · acct" — pattern is nullable per the
-        # API contract, so fall back to "?" rather than silently dropping it.
-        # Account is always shown next to the strategy for an open trade.
+        # "SIDE qty @ entry · strategy · acct [· 🧪 paper]" — pattern is
+        # nullable per the API contract, so fall back to "?" rather than
+        # silently dropping it. Account is always shown next to the strategy
+        # for an open trade; paper rows carry a 🧪 tag so a mixed paper+real
+        # symbol's summary line reads clearly.
         side = str(p.get("side", "")).upper()
         qty = p.get("qty", "?")
         entry = p.get("entryPrice", "?")
         strat = p.get("pattern") or "?"
         acct = p.get("account") or "?"
-        return f"{side} {qty} @ {entry} · {strat} · acct {acct}"
+        tag = " · 🧪 paper" if _row_account_class(p) == "paper" else ""
+        return f"{side} {qty} @ {entry} · {strat} · acct {acct}{tag}"
 
     if not ov_symbols:
         st.caption("No active symbols — the bot isn't trading any instrument.")
@@ -1653,11 +1660,10 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     pos_col, strat_col = st.columns(2)
     with pos_col:
         st.markdown("**Open positions**")
-        # Snapshot-only fetch WITH paper rows so paper opens (e.g. IBKR
-        # ib_paper MGC/MHG) are visible here, not just on the Positions tab.
-        # Separate from the `positions` variable above (which feeds chart
-        # symbol discovery) so the chart behaviour is unchanged. Real-money
-        # rows sort first, then paper — a "Type" column labels each.
+        # Includes paper rows (e.g. IBKR ib_paper MGC/MHG) like the charts
+        # above. Real-money rows sort first, then paper — a "Type" column
+        # labels each. (The `positions` variable above also now includes
+        # paper, but this keeps an independent fetch for the snapshot.)
         positions_all, _ = _fetch("/api/bot/positions?include_paper=true")
         positions_all = positions_all or []
         if positions_all:
