@@ -104,7 +104,6 @@ _TV_GREEN  = "#26a69a"
 _TV_RED    = "#ef5350"
 _TV_TEXT   = "#b2b5be"
 _TV_EMA20  = "#f5a623"
-_TV_EMA50  = "#9b59b6"
 _TV_ENTRY  = "#3d7aed"
 _TV_FVG    = "#9c6ade"   # fair-value-gap zone band
 _TV_SWEEP  = "#e0a030"   # liquidity-sweep level
@@ -2682,10 +2681,6 @@ def _normalize_bucket(row: dict) -> str:
     if stage == "shadow":
         return "SHADOW"
     return "OFFLINE"
-
-
-def _format_pill(bucket: str) -> str:
-    return _BUCKET_PILL.get(bucket, "❔ UNKNOWN")
 
 
 def _fmt_age(seconds: float | int | None) -> str:

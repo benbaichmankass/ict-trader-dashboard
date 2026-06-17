@@ -137,7 +137,7 @@ docs/                  — ad-hoc design notes
 ## Tabs (current)
 
 Sidebar order is operational top-to-bottom: **Overview · Performance · Insights · Strategies ·
-Models · Accounts · Order Packages · Positions · Signals** (live/ops), then
+Models · Accounts · Order Packages · Positions · Signals · News** (live/ops), then
 **Backtesting · Promotion · Health** (diagnostics), then **Data Explorer · Logs**
 (dev tools). The list/registry pages — **Strategies, Models, Accounts** — share a
 uniform **collapsible-row** layout: each row is an `st.expander` whose label is a
