@@ -193,25 +193,26 @@ separate Streamlit page or fragment so adding one doesn't break the rest.
 
 Canonical contract lives in [`ict-trading-bot/CLAUDE.md`](https://github.com/benbaichmankass/ict-trading-bot/blob/main/CLAUDE.md) § "Dashboard REST API".
 
-Important nullability notes for renderers:
+**Field nullability is canonical in
+[`ict-trading-bot/CLAUDE.md`](https://github.com/benbaichmankass/ict-trading-bot/blob/main/CLAUDE.md)
+§ "Dashboard REST API"** — don't re-declare which fields are nullable here
+(a second copy drifts). The general rule: render any null as an em-dash
+(`—`), never `0` or `"unknown"`. A real `0` reading (e.g. a `vmHealth`
+measurement) is data, not a missing value.
 
-- `BotStats.vmHealth.{cpu,memory,disk}` are **nullable** — render `—`,
-  not `0%`. A real `0` reading is a measurement.
-- `BotStats` returns **HTTP 503** on structural DB failure (S-067).
-  The Streamlit `_fetch` helper surfaces this as a per-endpoint warning
-  banner rather than crashing the page.
-- `Signal.{strategy,pattern,confidence,price}` are **nullable**. Skip rows with
-  null `pattern` rather than aggregating them under "unknown". The Overview
-  chart's per-strategy signal toggle treats a null `strategy` as "always show".
-- `Signal.zones` is a (possibly empty) list of drawable ICT zones the strategy
-  logged for its decision: `{kind:"fvg",low,high}`, `{kind:"sweep",price}`. The
-  Overview chart's "Zones" toggle draws the latest signal's zones (FVG band +
-  sweep line). The `streamlit-lightweight-charts` package can't fill boxes, so an
-  FVG renders as its two bounding price-lines.
-- `ClosedTrade.{realizedPnlPct,closeReason,pattern}` are **nullable**.
-- `Position.{stopLoss,takeProfit,pattern}` are **nullable**.
-- `BacktestRun.{totalTrades,winningTrades,losingTrades}` are **nullable**
-  — an aborted backtest lands with NULL counts.
+Dashboard-specific rendering rules (these are ours, not the bot's contract):
+
+- `BotStats` returns **HTTP 503** on structural DB failure (S-067). The
+  Streamlit `_fetch` helper surfaces this as a per-endpoint warning banner
+  rather than crashing the page.
+- **Signals:** skip rows with a null `pattern` rather than aggregating them
+  under "unknown". The Overview chart's per-strategy signal toggle treats a
+  null `strategy` as "always show".
+- **Signal zones:** `Signal.zones` is a (possibly empty) list of drawable ICT
+  zones the strategy logged (`{kind:"fvg",low,high}`, `{kind:"sweep",price}`).
+  The Overview chart's "Zones" toggle draws the latest signal's zones (FVG band
+  + sweep line). The `streamlit-lightweight-charts` package can't fill boxes, so
+  an FVG renders as its two bounding price-lines.
 
 ## Local dev
 

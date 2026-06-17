@@ -2626,22 +2626,32 @@ _STAGE_ICON = {
 }
 
 # Operator's 3-bucket deployment view (2026-05-18; default-flip update
-# 2026-05-19). Collapses the 7 registry stages into "is this model
-# influencing real money, just observing, or parked?":
+# 2026-05-19). The canonical deployment ladder is 3-stage:
+# ``candidate → shadow → advisory``. ``advisory`` is the live-influence
+# stage — only advisory predictions ever change an order decision. The
+# extra entries in the ``_STAGE_ICON`` fallback map above (``live_approved``,
+# ``limited_live``, ``backtest_approved``, ``research_only``) are the
+# legacy 7-stage names, retained ONLY because the bot still aliases them
+# for old registry rows (via ``ml.manifest.canonical_stage`` — e.g.
+# ``live_approved``/``limited_live`` → ``advisory``,
+# ``backtest_approved``/``research_only`` → ``candidate``). New rows never
+# use them. The 3 operator buckets answer "is this model influencing real
+# money, just observing, or parked?":
 #   LIVE    — predictions influence trade decisions on live accounts
-#             (stages: advisory / limited_live / live_approved).
+#             (canonical stage: advisory; legacy aliases limited_live /
+#             live_approved fold in here).
 #   SHADOW  — predictions logged in real time but decisions unchanged.
 #             SHADOW is the default for any freshly-trained model since
 #             the 2026-05-19 default flip; the lifecycle is
-#             register-into-shadow → backtest gate → promote to LIVE.
-#   OFFLINE — operator-parked: stages research_only / candidate /
-#             backtest_approved. Reached only by explicit demotion
-#             from shadow; not a default state for new models.
+#             register-into-shadow → backtest gate → promote to advisory.
+#   OFFLINE — operator-parked: canonical stage candidate (legacy aliases
+#             research_only / backtest_approved). Reached only by explicit
+#             demotion from shadow; not a default state for new models.
 #
 # Source of truth: the bot's /api/bot/ml/registry endpoint returns
 # ``deployment_bucket`` per row (PR #1391). The dashboard prefers that
-# field but falls back to a legacy stage→bucket mapping when the bot
-# API hasn't been upgraded yet — this keeps the dashboard rendering
+# field but falls back to the legacy stage→bucket mapping above when the
+# bot API hasn't been upgraded yet — this keeps the dashboard rendering
 # correctly during a rollout window.
 _BUCKET_PILL = {
     "LIVE":    "🟢 LIVE",
