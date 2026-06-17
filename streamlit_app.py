@@ -394,7 +394,7 @@ PAGES = [
     # Operational, top-to-bottom: glance → performance → what's trading →
     # routing → decisions/fills → raw feed; then ops/diagnostics; then dev tools.
     "Overview", "Performance", "Insights", "Strategies", "Models", "Accounts",
-    "Order Packages", "Positions", "Signals", "News",
+    "Order Packages", "Positions", "Signals", "News", "Exit Ladder",
     "Backtesting", "Promotion", "Health",
     "Data Explorer", "Logs",
 ]
@@ -4362,6 +4362,83 @@ def page_news() -> None:
     st.dataframe(df[cols], hide_index=True, use_container_width=True, height=560)
 
 
+def page_exit_ladder() -> None:
+    """ExitPlan exit-ladder shadow-soak (dynamic-take-profit consistency P3).
+
+    Reads `/api/bot/exit-ladder/soak`. One row per executed order: the laddered
+    exit that WOULD be used (the materialized ExitPlan sized to the order's real
+    qty) vs the single SL/TP target actually placed. **Observe-only** — nothing
+    reads it back to drive an exit (graduating the ladder to the real exit is the
+    backtest-gated P4). Empty until the first live opening order writes a row.
+    """
+    st.header("Exit Ladder")
+    st.caption(
+        "Observe-only soak: per executed order, the laddered exit (partial-TP "
+        "rungs + final + stop) that WOULD be used vs the single SL/TP target "
+        "actually placed. Nothing here changes a live exit — it's the evidence "
+        "we watch before graduating the ladder (the backtest-gated P4)."
+    )
+
+    venue = st.radio("Venue", ["All", "api", "prop"], horizontal=True, index=0)
+    q = "/api/bot/exit-ladder/soak?limit=300"
+    if venue != "All":
+        q += f"&venue={venue}"
+    payload, err = _fetch(q)
+    if err:
+        st.warning(err)
+        return
+    if not isinstance(payload, dict) or not payload.get("present"):
+        st.info(
+            "No exit-ladder records yet — the soak begins recording on the next "
+            "live opening order once the bot has deployed the P3 writer. "
+            "(API accounts trade live, so this fills first; prop is dormant until "
+            "the prop account goes live.)"
+        )
+        return
+
+    summary = payload.get("summary") or {}
+    by_venue = summary.get("by_venue") or {}
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Orders soaked", summary.get("total_scanned", 0))
+    c2.metric("API / Prop", f"{by_venue.get('api', 0)} / {by_venue.get('prop', 0)}")
+    c3.metric("Ladder differs", summary.get("differing", 0))
+    c4.metric("Differs %", f"{summary.get('differing_pct', 0.0)}%")
+    st.caption(
+        "“Ladder differs” counts orders where the materialized ladder is more "
+        "than the single target placed (a partial-TP rung and/or a trailing "
+        "final) — i.e. where graduating to the ladder would actually change the "
+        "exit."
+    )
+
+    records = payload.get("records") or []
+    if not records:
+        st.caption("No records for this filter.")
+        return
+
+    # Flatten the nested single_target / ladder blocks into a scan-friendly table.
+    rows = []
+    for r in records:
+        st_blk = r.get("single_target") or {}
+        ld = r.get("ladder") or {}
+        targets = ld.get("targets") or []
+        rungs = [f"{t.get('price')}×{round(float(t.get('qty', 0) or 0), 4)}" for t in targets]
+        rows.append({
+            "ts": r.get("ts"),
+            "venue": r.get("venue"),
+            "account": r.get("account_id") or "—",
+            "strategy": r.get("strategy"),
+            "symbol": r.get("symbol"),
+            "dir": r.get("direction"),
+            "qty": st_blk.get("qty"),
+            "single TP": st_blk.get("tp"),
+            "SL": st_blk.get("sl"),
+            "ladder targets": "  →  ".join(rungs) if rungs else "—",
+            "rungs": ld.get("n_rungs", 0),
+            "differs": "✅" if r.get("differs_from_single_target") else "—",
+        })
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True, height=560)
+
+
 def page_logs() -> None:
     st.header("Logs")
     rows, err = _fetch("/api/bot/logs")
@@ -4399,6 +4476,7 @@ def main() -> None:
         "Positions":     page_positions,
         "Signals":       page_signals,
         "News":          page_news,
+        "Exit Ladder":   page_exit_ladder,
         "Order Packages": page_order_packages,
         "Models":        page_models,
         "Promotion":     page_promotion,
