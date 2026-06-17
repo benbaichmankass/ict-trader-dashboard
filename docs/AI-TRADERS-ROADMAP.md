@@ -9,24 +9,26 @@
 
 ## What lives where
 
+This file only records **where dashboard-relevant AI/ML work lives** — it
+does not restate the bot's milestone numbers (those go stale). For the
+current milestone/sprint status, read `ict-trading-bot/ROADMAP.md`.
+
 | Artifact | Repo | Path |
 |---|---|---|
 | Master plan | `ict-trading-bot` | `docs/AI-TRADERS-ROADMAP.md` |
-| Workstream sprint plans (WS1–WS10) | `ict-trading-bot` | `docs/sprint-plans/ai-traders/` |
-| Roadmap milestone rows (M9 + M10) | `ict-trading-bot` | `ROADMAP.md` |
-| Architecture doc (target) | `ict-trading-bot` | `docs/architecture/ai-model-platform.md` (created in WS1) |
+| Current milestone/sprint status | `ict-trading-bot` | `ROADMAP.md` |
+| Workstream sprint plans | `ict-trading-bot` | `docs/sprint-plans/ai-traders/` |
+| AI/ML architecture | `ict-trading-bot` | `docs/ARCHITECTURE-CANONICAL.md` |
 
 ## Dashboard repo scope
 
 This repo (`ict-trader-dashboard`) **does not own** any part of the AI
-lifecycle. It is the read-only Vercel SPA. When M9 / M10 surfaces require
-dashboard work — for example a model registry tab, drift charts, or a
-shadow-mode score panel — those will arrive as separate dashboard
-sprints that consume Tier-1 endpoints published by the bot.
-
-The bot-side sprint plan WS7 (deployment tiers) is the most likely
-trigger for dashboard work. WS8 (monitoring + feedback loops) is the
-second most likely.
+lifecycle. It is the read-only **Streamlit app** (the earlier React+Vercel
+SPA was retired in PR #32). When new ML surfaces require dashboard work —
+for example a model registry tab, drift charts, or a shadow-mode score
+panel — those arrive as separate dashboard sprints that consume Tier-1
+endpoints published by the bot. The Models, Promotion, and Insights tabs
+are the current dashboard surfaces over the bot's ML lifecycle.
 
 ## Non-negotiable rules (apply to dashboard surfaces too)
 
@@ -34,9 +36,12 @@ When the dashboard eventually renders model status / influence, it must
 respect the same rules the bot owns:
 
 - Display only what the bot publishes; never call training / promotion
-  endpoints from the SPA.
+  endpoints from the dashboard.
 - Never imply a model is influencing live trading unless its registry
-  status is `live-approved`.
+  stage is `advisory` (the canonical live-influence stage on the 3-stage
+  ladder `candidate → shadow → advisory`; the legacy stage names —
+  `live_approved` / `limited_live` etc. — alias to it bot-side via
+  `ml.manifest.canonical_stage`).
 - Treat all model output as advisory in the UI until the operator
   explicitly opts the displayed model into live influence.
 

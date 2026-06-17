@@ -7,7 +7,7 @@ Server-rendered Streamlit app on Streamlit Community Cloud (free).
 
 ```
 Browser ──HTTPS──▶ Streamlit Community Cloud ──HTTP──▶ VPS FastAPI :8001
-                   (Python server, free tier)         (158.178.210.252)
+                   (Python server, free tier)         (141.145.193.91)
 ```
 
 The Python server makes the upstream call directly. No browser
@@ -23,7 +23,7 @@ transport-layer moving parts.
 4. Streamlit Cloud auto-redeploys on every push to `main`.
 
 Optional: in the app's **Settings → Secrets** tab, set
-`BOT_API_URL = "http://158.178.210.252:8001"` if the VPS IP ever changes
+`BOT_API_URL = "http://141.145.193.91:8001"` if the VPS IP ever changes
 (this is the hardcoded default, so you can skip it).
 
 ## Local dev
