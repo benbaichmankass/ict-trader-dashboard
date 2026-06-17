@@ -1689,14 +1689,12 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             st.dataframe(pdf[cols].rename(columns=cmap), hide_index=True,
                          use_container_width=True)
 
-            # Per-trade detail cards for every open position — the same rich
-            # card the Positions tab renders (_render_trade_card), reusing the
-            # SAME order-package map + signals join Positions builds. Because
-            # _render_trade_card itself uses an st.expander internally,
-            # Streamlit forbids wrapping it in another expander, so we mirror
-            # the Positions tab's clickable-row pattern: a selectbox picks which
-            # open trade to expand into the full card. Real-money legs sort
-            # first (pos_sorted above), paper after, each labeled.
+            # One full detail card per open position — the SAME rich card the
+            # Positions tab renders inline (_render_trade_card uses st.container
+            # and nests an st.expander for the raw package, so it can't be
+            # wrapped in another expander — render the cards directly, exactly
+            # like the Positions tab does). pos_sorted puts real-money legs
+            # first, paper after; the card header labels each.
             _ov_op_path = "/api/bot/order-packages?" + urlencode(
                 {"limit": 50, "include_paper": "true"})
             _ov_sig_path = "/api/bot/signals"
@@ -1704,26 +1702,10 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             ov_op_map = _order_package_map(
                 _ov_joins.get(_ov_op_path, (None, None))[0])
             ov_signals = _ov_joins.get(_ov_sig_path, (None, None))[0] or []
-
-            def _ov_pick_label(i: int | None) -> str:
-                if i is None:
-                    return "—"
-                p = pos_sorted[i]
-                cls = "🧪 paper" if _row_account_class(p) == "paper" else "real"
-                side = str(p.get("side", "")).upper()
-                return (f"{p.get('symbol', '?')} {side} · "
-                        f"{p.get('account', '?')} ({cls}) · "
-                        f"uPnL {fmt_usd(_position_upnl(p))}")
-
-            pick = st.selectbox(
-                "Open the full trade card for…",
-                [None, *range(len(pos_sorted))],
-                format_func=_ov_pick_label, key="ov_open_pick",
-            )
-            if pick is not None and 0 <= pick < len(pos_sorted):
+            st.markdown("**Open trades — full detail**")
+            for p in pos_sorted:
                 _render_trade_card(
-                    pos_sorted[pick], is_open=True,
-                    op_map=ov_op_map, signals=ov_signals,
+                    p, is_open=True, op_map=ov_op_map, signals=ov_signals,
                 )
         else:
             st.caption("No open positions.")
