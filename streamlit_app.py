@@ -1560,10 +1560,29 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         badge = " · 🟢 open" if sym_positions else ""
         st.markdown(f"#### {ov_symbol}{badge}")
         if sym_positions:
-            net_pnl = sum(_position_upnl(p) for p in sym_positions)
-            pc1, pc2 = st.columns([1, 3])
-            pc1.metric(f"Live PnL · {ov_symbol}", fmt_usd(net_pnl),
-                       delta=round(net_pnl, 2))
+            # sym_positions carries BOTH real-money and paper legs (the fetch
+            # uses include_paper=true). NEVER blend them: split by account class
+            # so the primary "Live PnL" metric is real-money only, and paper
+            # rides as a separate labeled metric when any paper leg exists.
+            real_legs = [p for p in sym_positions
+                         if _row_account_class(p) == "real_money"]
+            paper_legs = [p for p in sym_positions
+                          if _row_account_class(p) == "paper"]
+            real_pnl = sum(_position_upnl(p) for p in real_legs)
+            paper_pnl = sum(_position_upnl(p) for p in paper_legs)
+            if paper_legs:
+                pc1, pc1b, pc2 = st.columns([1, 1, 2])
+            else:
+                pc1, pc2 = st.columns([1, 3])
+                pc1b = None
+            if real_legs:
+                pc1.metric(f"Live PnL · {ov_symbol}", fmt_usd(real_pnl),
+                           delta=round(real_pnl, 2))
+            else:
+                pc1.metric(f"Live PnL · {ov_symbol}", "—")
+            if pc1b is not None:
+                pc1b.metric(f"🧪 Paper PnL · {ov_symbol}", fmt_usd(paper_pnl),
+                            delta=round(paper_pnl, 2))
             pc2.caption(" · ".join(_pos_caption(p) for p in sym_positions))
 
         if candles_err:
@@ -1584,10 +1603,33 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     st.divider()
 
     # ââ Snapshot (below the chart) ââââââââââââââââââââââââââââââââââââââââââââââ
+    # 24h PnL is REAL-MONEY ONLY and uses the rolling-24h-by-close-time
+    # aggregate from /api/bot/performance?window=24h (a true 24h window, not
+    # stats.pnl24h's today-UTC open-time figure). The paper 24h PnL rides as a
+    # SEPARATE caption from the additive `paper` sub-block — real and paper are
+    # NEVER summed. If the performance fetch fails, fall back to s.pnl24h
+    # (real-only) so the metric never goes blank.
+    perf24, perf24_err = _fetch("/api/bot/performance?window=24h")
+    perf24 = perf24 if isinstance(perf24, dict) else {}
+    if perf24_err or "totalPnl" not in perf24:
+        real_24h = s.get("pnl24h")
+        paper_24h = None
+    else:
+        real_24h = perf24.get("totalPnl")
+        paper_24h = (perf24.get("paper") or {}).get("totalPnl")
+
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("24h PnL",     fmt_usd(s.get("pnl24h")))
+    c1.metric("24h PnL · real", fmt_usd(real_24h))
+    if paper_24h is not None:
+        c1.caption(f"🧪 paper 24h: {fmt_usd(paper_24h)}")
     c2.metric("Total PnL",   fmt_usd(s.get("totalPnL")))
+    # Open trades is real-only (stats.openTrades); paper open trades surface as
+    # a caption so this KPI can't silently disagree with the open-positions list
+    # below (which includes paper).
     c3.metric("Open trades", s.get("openTrades", 0))
+    paper_open = s.get("paperOpenTrades")
+    if paper_open:
+        c3.caption(f"🧪 paper open: {paper_open}")
     c4.metric("Win rate",    fmt_pct(s.get("winRate")))
 
     odf, _, _ = _analytics_frame()
@@ -1646,6 +1688,43 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             cols = [c for c in cmap if c in pdf.columns]
             st.dataframe(pdf[cols].rename(columns=cmap), hide_index=True,
                          use_container_width=True)
+
+            # Per-trade detail cards for every open position — the same rich
+            # card the Positions tab renders (_render_trade_card), reusing the
+            # SAME order-package map + signals join Positions builds. Because
+            # _render_trade_card itself uses an st.expander internally,
+            # Streamlit forbids wrapping it in another expander, so we mirror
+            # the Positions tab's clickable-row pattern: a selectbox picks which
+            # open trade to expand into the full card. Real-money legs sort
+            # first (pos_sorted above), paper after, each labeled.
+            _ov_op_path = "/api/bot/order-packages?" + urlencode(
+                {"limit": 50, "include_paper": "true"})
+            _ov_sig_path = "/api/bot/signals"
+            _ov_joins = _fetch_parallel([_ov_op_path, _ov_sig_path], timeout=6.0)
+            ov_op_map = _order_package_map(
+                _ov_joins.get(_ov_op_path, (None, None))[0])
+            ov_signals = _ov_joins.get(_ov_sig_path, (None, None))[0] or []
+
+            def _ov_pick_label(i: int | None) -> str:
+                if i is None:
+                    return "—"
+                p = pos_sorted[i]
+                cls = "🧪 paper" if _row_account_class(p) == "paper" else "real"
+                side = str(p.get("side", "")).upper()
+                return (f"{p.get('symbol', '?')} {side} · "
+                        f"{p.get('account', '?')} ({cls}) · "
+                        f"uPnL {fmt_usd(_position_upnl(p))}")
+
+            pick = st.selectbox(
+                "Open the full trade card for…",
+                [None, *range(len(pos_sorted))],
+                format_func=_ov_pick_label, key="ov_open_pick",
+            )
+            if pick is not None and 0 <= pick < len(pos_sorted):
+                _render_trade_card(
+                    pos_sorted[pick], is_open=True,
+                    op_map=ov_op_map, signals=ov_signals,
+                )
         else:
             st.caption("No open positions.")
     with strat_col:
@@ -2043,7 +2122,12 @@ def page_accounts() -> None:
 
 # ── Positions ───────────────────────────────────────────────────────────────────
 
-_CLOSED_WINDOWS = {"Last 24h": 1, "Last 7 days": 7, "Last 30 days": 30}
+# "All" uses a 10-year lookback (3650 days) rather than a special sentinel —
+# the since-calc below (utcnow() - timedelta(days=days)) handles it directly,
+# and it reaches every closed trade this bot will ever have produced without
+# any branch in the date math.
+_CLOSED_WINDOWS = {"Last 24h": 1, "Last 7 days": 7, "Last 30 days": 30,
+                   "All": 3650}
 
 
 def page_positions() -> None:
