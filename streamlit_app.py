@@ -433,6 +433,70 @@ def _capped_table(df: pd.DataFrame, key: str, cap: int = 10) -> None:
     st.dataframe(df, hide_index=True, use_container_width=True)
 
 
+# ── Redesign: shared header-band + progress widgets ───────────────────────────
+# The whole app follows one page grammar: a header band of headline KPIs at the
+# top (real-money PRIMARY as big metrics, paper SECONDARY as a labeled caption —
+# never blended, per the canonical P4 contract), then live-now content, then a
+# progress-vs-standard lens where relevant, then drill-down. These two helpers
+# implement the first and third of those so every page reads consistently and a
+# page never renders as "dead" when only paper is active.
+
+def _render_header_band(
+    real: list[tuple],
+    paper: list[tuple] | None = None,
+    *,
+    status: tuple[str, str] | None = None,
+) -> None:
+    """One consistent headline band for any page.
+
+    `real` / `paper` are lists of ``(label, value_str)`` or
+    ``(label, value_str, delta)``. Real-money KPIs render big (``st.metric``);
+    paper rides directly below as a single 🧪-tagged caption so it's always
+    visible but visually secondary. `status` is an optional ``(text, color)``
+    status dot rendered above the metrics."""
+    if status:
+        text, color = status
+        st.markdown(_status_dot(color) + f"**{text}**", unsafe_allow_html=True)
+    if real:
+        cols = st.columns(len(real))
+        for col, item in zip(cols, real):
+            label, value = item[0], item[1]
+            delta = item[2] if len(item) > 2 else None
+            col.metric(label, value, delta=delta)
+    if paper:
+        bits = " · ".join(f"{it[0]} {it[1]}" for it in paper)
+        st.caption("🧪 Paper · " + bits)
+
+
+def _progress_dot(ratio: float) -> str:
+    """🟢/🟡/🔴 for a 0..1 progress-toward-standard ratio."""
+    if ratio >= 1.0:
+        return "🟢"
+    if ratio >= 0.5:
+        return "🟡"
+    return "🔴"
+
+
+def _standard_progress(
+    label: str,
+    current: float | None,
+    threshold: float | None,
+    *,
+    fmt=None,
+) -> None:
+    """Render a 'progress toward the system standard' bar.
+
+    `current` vs the codified-gate `threshold` (e.g. 9 of 14 soak-days, 142 of
+    200 trades). Renders a labeled `st.progress` bar with a 🟢/🟡/🔴 dot. Null
+    current/threshold renders an em-dash caption rather than a fake 0."""
+    f = fmt or (lambda v: f"{v:g}")
+    if current is None or not threshold:
+        st.caption(f"{label}: —")
+        return
+    ratio = max(0.0, min(1.0, current / threshold))
+    st.progress(ratio, text=f"{_progress_dot(ratio)} {label}: {f(current)} / {f(threshold)}")
+
+
 def render_sidebar() -> str:
     with st.sidebar:
         st.markdown(
@@ -906,12 +970,18 @@ def render_tv_chart(
     *,
     height:     int = _LC_HEIGHT,
     ema_period: int = 20,
+    storage_key: str | None = None,
 ) -> None:
     """Render the live chart via the custom lightweight-charts v4 embed.
 
     All series + overlays are sent to the component; the on-canvas checkboxes
     (Live / Signals / Closed / Zones / EMA / Volume) toggle them client-side
-    (persisted in localStorage), and the ⤢ button requests fullscreen."""
+    (persisted in localStorage), and the ⤢ button requests fullscreen.
+
+    `storage_key` overrides the per-symbol localStorage namespace. Pass a
+    unique value when embedding several charts for the SAME symbol on one page
+    (e.g. one inside each open-trade detail card) so their scroll position and
+    overlay toggles don't clobber each other or the top-of-page symbol chart."""
     candle_data = _lc_candle_data(df)
     if not candle_data:
         st.caption("No candle data.")
@@ -927,7 +997,7 @@ def render_tv_chart(
         # Namespace the chart's localStorage (scroll range + overlay toggles)
         # per symbol so the Overview's stacked per-symbol charts persist
         # independently instead of sharing one global key.
-        "storageKey": "tvc_" + re.sub(r"[^A-Za-z0-9]", "", symbol),
+        "storageKey": storage_key or ("tvc_" + re.sub(r"[^A-Za-z0-9]", "", symbol)),
         "theme": {
             "bg": _TV_BG, "text": _TV_TEXT, "gridH": _LC_GRID_H, "gridV": _LC_GRID_V,
             "green": _TV_GREEN, "red": _TV_RED, "ema": _TV_EMA20,
@@ -1510,6 +1580,42 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     # _render_overview_insight_card for the placeholder handling.
     _render_overview_insight_card()
 
+    # ── Header band: headline KPIs first (real PRIMARY, paper SECONDARY) ───────
+    # The first thing seen on the page is the summary that matters, so it never
+    # reads as "dead": real-money 24h/total PnL, open trades and win rate as big
+    # metrics, with paper riding directly below as a labeled caption. 24h real is
+    # the true rolling-24h close-time figure from /performance (falls back to
+    # stats.pnl24h). Real and paper are NEVER summed (canonical P4).
+    hb_perf24, hb_perf24_err = _fetch("/api/bot/performance?window=24h")
+    hb_perf24 = hb_perf24 if isinstance(hb_perf24, dict) else {}
+    if hb_perf24_err or "totalPnl" not in hb_perf24:
+        hb_real_24h = s.get("pnl24h")
+        hb_paper_24h = None
+    else:
+        hb_real_24h = hb_perf24.get("totalPnl")
+        hb_paper_24h = (hb_perf24.get("paper") or {}).get("totalPnl")
+    hb_paper = s.get("paper") or {}
+    hb_status = s.get("status", "unknown")
+    hb_color = {"running": _TV_GREEN, "paused": "#f5a623",
+                "stopped": _TV_RED}.get(hb_status, "#6b7488")
+    _render_header_band(
+        real=[
+            ("24h PnL · real", fmt_usd(hb_real_24h)),
+            ("Total PnL", fmt_usd(s.get("totalPnL"))),
+            ("Open trades", s.get("openTrades", 0)),
+            ("Win rate", fmt_pct(s.get("winRate"))),
+        ],
+        paper=[
+            ("24h", fmt_usd(hb_paper_24h if hb_paper_24h is not None
+                            else hb_paper.get("pnl24h"))),
+            ("total", fmt_usd(hb_paper.get("totalPnL"))),
+            ("open", s.get("paperOpenTrades") or 0),
+            ("win", fmt_pct(hb_paper.get("winRate"))),
+        ],
+        status=(f"{hb_status.upper()} · {s.get('datasource', '?')}", hb_color),
+    )
+    st.divider()
+
     # ── Live charts (top of page) ──────────────────────────────────────────────
     # One chart per ACTIVE symbol (anything a strategy is paper/live-trading,
     # enumerated live via _discover_symbols()). Symbols with an OPEN POSITION are
@@ -1602,35 +1708,9 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     st.divider()
 
     # ââ Snapshot (below the chart) ââââââââââââââââââââââââââââââââââââââââââââââ
-    # 24h PnL is REAL-MONEY ONLY and uses the rolling-24h-by-close-time
-    # aggregate from /api/bot/performance?window=24h (a true 24h window, not
-    # stats.pnl24h's today-UTC open-time figure). The paper 24h PnL rides as a
-    # SEPARATE caption from the additive `paper` sub-block — real and paper are
-    # NEVER summed. If the performance fetch fails, fall back to s.pnl24h
-    # (real-only) so the metric never goes blank.
-    perf24, perf24_err = _fetch("/api/bot/performance?window=24h")
-    perf24 = perf24 if isinstance(perf24, dict) else {}
-    if perf24_err or "totalPnl" not in perf24:
-        real_24h = s.get("pnl24h")
-        paper_24h = None
-    else:
-        real_24h = perf24.get("totalPnl")
-        paper_24h = (perf24.get("paper") or {}).get("totalPnl")
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("24h PnL · real", fmt_usd(real_24h))
-    if paper_24h is not None:
-        c1.caption(f"🧪 paper 24h: {fmt_usd(paper_24h)}")
-    c2.metric("Total PnL",   fmt_usd(s.get("totalPnL")))
-    # Open trades is real-only (stats.openTrades); paper open trades surface as
-    # a caption so this KPI can't silently disagree with the open-positions list
-    # below (which includes paper).
-    c3.metric("Open trades", s.get("openTrades", 0))
-    paper_open = s.get("paperOpenTrades")
-    if paper_open:
-        c3.caption(f"🧪 paper open: {paper_open}")
-    c4.metric("Win rate",    fmt_pct(s.get("winRate")))
-
+    # Headline KPIs now live in the header band at the TOP of the page (real
+    # primary / paper secondary). This section is the supporting detail only:
+    # the last-24h scorecard, system health, and the 30-day realised-P&L chart.
     odf, _, _ = _analytics_frame()
     s24 = _summary_window(odf, 24)
 
@@ -2118,6 +2198,26 @@ def page_positions() -> None:
 
     segment = _segment_picker("pos_segment")
 
+    # ── Header band: open exposure (real PRIMARY, paper SECONDARY) ──────────
+    # Computed over ALL open positions (both classes), independent of the
+    # segment picker, so the headline never reads as dead when only paper is on.
+    _open_all, _ = _fetch("/api/bot/positions?include_paper=true")
+    _open_all = _open_all or []
+    _real_open = [p for p in _open_all if _row_account_class(p) == "real_money"]
+    _paper_open = [p for p in _open_all if _row_account_class(p) == "paper"]
+    _render_header_band(
+        real=[
+            ("Open · real", len(_real_open)),
+            ("Unrealized PnL · real",
+             fmt_usd(sum(_position_upnl(p) for p in _real_open))),
+        ],
+        paper=[
+            ("open", len(_paper_open)),
+            ("uPnL", fmt_usd(sum(_position_upnl(p) for p in _paper_open))),
+        ],
+    )
+    st.divider()
+
     # Join data for the trade cards — all fast journal/DB pulls now that the
     # per-model ML scores are persisted ON the order package (modelScores),
     # so there's no slow shadow-log recompile. order-packages carries the
@@ -2395,6 +2495,43 @@ def _signal_logic_text(sl: Any) -> str | None:
     return None
 
 
+def _render_card_chart(
+    trade: dict, *, is_open: bool, signals: list[dict] | None,
+) -> None:
+    """Embed the live price chart inside a trade detail card.
+
+    Shows the symbol's candles with THIS trade's context overlaid — entry/SL/TP
+    price-lines for an open position, entry/exit markers for a closed one, plus
+    the correlated signals. A single fixed interval (15m) keeps the embed light;
+    candle fetches are cached per (symbol, interval) so several cards for the
+    same symbol reuse one upstream call. The storageKey is namespaced per card
+    so each card's scroll/toggle state is independent of the others and of the
+    top-of-page Overview chart."""
+    sym = trade.get("symbol")
+    if not sym:
+        return
+    tid = trade.get("id")
+    ck = f"card_chart_{tid}_{sym}_{'o' if is_open else 'c'}"
+    if not st.checkbox("📈 Price chart", value=True, key=ck):
+        return
+    df, candles_err = _fetch_candles(sym, "15m", limit=400)
+    if candles_err:
+        st.caption(f"chart unavailable: {candles_err}")
+        return
+    if df is None or df.empty:
+        st.caption("no candle data for this symbol.")
+        return
+    render_tv_chart(
+        df,
+        signals,
+        [trade] if not is_open else None,
+        sym,
+        positions=[trade] if is_open else None,
+        height=320,
+        storage_key=f"tvccard_{re.sub(r'[^A-Za-z0-9]', '', str(tid) + sym)}",
+    )
+
+
 def _render_trade_card(
     trade: dict,
     *,
@@ -2481,6 +2618,9 @@ def _render_trade_card(
                 f"{trade.get('closedAt') or '—'} · close reason: "
                 f"**{trade.get('closeReason') or '—'}**"
             )
+
+        # ── Live price chart with this trade's context overlaid ────────
+        _render_card_chart(trade, is_open=is_open, signals=signals)
 
         st.divider()
 
@@ -3587,7 +3727,16 @@ def _fmt_num_or_dash(v: Optional[float], decimals: int = 2) -> str:
     return f"{f:.{decimals}f}"
 
 
-def _render_strategy_review(name: str) -> None:
+# Codified M7 strategy-gate standards (docs/strategy-review-gate.md) — surfaced
+# as progress-toward-standard bars so "how far is this strategy from promotion
+# or demotion" is answerable at a glance.
+STRAT_PROMOTE_MIN_CLOSED = 100   # n_closed needed before a promote can be proposed
+STRAT_PROMOTE_WIN_RATE = 55.0    # win-rate % promote line
+STRAT_DEMOTE_WIN_RATE = 40.0     # win-rate % below which demote_shadow zones open
+STRAT_PROMOTE_MIN_SOAK_DAYS = 14  # override #4 — promote needs ≥14 days soak
+
+
+def _render_strategy_review(name: str, *, soak_days: int | None = None) -> None:
     """Render the latest M7 review packet for *name* (if one exists).
 
     Reads ``GET /api/bot/strategies/{name}/review`` — Tier 1, returns a
@@ -3642,6 +3791,30 @@ def _render_strategy_review(name: str) -> None:
     m2.metric("win_rate", _fmt_pct_or_dash(h.get("win_rate")))
     m3.metric("expectancy", _fmt_num_or_dash(h.get("expectancy"), 4))
     m4.metric("pnl_total", _fmt_num_or_dash(h.get("pnl_total")))
+
+    # ── Progress toward the codified gate standard ─────────────────────
+    # How far this strategy is from PROMOTE-eligibility (and where the
+    # DEMOTE line sits) per docs/strategy-review-gate.md. Soak days come
+    # from the page (first closed trade); win_rate in the packet is a
+    # fraction (0..1), so scale to % for the bar.
+    n_closed = h.get("n_closed")
+    if soak_days is not None:
+        _standard_progress("Soak → promote-eligible (days)", soak_days,
+                           STRAT_PROMOTE_MIN_SOAK_DAYS, fmt=lambda v: f"{int(v)}d")
+    _standard_progress("Closed trades → promote-eligible", n_closed,
+                       STRAT_PROMOTE_MIN_CLOSED, fmt=lambda v: f"{int(v)}")
+    wr = h.get("win_rate")
+    if isinstance(wr, (int, float)):
+        wr_pct = wr * 100.0
+        _standard_progress("Win rate → promote line", wr_pct,
+                           STRAT_PROMOTE_WIN_RATE, fmt=lambda v: f"{v:.0f}%")
+        zone = ("🔴 below demote line" if wr_pct < STRAT_DEMOTE_WIN_RATE
+                else "🟢 clears promote line" if wr_pct >= STRAT_PROMOTE_WIN_RATE
+                else "🟡 between demote and promote")
+        st.caption(
+            f"Standard: promote ≥ {STRAT_PROMOTE_WIN_RATE:.0f}% · "
+            f"demote < {STRAT_DEMOTE_WIN_RATE:.0f}% — {zone}"
+        )
 
     reasons = packet.get("reasons") or []
     for r in reasons:
@@ -3785,6 +3958,20 @@ def page_strategies() -> None:
             "Per-strategy status below reflects config; the bot may be between restarts."
         )
 
+    # ── Portfolio header band — the whole roster at a glance ───────────────
+    n_running = sum(1 for x in strategies
+                    if x.get("enabled", True) and x.get("running"))
+    n_loaded = sum(1 for x in strategies if x.get("enabled", True)
+                   and x.get("loaded") and not x.get("running"))
+    n_disabled = sum(1 for x in strategies if not x.get("enabled", True))
+    _render_header_band(real=[
+        ("Strategies", len(strategies)),
+        ("Running", n_running),
+        ("Loaded · stale", n_loaded),
+        ("Disabled", n_disabled),
+    ])
+    st.divider()
+
     # One closed-trade fetch feeds every strategy's 24h count + cumulative
     # P&L curve below (aggregated client-side, same source as the Overview
     # analytics). Lifetime stats still come from /api/bot/strategies.
@@ -3818,6 +4005,19 @@ def page_strategies() -> None:
 
         sdf = _filter_strategy(an_df, name) if not an_df.empty else an_df
         trades_24h = _summary_window(sdf, 24)["trades"] if not sdf.empty else 0
+
+        # Soak proxy: days since this strategy's earliest closed trade in the
+        # 92-day analytics window — feeds the M7 "≥14 days soak" progress bar.
+        # A floor (under-counts a strategy older than the window) but fine for
+        # the "has it cleared 14 days?" check.
+        soak_days = None
+        if not sdf.empty and "ts" in sdf.columns:
+            earliest = sdf["ts"].min()
+            if pd.notna(earliest):
+                # ts is tz-naive UTC (see _parse_trade_ts) — keep the subtraction
+                # tz-naive to avoid a tz-aware/naive mismatch.
+                soak_days = max(
+                    0, (pd.Timestamp(dt.datetime.utcnow()) - earliest).days)
 
         label = (f"{_row_dot(state)}  **{name}**  ·  {status_label}  ·  "
                  f"24h {trades_24h}  ·  {fmt_usd(stats.get('total_pnl'))}")
@@ -3875,7 +4075,7 @@ def page_strategies() -> None:
             # ict-trading-bot/docs/strategy-review-gate.md is the canonical
             # rubric; this card renders proposed_action + reasons + the
             # headline numbers the matrix consumed.
-            _render_strategy_review(name)
+            _render_strategy_review(name, soak_days=soak_days)
 
             # M8 tune results — the parameter-sweep harness's OOS / k-fold
             # evidence for this strategy (GET /api/bot/strategies/{name}/tune,
