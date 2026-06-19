@@ -1594,23 +1594,36 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     else:
         hb_real_24h = hb_perf24.get("totalPnl")
         hb_paper_24h = (hb_perf24.get("paper") or {}).get("totalPnl")
+    # Authoritative all-time Total PnL + Win rate come from
+    # /performance?window=all (uncapped SQL: winners/closed×100), NOT /stats —
+    # whose winRate has a denominator discrepancy (live diag 2026-06-19: real
+    # 25.6% via /performance vs 6.3% via /stats). Fall back to /stats only when
+    # /performance is unavailable so the headline is never blank.
     hb_paper = s.get("paper") or {}
+    hb_all, hb_all_err = _fetch("/api/bot/performance?window=all")
+    hb_all = hb_all if isinstance(hb_all, dict) else {}
+    hb_all_ok = (not hb_all_err) and ("winRate" in hb_all)
+    hb_all_paper = (hb_all.get("paper") or {}) if hb_all_ok else {}
+    hb_real_total = hb_all.get("totalPnl") if hb_all_ok else s.get("totalPnL")
+    hb_real_wr = hb_all.get("winRate") if hb_all_ok else s.get("winRate")
+    hb_paper_total = hb_all_paper.get("totalPnl") if hb_all_ok else hb_paper.get("totalPnL")
+    hb_paper_wr = hb_all_paper.get("winRate") if hb_all_ok else hb_paper.get("winRate")
     hb_status = s.get("status", "unknown")
     hb_color = {"running": _TV_GREEN, "paused": "#f5a623",
                 "stopped": _TV_RED}.get(hb_status, "#6b7488")
     _render_header_band(
         real=[
             ("24h PnL · real", fmt_usd(hb_real_24h)),
-            ("Total PnL", fmt_usd(s.get("totalPnL"))),
+            ("Total PnL", fmt_usd(hb_real_total)),
             ("Open trades", s.get("openTrades", 0)),
-            ("Win rate", fmt_pct(s.get("winRate"))),
+            ("Win rate", fmt_pct(hb_real_wr)),
         ],
         paper=[
             ("24h", fmt_usd(hb_paper_24h if hb_paper_24h is not None
                             else hb_paper.get("pnl24h"))),
-            ("total", fmt_usd(hb_paper.get("totalPnL"))),
+            ("total", fmt_usd(hb_paper_total)),
             ("open", s.get("paperOpenTrades") or 0),
-            ("win", fmt_pct(hb_paper.get("winRate"))),
+            ("win", fmt_pct(hb_paper_wr)),
         ],
         status=(f"{hb_status.upper()} · {s.get('datasource', '?')}", hb_color),
     )
