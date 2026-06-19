@@ -2098,6 +2098,37 @@ def page_accounts() -> None:
     positions, _ = _fetch("/api/bot/positions?include_paper=true")
     positions = positions or []
 
+    # ── Header band: portfolio balance + open exposure ─────────────────────
+    # Real-money accounts PRIMARY (tracked balance + open count + uPnL), paper
+    # SECONDARY — never blended. Balances are the bot's tracked snapshots.
+    def _acct_is_paper(a: dict) -> bool:
+        return str(a.get("account_class") or "real_money").lower() == "paper"
+    _real_ids = {a.get("id") for a in accounts if not _acct_is_paper(a)}
+    _paper_ids = {a.get("id") for a in accounts if _acct_is_paper(a)}
+
+    def _bal_sum(ids: set) -> float:
+        return sum(float((balances.get(i) or {}).get("balance") or 0) for i in ids)
+
+    def _open_count(ids: set) -> int:
+        return sum(1 for p in positions if p.get("account") in ids)
+
+    def _upnl_sum(ids: set) -> float:
+        return sum(_position_upnl(p) for p in positions if p.get("account") in ids)
+
+    _render_header_band(
+        real=[
+            ("Real balance", fmt_usd(_bal_sum(_real_ids))),
+            ("Open · real", _open_count(_real_ids)),
+            ("uPnL · real", fmt_usd(_upnl_sum(_real_ids))),
+        ],
+        paper=[
+            ("balance", fmt_usd(_bal_sum(_paper_ids))),
+            ("open", _open_count(_paper_ids)),
+            ("uPnL", fmt_usd(_upnl_sum(_paper_ids))),
+        ] if _paper_ids else None,
+    )
+    st.divider()
+
     since_7d = (dt.datetime.utcnow() - dt.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     for acc in accounts:
@@ -3502,6 +3533,19 @@ def page_promotion() -> None:
         "live `vol_bucket` feature. “Wired” ❌ on a regime model is the "
         "constant-score bug signature."
     )
+
+    # ── Progress toward the ML promotion standard ──────────────────────
+    # Per-model distance to the shadow→advisory evaluation gate: days in
+    # shadow → 7, predictions → 200. Surfaces "how far from promotion" at a
+    # glance (🟢 cleared · 🟡 maturing · 🔴 just started) using the same
+    # codified PROMO_* thresholds the readiness verdict applies.
+    with st.expander("Promotion progress — distance to evaluation", expanded=False):
+        for s, label, _sev, f in graded:
+            st.markdown(f"**{s.get('model_id', '?')}** · {label}")
+            _standard_progress("Days in shadow → standard", f["days"],
+                               PROMO_MIN_DAYS, fmt=lambda v: f"{v:.0f}d")
+            _standard_progress("Predictions → standard", f["count"],
+                               PROMO_MIN_PREDS, fmt=lambda v: f"{int(v)}")
 
     st.divider()
     st.subheader("Score drift (recent vs reference window)")
