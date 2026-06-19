@@ -2061,6 +2061,28 @@ def page_performance() -> None:
         "Detailed system + per-strategy performance, plus per-symbol trade "
         "context. Filter by strategy and time window below."
     )
+    # Header band: all-time headline (real PRIMARY, paper SECONDARY) from the
+    # uncapped /performance aggregate, so the page leads with the same summary
+    # grammar as every other page. The filterable deep-dive follows below.
+    _pf_all, _pf_err = _fetch("/api/bot/performance?window=all")
+    _pf_all = _pf_all if isinstance(_pf_all, dict) else {}
+    if not _pf_err and "winRate" in _pf_all:
+        _pf_paper = _pf_all.get("paper") or {}
+        _render_header_band(
+            real=[
+                ("Trades", _pf_all.get("totalTrades", 0)),
+                ("Win rate", fmt_pct(_pf_all.get("winRate"))),
+                ("Total PnL", fmt_usd(_pf_all.get("totalPnl"))),
+                ("Expectancy", fmt_usd(_pf_all.get("expectancy"))),
+            ],
+            paper=[
+                ("trades", _pf_paper.get("totalTrades", 0)),
+                ("win", fmt_pct(_pf_paper.get("winRate"))),
+                ("total", fmt_usd(_pf_paper.get("totalPnl"))),
+            ] if _pf_paper else None,
+        )
+        st.caption("All-time, uncapped (real-money primary · paper secondary).")
+        st.divider()
     render_trade_analytics()
 
     st.divider()
@@ -2769,6 +2791,19 @@ def page_order_packages() -> None:
         else:
             st.caption("No order packages recorded yet.")
         return
+
+    # Header band: decision-volume summary for the current segment.
+    _op_open = sum(1 for p in packages
+                   if str(p.get("status", "")).lower() in ("open", "pending"))
+    _op_graded = sum(1 for p in packages
+                     if (p.get("claudeScore") or {}).get("grade"))
+    _render_header_band(real=[
+        ("Packages", len(packages)),
+        ("Open", _op_open),
+        ("Closed", len(packages) - _op_open),
+        ("Claude-graded", _op_graded),
+    ])
+    st.divider()
 
     score_map = _trade_score_map()
 
