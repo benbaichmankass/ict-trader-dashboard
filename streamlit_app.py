@@ -1291,6 +1291,194 @@ def _segment_filter_frame(df: pd.DataFrame, segment: str) -> pd.DataFrame:
     return df[~classes.isin(_NON_REAL_CLASSES)].reset_index(drop=True)
 
 
+# ── Mobile-friendly control bar — segment + time-window pickers ─────────────────
+#
+# A compact, tap-friendly control bar that sits at the top of every reporting
+# page. It pairs the existing Real/Paper/All segment axis with a time-window
+# axis (24h / 7d / 30d / All) that maps to the bot's ``/performance?window=``
+# values. Both prefer ``st.segmented_control`` (newer Streamlit, large tap
+# targets) and gracefully fall back to ``st.radio(horizontal=True)`` on older
+# builds — matching how the rest of the file feature-detects Streamlit APIs
+# (see ``_df_row_selection_supported``).
+
+# label → /performance window slug. "All" reaches the uncapped all-history
+# aggregate. Order is the operator's natural escalation: recent → wider.
+_WINDOW_CHOICES: list[str] = ["24h", "7d", "30d", "All"]
+_WINDOW_SLUG: dict[str, str] = {"24h": "24h", "7d": "7d", "30d": "30d", "All": "all"}
+# window slug → days, for the client-side closed-trade `since=` math (All uses a
+# 10-year lookback like _CLOSED_WINDOWS, reaching every trade without a branch).
+_WINDOW_DAYS: dict[str, int] = {"24h": 1, "7d": 7, "30d": 30, "all": 3650}
+
+
+def _segmented_or_radio(
+    label: str, choices: list[str], *, index: int, key: str, help: str | None = None,
+) -> str:
+    """Render a single-select control as ``st.segmented_control`` when available
+    (bigger tap targets, nicer on phones), else fall back to a horizontal radio.
+
+    ``st.segmented_control`` (Streamlit ≥1.40) can return ``None`` when nothing
+    is selected — coerce that back to the default choice so callers always get a
+    real value. Streamlit Community Cloud may briefly run an older build than the
+    pin during a rollout, so the radio fallback keeps the page importable."""
+    seg = getattr(st, "segmented_control", None)
+    if callable(seg):
+        try:
+            picked = seg(
+                label, choices, default=choices[index], key=key, help=help,
+                selection_mode="single",
+            )
+            return picked if picked is not None else choices[index]
+        except (TypeError, ValueError):
+            pass  # older signature / build → radio fallback below
+    return st.radio(label, choices, index=index, horizontal=True, key=key, help=help)
+
+
+def _segment_control(key: str) -> str:
+    """Mobile-friendly Real money / Paper / All picker → ``real``/``paper``/``all``.
+
+    Same semantics + default (Real money) as :func:`_segment_picker`; this
+    variant uses ``st.segmented_control`` for larger tap targets on phones."""
+    label = _segmented_or_radio(
+        "Segment", _SEGMENT_CHOICES, index=0, key=key,
+        help=(
+            "Real money = genuine real-money accounts only (paper AND prop-firm "
+            "accounts excluded — never blended into the real headline); Paper = "
+            "paper-trading accounts; All explicitly merges real + paper "
+            "(profit factor / max drawdown can't be combined, shown as —)."
+        ),
+    )
+    return _SEGMENT_SLUG[label]
+
+
+def _window_control(key: str, *, index: int = 0) -> tuple[str, str]:
+    """Mobile-friendly 24h / 7d / 30d / All time-window picker.
+
+    Returns ``(label, slug)`` where ``slug`` ∈ {24h, 7d, 30d, all} drives the
+    bot's ``/performance?window=`` param and the client-side ``since=`` math.
+    Defaults to 24h (``index=0``)."""
+    label = _segmented_or_radio(
+        "Window", _WINDOW_CHOICES, index=index, key=key,
+        help="Time window for the figures below — last 24 hours, 7 days, 30 "
+             "days, or all-time.",
+    )
+    return label, _WINDOW_SLUG[label]
+
+
+def _control_bar(seg_key: str, win_key: str, *, win_index: int = 0) -> tuple[str, str, str]:
+    """Render the standard two-control mobile control bar (segment + window)
+    side-by-side and return ``(segment, window_label, window_slug)``."""
+    c1, c2 = st.columns(2)
+    with c1:
+        segment = _segment_control(seg_key)
+    with c2:
+        win_label, win_slug = _window_control(win_key, index=win_index)
+    return segment, win_label, win_slug
+
+
+# ── /performance segment + "All" client-combine ────────────────────────────────
+#
+# /performance returns a real-money block at the top level PLUS a `paper`
+# sub-block of the same shape. For the explicit user-selected "All" view we
+# combine the two for the metrics that ARE combinable (sums + recomputed rates);
+# profitFactor / maxDrawdown are NOT recoverable from the sub-blocks, so they
+# render "—" under All. This is an EXPLICIT, user-picked, All-labeled view —
+# the never-blend rule only forbids SILENTLY folding paper into a "Real" label.
+
+# Metrics that cannot be reconstructed by combining the real + paper sub-blocks.
+_NON_COMBINABLE = ("profitFactor", "maxDrawdown")
+
+
+def _merge_per_asset_class(real: list | None, paper: list | None) -> list[dict]:
+    """Merge two perAssetClass lists by assetClass, summing trades/wins/totalPnl
+    and recomputing winRate (wins/trades×100) + expectancy (totalPnl/trades)."""
+    acc: dict[str, dict] = {}
+    for src in (real or []), (paper or []):
+        for row in src:
+            cls = str(row.get("assetClass") or "—").lower()
+            a = acc.setdefault(cls, {"assetClass": cls, "trades": 0, "wins": 0,
+                                     "totalPnl": 0.0})
+            a["trades"] += int(row.get("trades") or 0)
+            a["wins"] += int(row.get("wins") or 0)
+            try:
+                a["totalPnl"] += float(row.get("totalPnl") or 0.0)
+            except (TypeError, ValueError):
+                pass
+    out = []
+    for a in acc.values():
+        t = a["trades"]
+        a["winRate"] = round(a["wins"] / t * 100, 1) if t else None
+        a["expectancy"] = round(a["totalPnl"] / t, 2) if t else None
+        out.append(a)
+    return out
+
+
+def _combine_perf_blocks(real: dict, paper: dict) -> dict:
+    """Client-combine the real + paper /performance blocks for the All view.
+
+    Combinable: totalPnl, totalTrades, wins/losses (→ winRate), expectancy,
+    perAssetClass (merged), equity (summed if both present). Non-combinable
+    (profitFactor / maxDrawdown) are left as ``None`` → the renderer shows "—"
+    with a "not available for combined view" caption."""
+    def _f(d: dict, k: str) -> float:
+        try:
+            return float(d.get(k) or 0.0)
+        except (TypeError, ValueError):
+            return 0.0
+    trades = int(real.get("totalTrades") or 0) + int(paper.get("totalTrades") or 0)
+    wins = int(real.get("wins") or 0) + int(paper.get("wins") or 0)
+    losses = int(real.get("losses") or 0) + int(paper.get("losses") or 0)
+    total_pnl = _f(real, "totalPnl") + _f(paper, "totalPnl")
+    out = {
+        "totalTrades": trades,
+        "wins": wins,
+        "losses": losses,
+        "totalPnl": total_pnl,
+        "winRate": round(wins / trades * 100, 1) if trades else None,
+        "expectancy": round(total_pnl / trades, 2) if trades else None,
+        "perAssetClass": _merge_per_asset_class(
+            real.get("perAssetClass"), paper.get("perAssetClass")),
+        # Not client-combinable — surfaced as "—" by the renderers.
+        "profitFactor": None,
+        "maxDrawdown": None,
+        "_combined": True,  # marks the non-combinable caption
+    }
+    # Equity: sum the two curves by index position when both present, else take
+    # whichever exists (best-effort — the curves share the window's cadence).
+    re_eq, pe_eq = real.get("equity") or [], paper.get("equity") or []
+    if re_eq and pe_eq and len(re_eq) == len(pe_eq):
+        out["equity"] = [
+            {"t": r.get("t"), "cum": _f(r, "cum") + _f(p, "cum")}
+            for r, p in zip(re_eq, pe_eq)
+        ]
+    else:
+        out["equity"] = re_eq or pe_eq
+    # perStrategy: pass real-money through (paper strategies are a separate axis;
+    # best/worst fleet readout stays real-anchored). Combine only when one side
+    # is empty so the caller still gets a list.
+    out["perStrategy"] = real.get("perStrategy") or paper.get("perStrategy") or []
+    return out
+
+
+def _perf_for_segment(window: str, segment: str) -> tuple[dict, bool]:
+    """Resolve one ``/performance?window=`` payload for the chosen segment.
+
+    Returns ``(block, combined)`` where ``block`` is the metrics dict for the
+    segment and ``combined`` flags the explicit All view (so the renderer can
+    show the profitFactor / maxDrawdown "not available for combined" caption).
+    ``{}`` on a real DB error / missing payload (renderers show em-dashes)."""
+    d, err = _fetch(f"/api/bot/performance?window={window}")
+    d = d if isinstance(d, dict) else {}
+    if err or d.get("error") or "winRate" not in d:
+        return {}, False
+    paper = d.get("paper") or {}
+    if segment == "paper":
+        return paper, False
+    if segment == "all":
+        return _combine_perf_blocks(d, paper), True
+    # real: the top-level block IS real-money only (paper sub-block excluded).
+    return d, False
+
+
 def _filter_strategy(df: pd.DataFrame, strategy: str) -> pd.DataFrame:
     if strategy and strategy != "All":
         return df[df["strategy"] == strategy]
@@ -1511,7 +1699,7 @@ def render_trade_analytics() -> None:
     can inspect each segment in isolation without mixing real-money KPIs with
     paper activity.
     """
-    segment = _segment_picker("perf_segment")
+    segment = _segment_control("perf_segment")
     df, raw_count, err = _analytics_frame(include_paper=True)
     if err:
         st.info(f"Trade analytics unavailable: {err}")
@@ -1618,6 +1806,40 @@ _ASSET_CLASS_ICON = {
 }
 
 
+def _asset_class_order(c: str) -> int:
+    """Stable display order for a perAssetClass row (known classes first)."""
+    keys = list(_ASSET_CLASS_ICON.keys())
+    k = str(c).lower()
+    return keys.index(k) if k in keys else len(keys)
+
+
+def build_asset_class_bar(per_class: list | None, height: int = 220) -> go.Figure | None:
+    """Horizontal P&L-by-asset-class bar (green profit / red loss) from a
+    /performance ``perAssetClass`` list. Returns None when there's nothing to
+    show, so the caller can fall back to a caption."""
+    rows = [r for r in (per_class or []) if r.get("totalPnl") is not None]
+    if not rows:
+        return None
+    rows = sorted(rows, key=lambda r: _asset_class_order(r.get("assetClass")))
+    labels, vals = [], []
+    for r in rows:
+        cls = str(r.get("assetClass") or "—").lower()
+        labels.append(_ASSET_CLASS_ICON.get(cls, f"• {cls}"))
+        try:
+            vals.append(float(r.get("totalPnl") or 0.0))
+        except (TypeError, ValueError):
+            vals.append(0.0)
+    fig = go.Figure(go.Bar(
+        x=vals, y=labels, orientation="h",
+        marker_color=[_TV_GREEN if v >= 0 else _TV_RED for v in vals],
+        hovertemplate="%{y}: $%{x:,.2f}<extra></extra>",
+    ))
+    fig.update_xaxes(showgrid=True, gridcolor=_LC_GRID_H, fixedrange=True,
+                     zeroline=True, zerolinecolor="#2a3a5a")
+    fig.update_yaxes(showgrid=False, fixedrange=True)
+    return _style_plotly(fig, height)
+
+
 def _exec_perf_window(window: str) -> dict:
     """One /performance window as a dict ({} on error/missing), error-aware."""
     d, err = _fetch(f"/api/bot/performance?window={window}")
@@ -1627,17 +1849,21 @@ def _exec_perf_window(window: str) -> dict:
     return d
 
 
-def _render_exec_summary(stats: dict) -> None:
+def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str) -> None:
     """The executive ("CEO") summary band — a compact, scannable system-health
     + business-performance header at the very top of the Overview page.
 
-    Everything is wired to real endpoints; any null/missing value renders as an
-    em-dash, never a fabricated 0. Real money is kept strictly separate from
-    paper and prop (prop never counts toward a real-money figure).
+    Driven by the page's ``segment`` (real / paper / all) + ``window`` (24h /
+    7d / 30d / all) controls: the P&L / win-rate / expectancy / asset-class
+    figures reflect the chosen segment and window. Everything is wired to real
+    endpoints; any null/missing value renders as an em-dash, never a fabricated
+    0. Real / paper / prop are kept strictly separate — the "All" view is the
+    operator's EXPLICIT, All-labeled merge (never a silent blend into "real").
     """
-    st.markdown("### Executive summary")
+    seg_name = {"real": "real money", "paper": "paper", "all": "all (real + paper)"}[segment]
+    st.markdown(f"### Executive summary · {seg_name} · {win_label}")
 
-    # ── Row 1: System · Capital & exposure (REAL only) ─────────────────────
+    # ── Row 1: System · Capital & exposure ─────────────────────────────────
     status = str(stats.get("status") or "unknown")
     status_color = {"running": _TV_GREEN, "paused": "#f5a623",
                     "stopped": _TV_RED}.get(status, "#6b7488")
@@ -1675,78 +1901,110 @@ def _render_exec_summary(stats: dict) -> None:
     pos_all, _ = _fetch("/api/bot/positions?include_paper=true")
     pos_all = pos_all or []
     real_open = [p for p in pos_all if _is_real_money(p)]
+    paper_open = [p for p in pos_all if _row_account_class(p) == "paper"]
     real_open_upnl, real_open_unk = _sum_upnl(real_open)
 
     st.markdown(_status_dot(status_color)
                 + f"**System {status.upper()}** · last tick {_fmt_age(tick_age)} ago"
                 + f" · datasource {stats.get('datasource', '?')}",
                 unsafe_allow_html=True)
-    r1 = st.columns(4)
-    r1[0].metric("Real equity", real_equity)
-    r1[1].metric("Open · real", len(real_open))
-    r1[2].metric("Open uPnL · real",
-                 _upnl_metric(real_open_upnl, len(real_open) - real_open_unk, real_open_unk))
-    r1[3].metric("Open · paper",
-                 sum(1 for p in pos_all if _row_account_class(p) == "paper"))
+    # 2-up metric grids throughout — readable on a phone (Streamlit keeps two
+    # columns side-by-side even on narrow screens; >2 gets cramped).
+    r1a, r1b = st.columns(2)
+    r1a.metric("Real equity", real_equity)
+    r1b.metric("Open · real", len(real_open))
+    r1c, r1d = st.columns(2)
+    r1c.metric("Open uPnL · real",
+               _upnl_metric(real_open_upnl, len(real_open) - real_open_unk, real_open_unk))
+    r1d.metric("Open · paper", len(paper_open))
     if _eq_missing:
         st.caption(f"⚠️ {_eq_missing} real-money account(s) without a tracked "
                    "balance snapshot (excluded from Real equity).")
 
-    # ── Row 2: Net P&L today / 7d / 30d / all (REAL) + paper line ──────────
-    w24, w7, w30, wall = (_exec_perf_window("24h"), _exec_perf_window("7d"),
-                          _exec_perf_window("30d"), _exec_perf_window("all"))
-    # 24h real prefers /performance, falls back to /stats.pnl24h (shared basis).
-    pnl_today = w24.get("totalPnl") if w24 else stats.get("pnl24h")
-    r2 = st.columns(4)
-    r2[0].metric("Net P&L · today", fmt_usd(pnl_today))
-    r2[1].metric("Net P&L · 7d", fmt_usd(w7.get("totalPnl") if w7 else None))
-    r2[2].metric("Net P&L · 30d", fmt_usd(w30.get("totalPnl") if w30 else None))
-    r2[3].metric("Net P&L · all", fmt_usd(wall.get("totalPnl") if wall else stats.get("totalPnL")))
+    # ── Row 2: windowed P&L / win rate / expectancy for the chosen segment ──
+    # One /performance pull for the chosen window, resolved to the segment block
+    # (paper sub-block / explicit real+paper combine / real top-level).
+    block, combined = _perf_for_segment(window, segment)
+    # 24h real can fall back to /stats.pnl24h (shared close-time basis) so the
+    # headline is never blank when /performance is briefly unavailable.
+    _pnl = block.get("totalPnl")
+    if _pnl is None and window == "24h" and segment == "real":
+        _pnl = stats.get("pnl24h")
+    _total = block.get("totalPnl")
+    if _total is None and window == "all" and segment == "real":
+        _total = stats.get("totalPnL")
+    _wr = block.get("winRate")
+    if _wr is None and window == "all" and segment == "real":
+        _wr = stats.get("winRate")
 
-    r3 = st.columns(4)
-    r3[0].metric("Win rate · all", fmt_pct(wall.get("winRate") if wall else stats.get("winRate")))
-    r3[1].metric("Expectancy · all", fmt_usd(wall.get("expectancy") if wall else None))
-    # New /performance fields — null-guarded.
-    r3[2].metric("Profit factor · all",
-                 fmt_num(wall.get("profitFactor")) if wall.get("profitFactor") is not None else "—")
-    _mdd = wall.get("maxDrawdown")
-    r3[3].metric("Max drawdown · all", fmt_usd(_mdd) if _mdd is not None else "—")
+    p1, p2 = st.columns(2)
+    p1.metric(f"Net P&L · {win_label}", fmt_usd(_pnl))
+    p2.metric(f"Win rate · {win_label}", fmt_pct(_wr))
+    p3, p4 = st.columns(2)
+    _trades = block.get("totalTrades")
+    p3.metric(f"Trades · {win_label}", _trades if _trades is not None else "—")
+    p4.metric(f"Expectancy · {win_label}", fmt_usd(block.get("expectancy")))
 
-    # Paper performance — ALWAYS a separate line, never blended into real.
-    _pall_paper = (wall.get("paper") or {}) if wall else {}
-    if _pall_paper:
-        st.caption(
-            "🧪 Paper · all-time · "
-            f"P&L {fmt_usd(_pall_paper.get('totalPnl'))} · "
-            f"win {fmt_pct(_pall_paper.get('winRate'))} · "
-            f"trades {_pall_paper.get('totalTrades', 0)}"
-        )
+    p5, p6 = st.columns(2)
+    _pf = block.get("profitFactor")
+    p5.metric("Profit factor", fmt_num(_pf) if _pf is not None else "—")
+    _mdd = block.get("maxDrawdown")
+    p6.metric("Max drawdown", fmt_usd(_mdd) if _mdd is not None else "—")
+    if combined:
+        st.caption("Profit factor / max drawdown: — · not available for the "
+                   "combined (All) view (can't be reconstructed from the "
+                   "real + paper sub-blocks).")
 
-    # ── Asset-class P&L breakdown (REAL, from /performance perAssetClass) ───
-    per_class = wall.get("perAssetClass") if wall else None
-    if per_class:
-        st.markdown("**P&L by asset class · all-time (real)**")
-        # Stable order: known classes first in declared order, then any extras.
-        def _ord(c: str) -> int:
-            keys = list(_ASSET_CLASS_ICON.keys())
-            k = str(c).lower()
-            return keys.index(k) if k in keys else len(keys)
-        rows_ac = sorted(per_class, key=lambda r: _ord(r.get("assetClass")))
-        cols_ac = st.columns(min(len(rows_ac), 5) or 1)
-        for i, rac in enumerate(rows_ac[:5]):
-            cls = str(rac.get("assetClass") or "—").lower()
-            label = _ASSET_CLASS_ICON.get(cls, f"• {cls}")
-            with cols_ac[i]:
-                st.metric(label, fmt_usd(rac.get("totalPnl")))
-                st.caption(
-                    f"{rac.get('trades', 0)} trades · win {fmt_pct(rac.get('winRate'))}"
+    # Contextual secondary line so the OTHER segment is never invisible:
+    #  - real/all view → show the paper one-liner;
+    #  - paper view    → show the real one-liner.
+    if segment in ("real", "all"):
+        _paper_blk, _ = _perf_for_segment(window, "paper")
+        if _paper_blk:
+            st.caption(
+                f"🧪 Paper · {win_label} · "
+                f"P&L {fmt_usd(_paper_blk.get('totalPnl'))} · "
+                f"win {fmt_pct(_paper_blk.get('winRate'))} · "
+                f"trades {_paper_blk.get('totalTrades', 0)}"
+            )
+    else:  # paper view → real one-liner
+        _real_blk, _ = _perf_for_segment(window, "real")
+        if _real_blk:
+            st.caption(
+                f"💰 Real · {win_label} · "
+                f"P&L {fmt_usd(_real_blk.get('totalPnl'))} · "
+                f"win {fmt_pct(_real_blk.get('winRate'))} · "
+                f"trades {_real_blk.get('totalTrades', 0)}"
+            )
+
+    # ── Asset-class P&L breakdown (chosen segment + window) — chart + metrics ─
+    per_class = block.get("perAssetClass") if block else None
+    st.markdown(f"**P&L by asset class · {win_label} ({seg_name})**")
+    ac_fig = build_asset_class_bar(per_class, height=200)
+    if ac_fig is not None:
+        st.plotly_chart(ac_fig, use_container_width=True,
+                        config={"displayModeBar": False})
+        # Compact per-class trades/win caption beneath the bar (2-up).
+        rows_ac = sorted(per_class, key=lambda r: _asset_class_order(r.get("assetClass")))
+        for i in range(0, len(rows_ac[:6]), 2):
+            cols_ac = st.columns(2)
+            for j, rac in enumerate(rows_ac[i:i + 2]):
+                cls = str(rac.get("assetClass") or "—").lower()
+                lbl = _ASSET_CLASS_ICON.get(cls, f"• {cls}")
+                cols_ac[j].caption(
+                    f"{lbl}: {rac.get('trades', 0)} trades · "
+                    f"win {fmt_pct(rac.get('winRate'))}"
                 )
     else:
-        st.caption("P&L by asset class: — (no per-asset-class data yet).")
+        st.caption("P&L by asset class: — (no per-asset-class data for this "
+                   "segment / window yet).")
 
-    # ── Strategy fleet + ML fleet health ──────────────────────────────────
-    fc1, fc2 = st.columns(2)
-    with fc1:
+    # ── Strategy fleet + ML fleet health (always stacked 1-per-row on phones) ─
+    # best/worst are anchored on the all-time real-money perStrategy aggregate
+    # regardless of the window picker (a fleet-health readout, not a windowed
+    # figure) — pull it once here.
+    wall = _exec_perf_window("all")
+    with st.container():
         st.markdown("**Strategy fleet**")
         n_live = sum(1 for x in strategies
                      if str(x.get("execution") or "live").lower() == "live"
@@ -1757,7 +2015,7 @@ def _render_exec_summary(stats: dict) -> None:
                       and x.get("loaded") and not x.get("running"))
         n_off = sum(1 for x in strategies
                     if not x.get("enabled", True) or not x.get("loaded"))
-        sc = st.columns(4)
+        sc = st.columns(4)  # four small counts read fine 4-up even on phones
         sc[0].metric("Live", n_live)
         sc[1].metric("Shadow", n_shadow)
         sc[2].metric("Stale", n_stale)
@@ -1774,7 +2032,7 @@ def _render_exec_summary(stats: dict) -> None:
             )
         else:
             st.caption("Best / worst strategy: — (no per-strategy P&L yet).")
-    with fc2:
+    with st.container():
         st.markdown("**ML fleet**")
         reg, reg_err = _fetch("/api/bot/ml/registry")
         rows_reg = (reg or {}).get("rows", []) if not reg_err else []
@@ -1811,8 +2069,11 @@ def _render_exec_summary(stats: dict) -> None:
     st.divider()
 
 
-def _render_strategy_snapshot(frame: pd.DataFrame) -> None:
-    """Compact per-strategy line for the Overview snapshot."""
+def _render_strategy_snapshot(frame: pd.DataFrame, hours: int = 24,
+                              win_label: str = "24h") -> None:
+    """Compact per-strategy line for the Overview snapshot. The per-strategy
+    trade count is over the page's chosen window (``hours``); the lifetime
+    Trades / Win% / P&L come straight from the strategy's bot stats."""
     data, err = _fetch("/api/bot/strategies")
     strategies = (data or {}).get("strategies") or []
     if err or not strategies:
@@ -1822,11 +2083,11 @@ def _render_strategy_snapshot(frame: pd.DataFrame) -> None:
     for strat in strategies:
         name = strat.get("name", "")
         sstats = strat.get("stats") or {}
-        t24 = (_summary_window(_filter_strategy(frame, name), 24)["trades"]
-               if not frame.empty else 0)
+        tW = (_summary_window(_filter_strategy(frame, name), hours)["trades"]
+              if not frame.empty else 0)
         rows.append({
             "Strategy": name,
-            "24h": t24,
+            win_label: tW,
             "Trades": sstats.get("total_trades", 0),
             "Win %": sstats.get("win_rate_pct"),
             "P&L $": sstats.get("total_pnl"),
@@ -1841,10 +2102,20 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     s  = stats or {}
     vm = s.get("vmHealth") or {}
 
+    # ── Page control bar — segment + time-window pickers drive the WHOLE page ──
+    # (exec summary, KPI row, 24h scorecard, P&L sparkline, per-strategy line,
+    # open-positions table). Segment defaults to Real money; window to 24h.
+    # Mobile-friendly: segmented_control with a horizontal-radio fallback.
+    st.caption("Choose what you're looking at — real money, paper, or both "
+               "(All) — and the time window.")
+    ov_segment, ov_win_label, ov_window = _control_bar(
+        "ov_segment", "ov_window", win_index=0)
+    st.divider()
+
     # ── Executive ("CEO") summary band — at-a-glance system health + business
-    # performance, real money kept strictly separate from paper/prop. The
-    # detailed sections below are unchanged.
-    _render_exec_summary(s)
+    # performance for the chosen segment + window. Real / paper / prop kept
+    # strictly separate; "All" is the explicit, All-labeled merge.
+    _render_exec_summary(s, ov_segment, ov_win_label, ov_window)
 
     # M13 S1: surface the latest analyst summary at the top of the page.
     # Silent no-op when /api/bot/insights/* isn't deployed yet OR the
@@ -1852,71 +2123,64 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     # _render_overview_insight_card for the placeholder handling.
     _render_overview_insight_card()
 
-    # ── Header band: headline KPIs first (real PRIMARY, paper SECONDARY) ───────
-    # The first thing seen on the page is the summary that matters, so it never
-    # reads as "dead": real-money 24h/total PnL, open trades and win rate as big
-    # metrics, with paper riding directly below as a labeled caption. 24h real is
-    # the true rolling-24h close-time figure from /performance (falls back to
-    # stats.pnl24h). Real and paper are NEVER summed (canonical P4).
-    # 24h PnL · real shares its close-time basis with /performance now that the
-    # bot fixed /stats.pnl24h to rolling-24h (was calendar-day) — so prefer
-    # /performance?window=24h (one label = one basis) and fall back to
-    # /stats.pnl24h only when /performance is unavailable. The new envelope
-    # `error` flag means a real DB failure (false on a genuine-empty window).
-    hb_perf24, hb_perf24_err = _fetch("/api/bot/performance?window=24h")
-    hb_perf24 = hb_perf24 if isinstance(hb_perf24, dict) else {}
-    _perf24_ok = (not hb_perf24_err) and (not hb_perf24.get("error")) \
-        and ("totalPnl" in hb_perf24)
-    if _perf24_ok:
-        hb_real_24h = hb_perf24.get("totalPnl")
-        hb_paper_24h = (hb_perf24.get("paper") or {}).get("totalPnl")
+    # ── Header band: headline KPIs for the chosen segment + window ─────────────
+    # The first thing seen on the page is the summary that matters. Both the
+    # primary metrics AND the secondary caption follow the segment picker:
+    #   - real / all → real-or-combined PRIMARY, paper SECONDARY caption;
+    #   - paper      → paper PRIMARY, real SECONDARY caption.
+    # 24h real can fall back to /stats.pnl24h (shared rolling-24h close-time
+    # basis); all-window real can fall back to /stats totals/winRate so the
+    # headline is never blank and never a fabricated $0.00 (the /stats winRate
+    # denominator discrepancy means /performance is preferred when present).
+    hb_block, hb_combined = _perf_for_segment(ov_window, ov_segment)
+    hb_pnl = hb_block.get("totalPnl")
+    if hb_pnl is None and ov_window == "24h" and ov_segment == "real":
+        hb_pnl = s.get("pnl24h")
+    hb_total = hb_block.get("totalPnl")
+    if hb_total is None and ov_window == "all" and ov_segment == "real":
+        hb_total = s.get("totalPnL")
+    hb_wr = hb_block.get("winRate")
+    if hb_wr is None and ov_window == "all" and ov_segment == "real":
+        hb_wr = s.get("winRate")
+    if ov_segment == "real":
+        hb_open = s.get("openTrades", 0)
+    elif ov_segment == "paper":
+        hb_open = s.get("paperOpenTrades") or 0
     else:
-        hb_real_24h = s.get("pnl24h")
-        hb_paper_24h = None
-    # Authoritative all-time Total PnL + Win rate come from
-    # /performance?window=all (uncapped SQL: winners/closed×100), NOT /stats —
-    # whose winRate has a denominator discrepancy (live diag 2026-06-19: real
-    # 25.6% via /performance vs 6.3% via /stats). Fall back to /stats only when
-    # /performance is unavailable (or reports a DB error) so the headline is
-    # never blank and never shows a fabricated $0.00:
-    #   - envelope `error:true` (real DB failure) → use /stats
-    #   - genuine-empty (totalTrades==0) but /stats reports a non-zero
-    #     totalPnL → the all-window aggregate is stale/partial, so prefer the
-    #     /stats figure rather than render performance's $0.00.
-    hb_paper = s.get("paper") or {}
-    hb_all, hb_all_err = _fetch("/api/bot/performance?window=all")
-    hb_all = hb_all if isinstance(hb_all, dict) else {}
-    _all_db_error = bool(hb_all.get("error"))
-    hb_all_ok = (not hb_all_err) and (not _all_db_error) and ("winRate" in hb_all)
-    hb_all_paper = (hb_all.get("paper") or {}) if hb_all_ok else {}
-    _stats_total = s.get("totalPnL")
-    _perf_empty = hb_all_ok and not (hb_all.get("totalTrades") or 0)
-    if hb_all_ok and not (_perf_empty and _stats_total):
-        hb_real_total = hb_all.get("totalPnl")
-    else:
-        hb_real_total = _stats_total
-    hb_real_wr = hb_all.get("winRate") if hb_all_ok else s.get("winRate")
-    hb_paper_total = hb_all_paper.get("totalPnl") if hb_all_ok else hb_paper.get("totalPnL")
-    hb_paper_wr = hb_all_paper.get("winRate") if hb_all_ok else hb_paper.get("winRate")
+        hb_open = (s.get("openTrades", 0) or 0) + (s.get("paperOpenTrades") or 0)
+    seg_word = {"real": "real", "paper": "paper", "all": "all"}[ov_segment]
     hb_status = s.get("status", "unknown")
     hb_color = {"running": _TV_GREEN, "paused": "#f5a623",
                 "stopped": _TV_RED}.get(hb_status, "#6b7488")
     _render_header_band(
         real=[
-            ("24h PnL · real", fmt_usd(hb_real_24h)),
-            ("Total PnL", fmt_usd(hb_real_total)),
-            ("Open trades", s.get("openTrades", 0)),
-            ("Win rate", fmt_pct(hb_real_wr)),
-        ],
-        paper=[
-            ("24h", fmt_usd(hb_paper_24h if hb_paper_24h is not None
-                            else hb_paper.get("pnl24h"))),
-            ("total", fmt_usd(hb_paper_total)),
-            ("open", s.get("paperOpenTrades") or 0),
-            ("win", fmt_pct(hb_paper_wr)),
+            (f"P&L · {ov_win_label}", fmt_usd(hb_pnl)),
+            (f"Total PnL · {seg_word}", fmt_usd(hb_total)),
+            (f"Open · {seg_word}", hb_open),
+            ("Win rate", fmt_pct(hb_wr)),
         ],
         status=(f"{hb_status.upper()} · {s.get('datasource', '?')}", hb_color),
     )
+    # Secondary one-liner for the OTHER segment — never blended, always visible.
+    if ov_segment in ("real", "all"):
+        _ph_blk, _ = _perf_for_segment(ov_window, "paper")
+        if _ph_blk:
+            st.caption(
+                f"🧪 Paper · {ov_win_label} · P&L {fmt_usd(_ph_blk.get('totalPnl'))} "
+                f"· win {fmt_pct(_ph_blk.get('winRate'))} · "
+                f"open {s.get('paperOpenTrades') or 0}"
+            )
+    else:
+        _rh_blk, _ = _perf_for_segment(ov_window, "real")
+        if _rh_blk:
+            st.caption(
+                f"💰 Real · {ov_win_label} · P&L {fmt_usd(_rh_blk.get('totalPnl'))} "
+                f"· win {fmt_pct(_rh_blk.get('winRate'))} · "
+                f"open {s.get('openTrades', 0)}"
+            )
+    if hb_combined:
+        st.caption("All = explicit real + paper merge (profit factor / max "
+                   "drawdown not combinable → shown as —).")
     st.divider()
 
     # ── Live charts (top of page) ──────────────────────────────────────────────
@@ -2024,40 +2288,50 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     # Headline KPIs now live in the header band at the TOP of the page (real
     # primary / paper secondary). This section is the supporting detail only:
     # the last-24h scorecard, system health, and the 30-day realised-P&L chart.
-    odf, _, _ = _analytics_frame()
-    s24 = _summary_window(odf, 24)
+    # Supporting detail — all driven by the page's segment + window picker.
+    odf_all, _, _ = _analytics_frame(include_paper=True)
+    odf = _segment_filter_frame(odf_all, ov_segment)
+    # Window → hours for the scorecard. "All" uses the full analytics lookback.
+    ov_hours = {"24h": 24, "7d": 7 * 24, "30d": 30 * 24,
+                "all": ANALYTICS_LOOKBACK_DAYS * 24}[ov_window]
+    sW = _summary_window(odf, ov_hours)
 
     left, right = st.columns(2)
     with left:
-        st.markdown("**Last 24h**")
-        a1, a2, a3 = st.columns(3)
-        a1.metric("Trades", s24["trades"])
-        a2.metric("Wins",   s24["wins"])
-        a3.metric("Losses", s24["losses"])
+        st.markdown(f"**Scorecard · {ov_win_label} ({seg_word})**")
+        a1, a2 = st.columns(2)
+        a1.metric("Trades", sW["trades"])
+        a2.metric("Wins", sW["wins"])
+        a3, a4 = st.columns(2)
+        a3.metric("Losses", sW["losses"])
+        a4.metric("P&L", fmt_usd(sW["pnl"]))
         st.markdown("**System health**")
-        h1, h2, h3 = st.columns(3)
+        h1, h2 = st.columns(2)
         h1.metric("CPU",    fmt_pct(vm.get("cpu")))
         h2.metric("Memory", fmt_pct(vm.get("memory")))
-        h3.metric("Disk",   fmt_pct(vm.get("disk")))
+        st.metric("Disk",   fmt_pct(vm.get("disk")))
     with right:
-        st.markdown("**Realised P&L · 30d**")
-        pnl30, _ = _fetch("/api/pnl/history?days=30")
-        fig30 = build_daily_pnl_fig(pnl30 or [], height=230)
+        st.markdown(f"**Realised P&L curve · {ov_win_label} ({seg_word})**")
+        # Cumulative realised P&L over the segment+window-filtered closed
+        # trades — segment-consistent (the /api/pnl/history route is real-only,
+        # so we drive this from the same frame the scorecard uses).
+        win_frame = (odf[odf["ts"] >= (dt.datetime.utcnow()
+                                       - dt.timedelta(hours=ov_hours))]
+                     if not odf.empty else odf)
+        fig30 = build_cumulative_pnl_fig(win_frame, height=230)
         if fig30 is not None:
             st.plotly_chart(fig30, use_container_width=True,
                             config={"displayModeBar": False})
         else:
-            st.caption("No realised P&L in the last 30 days.")
+            st.caption(f"No realised {seg_word} P&L in the {ov_win_label.lower()}.")
 
     pos_col, strat_col = st.columns(2)
     with pos_col:
-        st.markdown("**Open positions**")
-        # Includes paper rows (e.g. IBKR ib_paper MGC/MHG) like the charts
-        # above. Real-money rows sort first, then paper — a "Type" column
-        # labels each. (The `positions` variable above also now includes
-        # paper, but this keeps an independent fetch for the snapshot.)
+        st.markdown(f"**Open positions ({seg_word})**")
+        # Filtered to the chosen segment. Real-money rows sort first, then
+        # paper — a "Type" column labels each.
         positions_all, _ = _fetch("/api/bot/positions?include_paper=true")
-        positions_all = positions_all or []
+        positions_all = _segment_filter_rows(positions_all or [], ov_segment)
         if positions_all:
             pos_sorted = sorted(
                 positions_all,
@@ -2098,16 +2372,20 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             ov_op_map = _order_package_map(
                 _ov_joins.get(_ov_op_path, (None, None))[0])
             ov_signals = _ov_joins.get(_ov_sig_path, (None, None))[0] or []
-            st.markdown("**Open trades — full detail**")
-            for p in pos_sorted:
-                _render_trade_card(
-                    p, is_open=True, op_map=ov_op_map, signals=ov_signals,
-                )
+            # Full detail cards are heavy on a phone — collapse behind a toggle
+            # (the card itself uses containers/expanders, so it can't be wrapped
+            # in an st.expander; a checkbox is the nesting-safe gate).
+            if st.checkbox("Show full open-trade detail cards",
+                           key="ov_open_detail"):
+                for p in pos_sorted:
+                    _render_trade_card(
+                        p, is_open=True, op_map=ov_op_map, signals=ov_signals,
+                    )
         else:
-            st.caption("No open positions.")
+            st.caption(f"No open {seg_word} positions.")
     with strat_col:
-        st.markdown("**Strategies · 24h**")
-        _render_strategy_snapshot(odf)
+        st.markdown(f"**Strategies · {ov_win_label} ({seg_word})**")
+        _render_strategy_snapshot(odf, ov_hours, ov_win_label)
 
 
 # ── Chart interval choices (shared by the Overview chart) ──────────────────────
@@ -2370,14 +2648,15 @@ def page_performance() -> None:
     st.header("Performance")
     st.caption(
         "Detailed system + per-strategy performance, plus per-symbol trade "
-        "context. Filter by strategy and time window below."
+        "context. Pick a window for the headline; the segment + strategy "
+        "filters for the deep-dive are below."
     )
-    # Header band: all-time headline (real PRIMARY, paper SECONDARY) from the
-    # uncapped /performance aggregate, so the page leads with the same summary
-    # grammar as every other page. The filterable deep-dive follows below.
-    _pf_all, _pf_err = _fetch("/api/bot/performance?window=all")
-    _pf_all = _pf_all if isinstance(_pf_all, dict) else {}
-    if not _pf_err and "winRate" in _pf_all:
+    # Windowed headline band — uncapped /performance for the chosen window.
+    # Defaults to All-time (the page's purpose), with the same 24h/7d/30d/All
+    # axis as the rest of the app. The filterable deep-dive follows below.
+    pf_label, pf_window = _window_control("perf_hdr_window", index=3)  # All default
+    _pf_all = _exec_perf_window(pf_window)
+    if _pf_all and "winRate" in _pf_all:
         _pf_paper = _pf_all.get("paper") or {}
         _render_header_band(
             real=[
@@ -2392,7 +2671,14 @@ def page_performance() -> None:
                 ("total", fmt_usd(_pf_paper.get("totalPnl"))),
             ] if _pf_paper else None,
         )
-        st.caption("All-time, uncapped (real-money primary · paper secondary).")
+        st.caption(f"{pf_label} window, uncapped (real-money primary · paper "
+                   "secondary).")
+        # Asset-class P&L bar for the chosen window (real money).
+        _pf_ac = build_asset_class_bar(_pf_all.get("perAssetClass"), height=200)
+        if _pf_ac is not None:
+            st.markdown(f"**P&L by asset class · {pf_label} (real)**")
+            st.plotly_chart(_pf_ac, use_container_width=True,
+                            config={"displayModeBar": False})
         st.divider()
     render_trade_analytics()
 
@@ -2641,9 +2927,10 @@ def page_positions() -> None:
     st.header("Positions")
     st.caption("Live OPEN positions — full detail cards. Closed-trade history "
                "lives on the separate **Trades** page. Use the segment picker "
-               "to switch between real money and paper.")
+               "to switch between real money and paper. (Open positions have no "
+               "time window — see **Trades** for windowed history.)")
 
-    segment = _segment_picker("pos_segment")
+    segment = _segment_control("pos_segment")
 
     # ── Header band: open exposure (real PRIMARY, paper SECONDARY) ──────────
     # Computed over ALL open positions (every class), independent of the
@@ -2708,12 +2995,13 @@ def page_trades() -> None:
     st.caption("Closed-trade history. Pick a window and segment; click a row "
                "for the full trade card. Open positions live on **Positions**.")
 
-    segment = _segment_picker("trades_segment")
+    # Mobile-friendly control bar — segment + window side-by-side. The window
+    # uses the same 24h/7d/30d/All axis as the rest of the app (default 7d).
+    segment, wlabel, wslug = _control_bar(
+        "trades_segment", "trades_window", win_index=1)
     op_map, signals = _trade_card_join_data()
 
-    wlabel = st.selectbox("History window", list(_CLOSED_WINDOWS), index=1,
-                          key="pos_closed_win")
-    days = _CLOSED_WINDOWS[wlabel]
+    days = _WINDOW_DAYS[wslug]
     since = (dt.datetime.utcnow() - dt.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     closed, cerr = _fetch(
         "/api/bot/trades/closed?" + urlencode({
@@ -2724,7 +3012,8 @@ def page_trades() -> None:
     if cerr:
         st.warning(cerr)
     elif not closed:
-        st.caption(f"No trades closed in the {wlabel.lower()}.")
+        st.caption(f"No {segment if segment != 'all' else ''} trades closed "
+                   f"· {wlabel} window.".replace("  ", " "))
     else:
         # _format_closed_trades_df preserves row order, so the dataframe's
         # selection index maps 1:1 back to `closed` → click a row for its card.
@@ -2739,7 +3028,7 @@ def page_trades() -> None:
         disp = cdf[cols].rename(columns=col_map) if cols else cdf
         sel_idx: int | None = None
         if _df_row_selection_supported():
-            st.caption(f"{len(closed)} closed trade(s) · {wlabel.lower()}"
+            st.caption(f"{len(closed)} closed trade(s) · {wlabel} window"
                        + (f" · capped at {ANALYTICS_MAX_ROWS}" if len(closed) >= ANALYTICS_MAX_ROWS else "")
                        + " · click a row for the full trade card")
             event = st.dataframe(
@@ -2755,7 +3044,7 @@ def page_trades() -> None:
         else:
             # Older Streamlit without dataframe row-selection — render the
             # table plus a selectbox so the full card is still reachable.
-            st.caption(f"{len(closed)} closed trade(s) · {wlabel.lower()}"
+            st.caption(f"{len(closed)} closed trade(s) · {wlabel} window"
                        + (f" · capped at {ANALYTICS_MAX_ROWS}" if len(closed) >= ANALYTICS_MAX_ROWS else "")
                        + " · pick a trade below for the full card")
             st.dataframe(disp, hide_index=True, use_container_width=True)
