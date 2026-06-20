@@ -1666,7 +1666,8 @@ def _render_exec_summary(stats: dict) -> None:
             _eq_missing += 1
             continue
         try:
-            _eq_total += float(b); _eq_present += 1
+            _eq_total += float(b)
+            _eq_present += 1
         except (TypeError, ValueError):
             _eq_missing += 1
     real_equity = fmt_usd(_eq_total) if _eq_present else "—"
