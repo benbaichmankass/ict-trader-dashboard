@@ -400,6 +400,43 @@ PAGES = [
 ]
 
 
+# ── Cross-page navigation + queued widget presets ─────────────────────────────
+#
+# Streamlit forbids mutating a widget's session_state value AFTER the widget has
+# been instantiated on the current run ("cannot modify a widget's value after it
+# is instantiated"). To let one page programmatically jump to another AND preset
+# the target page's segment/window control, we QUEUE the desired value and apply
+# it on the NEXT run, BEFORE the target widget is created. `_apply_pending_widget`
+# is called at the very start of each widget's render path; `_queue_widget`
+# stages a value; `_goto` queues the nav page (plus any presets) and reruns.
+
+def _queue_widget(key: str, value) -> None:
+    """Stage `value` for widget `key`, applied on the next run before the widget
+    is instantiated (see `_apply_pending_widget`)."""
+    st.session_state.setdefault("_pending_widgets", {})[key] = value
+
+
+def _apply_pending_widget(key: str) -> None:
+    """If a value was queued for `key`, write it into session_state now. Must be
+    called BEFORE the widget with that key is created, or Streamlit raises."""
+    pend = st.session_state.get("_pending_widgets")
+    if pend and key in pend:
+        st.session_state[key] = pend.pop(key)
+
+
+def _goto(page: str, **preset) -> None:
+    """Jump to `page`, optionally presetting target-page widget values.
+
+    `preset` maps {widget_key: value} (e.g. trades_segment="Paper") — note the
+    segment/window controls store their DISPLAY label, not the slug. Queues all
+    presets + the nav page, then reruns so the queued values are applied before
+    the target widgets render."""
+    for k, v in preset.items():
+        _queue_widget(k, v)
+    _queue_widget("nav_page", page)
+    st.rerun()
+
+
 def _status_dot(color: str) -> str:
     return (
         f"<span style='display:inline-block;width:9px;height:9px;border-radius:50%;"
@@ -527,9 +564,16 @@ def render_sidebar() -> str:
         st.caption(f"{dt.datetime.utcnow().strftime('%H:%M:%S')} UTC")
         st.divider()
 
+        # Keyed nav so other pages can jump programmatically via `_goto`
+        # (which queues "nav_page" + reruns). Apply any queued page BEFORE the
+        # radio is instantiated, and seed a default so the choice persists
+        # across reruns. Don't pass `index=` once keyed — the key owns state.
+        _apply_pending_widget("nav_page")
+        st.session_state.setdefault("nav_page", PAGES[0])
         page = st.radio(
             "nav", PAGES,
             label_visibility="collapsed",
+            key="nav_page",
         )
         st.divider()
         # Live data: ON auto-polls the bot every POLL_INTERVAL_S. OFF stops the
@@ -1247,6 +1291,8 @@ def _segment_picker(key: str) -> str:
     Returns ``"real"`` / ``"paper"`` / ``"all"`` so callers can pass it
     through to ``_segment_filter`` and to API ``include_paper`` params.
     """
+    # Honor a queued cross-page preset before the radio is instantiated.
+    _apply_pending_widget(key)
     label = st.radio(
         "Segment",
         _SEGMENT_CHOICES,
@@ -1320,6 +1366,9 @@ def _segmented_or_radio(
     is selected — coerce that back to the default choice so callers always get a
     real value. Streamlit Community Cloud may briefly run an older build than the
     pin during a rollout, so the radio fallback keeps the page importable."""
+    # Honor any value queued by a cross-page jump (_goto / _queue_widget) BEFORE
+    # the widget is created — the queued value is the DISPLAY label, not a slug.
+    _apply_pending_widget(key)
     seg = getattr(st, "segmented_control", None)
     if callable(seg):
         try:
@@ -1373,6 +1422,92 @@ def _control_bar(seg_key: str, win_key: str, *, win_index: int = 0) -> tuple[str
     with c2:
         win_label, win_slug = _window_control(win_key, index=win_index)
     return segment, win_label, win_slug
+
+
+# Slug → display label for the segment control (the segment widgets store the
+# DISPLAY label, so a queued preset must be the label). Inverse of _SEGMENT_SLUG.
+_SLUG_SEGMENT: dict[str, str] = {v: k for k, v in _SEGMENT_SLUG.items()}
+
+
+def _empty_segment_hint(
+    unfiltered_rows: list[dict],
+    segment: str,
+    *,
+    seg_widget_key: str,
+    window_widget_key: str | None = None,
+    noun: str = "trades",
+    window_label: str | None = None,
+) -> None:
+    """Smart empty state for a segment+window selection that yielded no rows.
+
+    When the chosen segment is empty but data EXISTS in another segment (computed
+    from the UNFILTERED rows the caller already has in hand), render an honest,
+    helpful caption that names the available data and offers one-tap jumps to a
+    segment that actually has rows — instead of a bare "No … trades".
+
+    The jumps are EXPLICIT, user-initiated and labeled (never a silent real/paper
+    blend): a "Show Paper (N) →" button queues the segment widget's DISPLAY label
+    and reruns the SAME page. ``window_widget_key`` (optional) enables a
+    "Widen to All-time →" jump when the window — not the segment — is the
+    constraint. Only segments/windows that actually have rows get a button.
+
+    Args are the row list BEFORE the segment filter, the current ``segment``
+    slug, and the widget keys to drive. Reuses ``_segment_filter_rows``.
+    """
+    rows = unfiltered_rows or []
+    real_n = len(_segment_filter_rows(rows, "real"))
+    paper_n = len(_segment_filter_rows(rows, "paper"))
+    all_n = len(rows)
+
+    win_word = f" · {window_label} window" if window_label else ""
+    seg_word = {"real": "real-money", "paper": "paper", "all": ""}.get(segment, segment)
+    base = f"No {seg_word} {noun}".replace("  ", " ").strip()
+    st.caption(f"{base}{win_word}.")
+
+    # Offer a jump only to a segment that genuinely has rows in this window.
+    buttons: list[tuple[str, str]] = []  # (label, target segment slug)
+    if segment != "paper" and paper_n > 0:
+        buttons.append((f"Show Paper ({paper_n}) →", "paper"))
+    if segment != "real" and real_n > 0:
+        buttons.append((f"Show Real money ({real_n}) →", "real"))
+    if segment != "all" and all_n > 0 and all_n not in (real_n, paper_n):
+        # "All" is only useful when it surfaces MORE than the single other
+        # segment already offers (i.e. both classes have rows).
+        buttons.append((f"Show All ({all_n}) →", "all"))
+
+    # Widen-window jump: the segment has zero rows in THIS window but the caller
+    # asked us to offer a wider window (it can't know without a second fetch, so
+    # we only surface this when a window key is provided AND this window is
+    # narrower than All — honest, since All-time is a strict superset).
+    widen = (
+        window_widget_key is not None
+        and window_label not in (None, "All")
+    )
+
+    if not buttons and not widen:
+        return
+
+    cols = st.columns(len(buttons) + (1 if widen else 0))
+    i = 0
+    for label, target_slug in buttons:
+        with cols[i]:
+            if st.button(
+                label, key=f"{seg_widget_key}__jump_{target_slug}",
+                use_container_width=True,
+            ):
+                _queue_widget(seg_widget_key, _SLUG_SEGMENT[target_slug])
+                st.rerun()
+        i += 1
+    if widen:
+        with cols[i]:
+            if st.button(
+                "Widen to All-time →", key=f"{window_widget_key}__widen_all",
+                use_container_width=True,
+            ):
+                # _WINDOW_CHOICES stores the display label; "All" is the slug
+                # "all". Queue the label the window widget expects.
+                _queue_widget(window_widget_key, "All")
+                st.rerun()
 
 
 # ── /performance segment + "All" client-combine ────────────────────────────────
@@ -2181,6 +2316,23 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     if hb_combined:
         st.caption("All = explicit real + paper merge (profit factor / max "
                    "drawdown not combinable → shown as —).")
+
+    # ── Cross-links — one compact row jumping to the detail pages behind these
+    # headline figures (closed-trade log, open positions, the strategy fleet).
+    # `_goto` queues the nav page + reruns; page labels match the PAGES list.
+    nav1, nav2, nav3 = st.columns(3)
+    with nav1:
+        if st.button("Open Trades log →", key="ov_nav_trades",
+                     use_container_width=True):
+            _goto("Trades")
+    with nav2:
+        if st.button("Open Positions →", key="ov_nav_positions",
+                     use_container_width=True):
+            _goto("Positions")
+    with nav3:
+        if st.button("View Strategies →", key="ov_nav_strategies",
+                     use_container_width=True):
+            _goto("Strategies")
     st.divider()
 
     # ── Live charts (top of page) ──────────────────────────────────────────────
@@ -2331,7 +2483,8 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         # Filtered to the chosen segment. Real-money rows sort first, then
         # paper — a "Type" column labels each.
         positions_all, _ = _fetch("/api/bot/positions?include_paper=true")
-        positions_all = _segment_filter_rows(positions_all or [], ov_segment)
+        positions_unfiltered = positions_all or []
+        positions_all = _segment_filter_rows(positions_unfiltered, ov_segment)
         if positions_all:
             pos_sorted = sorted(
                 positions_all,
@@ -2382,7 +2535,12 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
                         p, is_open=True, op_map=ov_op_map, signals=ov_signals,
                     )
         else:
-            st.caption(f"No open {seg_word} positions.")
+            # Smart empty state — if another segment has open positions, name it
+            # + offer a one-tap jump (drives the Overview page's own segment).
+            _empty_segment_hint(
+                positions_unfiltered, ov_segment, seg_widget_key="ov_segment",
+                noun="open positions",
+            )
     with strat_col:
         st.markdown(f"**Strategies · {ov_win_label} ({seg_word})**")
         _render_strategy_snapshot(odf, ov_hours, ov_win_label)
@@ -2973,9 +3131,16 @@ def page_positions() -> None:
     if err:
         st.warning(err)
     else:
-        rows = _segment_filter_rows(rows or [], segment)
+        unfiltered = rows or []
+        rows = _segment_filter_rows(unfiltered, segment)
         if not rows:
-            st.caption(f"No open {segment if segment != 'all' else ''} positions.".strip())
+            # Smart empty state — if THIS segment has no open positions but
+            # another does, name it + offer a one-tap jump (open positions have
+            # no time window, so no widen-window jump here).
+            _empty_segment_hint(
+                unfiltered, segment, seg_widget_key="pos_segment",
+                noun="open positions",
+            )
         else:
             # One detail card per open position. uPnL comes straight from the
             # API's multiplier-aware unrealizedPnl (broker-truth or
@@ -3003,17 +3168,25 @@ def page_trades() -> None:
 
     days = _WINDOW_DAYS[wslug]
     since = (dt.datetime.utcnow() - dt.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    closed, cerr = _fetch(
+    closed_raw, cerr = _fetch(
         "/api/bot/trades/closed?" + urlencode({
             "limit": ANALYTICS_MAX_ROWS, "since": since, "include_paper": "true",
         })
     )
-    closed = _segment_filter_rows(closed or [], segment)
+    # Keep the UNFILTERED list (all classes, this window) so the empty-state hint
+    # can count per-segment availability without a second fetch.
+    closed_unfiltered = closed_raw or []
+    closed = _segment_filter_rows(closed_unfiltered, segment)
     if cerr:
         st.warning(cerr)
     elif not closed:
-        st.caption(f"No {segment if segment != 'all' else ''} trades closed "
-                   f"· {wlabel} window.".replace("  ", " "))
+        # Smart empty state — names what data DOES exist (other segment / wider
+        # window) and offers honest one-tap jumps, instead of a bare caption.
+        _empty_segment_hint(
+            closed_unfiltered, segment, seg_widget_key="trades_segment",
+            window_widget_key="trades_window", noun="trades closed",
+            window_label=wlabel,
+        )
     else:
         # _format_closed_trades_df preserves row order, so the dataframe's
         # selection index maps 1:1 back to `closed` → click a row for its card.
