@@ -394,7 +394,7 @@ PAGES = [
     # Operational, top-to-bottom: glance → performance → what's trading →
     # routing → decisions/fills → raw feed; then ops/diagnostics; then dev tools.
     "Overview", "Performance", "Insights", "Strategies", "Models", "Accounts",
-    "Order Packages", "Positions", "Signals", "News", "Exit Ladder",
+    "Order Packages", "Positions", "Trades", "Signals", "News", "Exit Ladder",
     "Backtesting", "Promotion", "Health",
     "Data Explorer", "Logs",
 ]
@@ -1045,14 +1045,55 @@ def _open_upnl(p: dict) -> tuple[float, bool]:
     """Like :func:`_position_upnl` but also returns whether the value is
     actually KNOWN, so the detail card can show "—" instead of a misleading
     $0.00 when the API value is "unavailable" (e.g. an IBKR-paper symbol while
-    the gateway is offline — broker read failed AND no mark price)."""
+    the gateway is offline — broker read failed AND no mark price).
+
+    A leg is treated as UNKNOWN when ``unrealizedPnl`` is null OR the bot
+    flags ``unrealizedPnlSource == "unavailable"`` (broker read failed and no
+    mark price) — those legs must NOT be summed as $0 into an exposure total.
+    """
     raw = p.get("unrealizedPnl")
-    if raw is not None:
+    src = str(p.get("unrealizedPnlSource") or "").lower()
+    if raw is not None and src != "unavailable":
         try:
             return float(raw), True
         except (TypeError, ValueError):
             pass
     return 0.0, False
+
+
+def _sum_upnl(positions) -> tuple[float, int]:
+    """Sum the KNOWN unrealised PnL across positions and count the UNKNOWN legs.
+
+    Returns ``(total_of_known, n_unknown)``. Unknown legs (null uPnL or
+    ``unrealizedPnlSource == "unavailable"``) are **excluded** from the sum
+    rather than counted as $0 — summing unknowns as zero silently understates
+    exposure and is the canonical "missing ≠ 0" trust bug.
+    """
+    total = 0.0
+    n_unknown = 0
+    for p in positions or []:
+        val, known = _open_upnl(p)
+        if known:
+            total += val
+        else:
+            n_unknown += 1
+    return total, n_unknown
+
+
+def _upnl_metric(total: float, n_known: int, n_unknown: int) -> str:
+    """Format an aggregate uPnL metric value: "—" when nothing is known, else
+    the known sum. Caller appends an "+N unmeasured" caption when n_unknown>0."""
+    if n_known == 0:
+        return "—"
+    return fmt_usd(total)
+
+
+def _upnl_caption(n_unknown: int) -> str | None:
+    """A "+N positions with unmeasured uPnL" caption, or None when all known."""
+    if n_unknown <= 0:
+        return None
+    return (f"+{n_unknown} position{'s' if n_unknown != 1 else ''} with "
+            "unmeasured uPnL (excluded from the sum)")
 
 
 # ── Overview analytics (trade-performance visualizations) ───────────────────────
@@ -1096,14 +1137,31 @@ def _parse_trade_ts(value: Any) -> dt.datetime | None:
 
 
 def _row_account_class(d: dict) -> str:
-    """Normalize a row's paper/real-money category.
+    """Normalize a row's funding category — ``real_money`` | ``paper`` | ``prop``.
 
-    The bot dual-emits the new ``accountClass`` ("paper" | "real_money")
-    field alongside the legacy ``isDemo`` boolean. Prefer ``accountClass``;
-    fall back to ``isDemo`` (paper when truthy, else real_money) for rows
-    from an older API that hasn't grown the field yet.
+    The bot dual-emits the new ``accountClass`` field alongside the legacy
+    ``isDemo`` boolean. Prefer ``accountClass`` (which can be ``paper`` /
+    ``prop`` / ``real_money``); fall back to ``isDemo`` (paper when truthy,
+    else real_money) for rows from an older API that hasn't grown the field.
+
+    NOTE: ``prop`` (prop-firm accounts) is its OWN category and is **never**
+    real money — the bot keeps real / paper / prop strictly separate and so
+    must the dashboard. Use :func:`_is_real_money` for the "counts toward the
+    real-money headline" test rather than ``== "real_money"`` open-coded.
     """
     return str(d.get("accountClass") or ("paper" if d.get("isDemo") else "real_money")).lower()
+
+
+# Funding categories that are NOT real money. ``prop`` (prop-firm accounts)
+# rides alongside ``paper`` here: per the bot's canonical contract real /
+# paper / prop are never blended into one number, so prop must be excluded
+# from every real-money aggregate, header, and segment filter.
+_NON_REAL_CLASSES = frozenset({"paper", "prop"})
+
+
+def _is_real_money(d: dict) -> bool:
+    """True only for genuine real-money rows — paper AND prop excluded."""
+    return _row_account_class(d) not in _NON_REAL_CLASSES
 
 
 def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
@@ -1196,9 +1254,10 @@ def _segment_picker(key: str) -> str:
         horizontal=True,
         key=key,
         help=(
-            "Real money = real-money accounts; Paper = paper-trading "
-            "accounts (``account_class: paper`` in the bot config — e.g. the "
-            "broker demo/practice/paper venues). All merges both."
+            "Real money = genuine real-money accounts only (paper AND "
+            "prop-firm accounts excluded — never blended into the real "
+            "headline); Paper = paper-trading accounts "
+            "(``account_class: paper``). All merges real + paper + prop."
         ),
     )
     return _SEGMENT_SLUG[label]
@@ -1208,22 +1267,28 @@ def _segment_filter_rows(rows: list[dict], segment: str) -> list[dict]:
     """Filter a list of row-dicts by segment using each row's category.
 
     Classifies via :func:`_row_account_class` — the new ``accountClass``
-    field with an ``isDemo`` fallback — so rows from an older API still
-    sort correctly (paper when ``isDemo`` truthy, else real_money).
+    field with an ``isDemo`` fallback. ``real`` keeps only genuine
+    real-money rows (:func:`_is_real_money` — **prop excluded**, never
+    blended into real); ``paper`` keeps paper-class rows; ``all`` keeps
+    everything (real + paper + prop).
     """
     if segment == "all":
         return rows
-    want = "paper" if segment == "paper" else "real_money"
-    return [r for r in (rows or []) if _row_account_class(r) == want]
+    if segment == "paper":
+        return [r for r in (rows or []) if _row_account_class(r) == "paper"]
+    # real money: prop and paper both excluded
+    return [r for r in (rows or []) if _is_real_money(r)]
 
 
 def _segment_filter_frame(df: pd.DataFrame, segment: str) -> pd.DataFrame:
     """Same as :func:`_segment_filter_rows` for a pandas DataFrame with
-    an ``accountClass`` column."""
+    an ``accountClass`` column. ``real`` excludes both paper AND prop."""
     if segment == "all" or "accountClass" not in df.columns:
         return df
-    want = "paper" if segment == "paper" else "real_money"
-    return df[df["accountClass"] == want].reset_index(drop=True)
+    classes = df["accountClass"].astype(str).str.lower()
+    if segment == "paper":
+        return df[classes == "paper"].reset_index(drop=True)
+    return df[~classes.isin(_NON_REAL_CLASSES)].reset_index(drop=True)
 
 
 def _filter_strategy(df: pd.DataFrame, strategy: str) -> pd.DataFrame:
@@ -1544,6 +1609,208 @@ def render_trade_analytics() -> None:
 
 # ── Overview ──────────────────────────────────────────────────────────────────
 
+# Asset-class display order + icons for the exec-summary breakdown. The bot's
+# /performance perAssetClass list drives the rows; this just gives a stable
+# order + a glyph. An unknown class falls through to a bullet.
+_ASSET_CLASS_ICON = {
+    "crypto": "₿ crypto", "index": "📈 index", "commodity": "🛢️ commodity",
+    "equity": "🏛️ equity", "fx": "💱 fx", "futures": "📊 futures",
+}
+
+
+def _exec_perf_window(window: str) -> dict:
+    """One /performance window as a dict ({} on error/missing), error-aware."""
+    d, err = _fetch(f"/api/bot/performance?window={window}")
+    d = d if isinstance(d, dict) else {}
+    if err or d.get("error"):
+        return {}
+    return d
+
+
+def _render_exec_summary(stats: dict) -> None:
+    """The executive ("CEO") summary band — a compact, scannable system-health
+    + business-performance header at the very top of the Overview page.
+
+    Everything is wired to real endpoints; any null/missing value renders as an
+    em-dash, never a fabricated 0. Real money is kept strictly separate from
+    paper and prop (prop never counts toward a real-money figure).
+    """
+    st.markdown("### Executive summary")
+
+    # ── Row 1: System · Capital & exposure (REAL only) ─────────────────────
+    status = str(stats.get("status") or "unknown")
+    status_color = {"running": _TV_GREEN, "paused": "#f5a623",
+                    "stopped": _TV_RED}.get(status, "#6b7488")
+    # Last-tick age: prefer the strategies runtime block, fall back to stats.
+    strat_payload, _ = _fetch("/api/bot/strategies")
+    strat_payload = strat_payload if isinstance(strat_payload, dict) else {}
+    runtime = strat_payload.get("runtime") or {}
+    tick_age = runtime.get("tick_age_seconds")
+    strategies = strat_payload.get("strategies") or []
+
+    # Real equity = sum of PRESENT real-money balances (prop + paper excluded).
+    cfg, _ = _fetch("/api/bot/config")
+    cfg = cfg if isinstance(cfg, dict) else {}
+    accounts = cfg.get("accounts") or []
+    bal_env, _ = _fetch("/api/bot/accounts/balances")
+    balances = (bal_env or {}).get("balances") or {}
+    real_acct_ids = {
+        a.get("id") for a in accounts
+        if str(a.get("account_class") or "real_money").lower() not in _NON_REAL_CLASSES
+    }
+    _eq_total = 0.0
+    _eq_present = _eq_missing = 0
+    for i in real_acct_ids:
+        b = (balances.get(i) or {}).get("balance")
+        if b is None:
+            _eq_missing += 1
+            continue
+        try:
+            _eq_total += float(b)
+            _eq_present += 1
+        except (TypeError, ValueError):
+            _eq_missing += 1
+    real_equity = fmt_usd(_eq_total) if _eq_present else "—"
+
+    pos_all, _ = _fetch("/api/bot/positions?include_paper=true")
+    pos_all = pos_all or []
+    real_open = [p for p in pos_all if _is_real_money(p)]
+    real_open_upnl, real_open_unk = _sum_upnl(real_open)
+
+    st.markdown(_status_dot(status_color)
+                + f"**System {status.upper()}** · last tick {_fmt_age(tick_age)} ago"
+                + f" · datasource {stats.get('datasource', '?')}",
+                unsafe_allow_html=True)
+    r1 = st.columns(4)
+    r1[0].metric("Real equity", real_equity)
+    r1[1].metric("Open · real", len(real_open))
+    r1[2].metric("Open uPnL · real",
+                 _upnl_metric(real_open_upnl, len(real_open) - real_open_unk, real_open_unk))
+    r1[3].metric("Open · paper",
+                 sum(1 for p in pos_all if _row_account_class(p) == "paper"))
+    if _eq_missing:
+        st.caption(f"⚠️ {_eq_missing} real-money account(s) without a tracked "
+                   "balance snapshot (excluded from Real equity).")
+
+    # ── Row 2: Net P&L today / 7d / 30d / all (REAL) + paper line ──────────
+    w24, w7, w30, wall = (_exec_perf_window("24h"), _exec_perf_window("7d"),
+                          _exec_perf_window("30d"), _exec_perf_window("all"))
+    # 24h real prefers /performance, falls back to /stats.pnl24h (shared basis).
+    pnl_today = w24.get("totalPnl") if w24 else stats.get("pnl24h")
+    r2 = st.columns(4)
+    r2[0].metric("Net P&L · today", fmt_usd(pnl_today))
+    r2[1].metric("Net P&L · 7d", fmt_usd(w7.get("totalPnl") if w7 else None))
+    r2[2].metric("Net P&L · 30d", fmt_usd(w30.get("totalPnl") if w30 else None))
+    r2[3].metric("Net P&L · all", fmt_usd(wall.get("totalPnl") if wall else stats.get("totalPnL")))
+
+    r3 = st.columns(4)
+    r3[0].metric("Win rate · all", fmt_pct(wall.get("winRate") if wall else stats.get("winRate")))
+    r3[1].metric("Expectancy · all", fmt_usd(wall.get("expectancy") if wall else None))
+    # New /performance fields — null-guarded.
+    r3[2].metric("Profit factor · all",
+                 fmt_num(wall.get("profitFactor")) if wall.get("profitFactor") is not None else "—")
+    _mdd = wall.get("maxDrawdown")
+    r3[3].metric("Max drawdown · all", fmt_usd(_mdd) if _mdd is not None else "—")
+
+    # Paper performance — ALWAYS a separate line, never blended into real.
+    _pall_paper = (wall.get("paper") or {}) if wall else {}
+    if _pall_paper:
+        st.caption(
+            "🧪 Paper · all-time · "
+            f"P&L {fmt_usd(_pall_paper.get('totalPnl'))} · "
+            f"win {fmt_pct(_pall_paper.get('winRate'))} · "
+            f"trades {_pall_paper.get('totalTrades', 0)}"
+        )
+
+    # ── Asset-class P&L breakdown (REAL, from /performance perAssetClass) ───
+    per_class = wall.get("perAssetClass") if wall else None
+    if per_class:
+        st.markdown("**P&L by asset class · all-time (real)**")
+        # Stable order: known classes first in declared order, then any extras.
+        def _ord(c: str) -> int:
+            keys = list(_ASSET_CLASS_ICON.keys())
+            k = str(c).lower()
+            return keys.index(k) if k in keys else len(keys)
+        rows_ac = sorted(per_class, key=lambda r: _ord(r.get("assetClass")))
+        cols_ac = st.columns(min(len(rows_ac), 5) or 1)
+        for i, rac in enumerate(rows_ac[:5]):
+            cls = str(rac.get("assetClass") or "—").lower()
+            label = _ASSET_CLASS_ICON.get(cls, f"• {cls}")
+            with cols_ac[i]:
+                st.metric(label, fmt_usd(rac.get("totalPnl")))
+                st.caption(
+                    f"{rac.get('trades', 0)} trades · win {fmt_pct(rac.get('winRate'))}"
+                )
+    else:
+        st.caption("P&L by asset class: — (no per-asset-class data yet).")
+
+    # ── Strategy fleet + ML fleet health ──────────────────────────────────
+    fc1, fc2 = st.columns(2)
+    with fc1:
+        st.markdown("**Strategy fleet**")
+        n_live = sum(1 for x in strategies
+                     if str(x.get("execution") or "live").lower() == "live"
+                     and x.get("loaded"))
+        n_shadow = sum(1 for x in strategies
+                       if str(x.get("execution") or "").lower() == "shadow")
+        n_stale = sum(1 for x in strategies if x.get("enabled", True)
+                      and x.get("loaded") and not x.get("running"))
+        n_off = sum(1 for x in strategies
+                    if not x.get("enabled", True) or not x.get("loaded"))
+        sc = st.columns(4)
+        sc[0].metric("Live", n_live)
+        sc[1].metric("Shadow", n_shadow)
+        sc[2].metric("Stale", n_stale)
+        sc[3].metric("Off", n_off)
+        # Best & worst by all-time P&L from /performance perStrategy.
+        per_strat = (wall.get("perStrategy") if wall else None) or []
+        graded = [r for r in per_strat if r.get("totalPnl") is not None]
+        if graded:
+            best = max(graded, key=lambda r: r["totalPnl"])
+            worst = min(graded, key=lambda r: r["totalPnl"])
+            st.caption(
+                f"🥇 Best: **{best.get('name', '?')}** {fmt_usd(best.get('totalPnl'))} · "
+                f"🥉 Worst: **{worst.get('name', '?')}** {fmt_usd(worst.get('totalPnl'))}"
+            )
+        else:
+            st.caption("Best / worst strategy: — (no per-strategy P&L yet).")
+    with fc2:
+        st.markdown("**ML fleet**")
+        reg, reg_err = _fetch("/api/bot/ml/registry")
+        rows_reg = (reg or {}).get("rows", []) if not reg_err else []
+        def _stage_of(r: dict) -> str:
+            return str(r.get("target_deployment_stage") or r.get("stage") or "").lower()
+        n_adv = sum(1 for r in rows_reg
+                    if _stage_of(r) in ("advisory", "limited_live", "live_approved"))
+        n_sh = sum(1 for r in rows_reg if _stage_of(r) == "shadow")
+        n_cand = sum(1 for r in rows_reg
+                     if _stage_of(r) in ("candidate", "research_only", "backtest_approved"))
+        n_dis = sum(1 for r in rows_reg
+                    if _stage_of(r) in ("", "offline", "disabled", "parked"))
+        mc = st.columns(4)
+        mc[0].metric("Advisory", n_adv)
+        mc[1].metric("Shadow", n_sh)
+        mc[2].metric("Candidate", n_cand)
+        mc[3].metric("Disabled", n_dis)
+        # Last training time — newest ts across sessions / cycle events.
+        last_train = None
+        sess, serr = _fetch("/api/bot/ml/sessions")
+        for srow in ((sess or {}).get("sessions", []) if not serr else []):
+            tsv = srow.get("ts")
+            if tsv and (last_train is None or str(tsv) > str(last_train)):
+                last_train = tsv
+        if last_train is None:
+            cyc, cerr = _fetch("/api/bot/ml/cycle?limit=50")
+            for crow in ((cyc or {}).get("rows", []) if not cerr else []):
+                tsv = crow.get("ts")
+                if tsv and (last_train is None or str(tsv) > str(last_train)):
+                    last_train = tsv
+        st.caption(f"Last training: {last_train or '—'}"
+                   + ("" if rows_reg else " · registry unavailable"))
+
+    st.divider()
+
+
 def _render_strategy_snapshot(frame: pd.DataFrame) -> None:
     """Compact per-strategy line for the Overview snapshot."""
     data, err = _fetch("/api/bot/strategies")
@@ -1574,6 +1841,11 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     s  = stats or {}
     vm = s.get("vmHealth") or {}
 
+    # ── Executive ("CEO") summary band — at-a-glance system health + business
+    # performance, real money kept strictly separate from paper/prop. The
+    # detailed sections below are unchanged.
+    _render_exec_summary(s)
+
     # M13 S1: surface the latest analyst summary at the top of the page.
     # Silent no-op when /api/bot/insights/* isn't deployed yet OR the
     # generator hasn't written its first cache file — see
@@ -1586,25 +1858,43 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     # metrics, with paper riding directly below as a labeled caption. 24h real is
     # the true rolling-24h close-time figure from /performance (falls back to
     # stats.pnl24h). Real and paper are NEVER summed (canonical P4).
+    # 24h PnL · real shares its close-time basis with /performance now that the
+    # bot fixed /stats.pnl24h to rolling-24h (was calendar-day) — so prefer
+    # /performance?window=24h (one label = one basis) and fall back to
+    # /stats.pnl24h only when /performance is unavailable. The new envelope
+    # `error` flag means a real DB failure (false on a genuine-empty window).
     hb_perf24, hb_perf24_err = _fetch("/api/bot/performance?window=24h")
     hb_perf24 = hb_perf24 if isinstance(hb_perf24, dict) else {}
-    if hb_perf24_err or "totalPnl" not in hb_perf24:
-        hb_real_24h = s.get("pnl24h")
-        hb_paper_24h = None
-    else:
+    _perf24_ok = (not hb_perf24_err) and (not hb_perf24.get("error")) \
+        and ("totalPnl" in hb_perf24)
+    if _perf24_ok:
         hb_real_24h = hb_perf24.get("totalPnl")
         hb_paper_24h = (hb_perf24.get("paper") or {}).get("totalPnl")
+    else:
+        hb_real_24h = s.get("pnl24h")
+        hb_paper_24h = None
     # Authoritative all-time Total PnL + Win rate come from
     # /performance?window=all (uncapped SQL: winners/closed×100), NOT /stats —
     # whose winRate has a denominator discrepancy (live diag 2026-06-19: real
     # 25.6% via /performance vs 6.3% via /stats). Fall back to /stats only when
-    # /performance is unavailable so the headline is never blank.
+    # /performance is unavailable (or reports a DB error) so the headline is
+    # never blank and never shows a fabricated $0.00:
+    #   - envelope `error:true` (real DB failure) → use /stats
+    #   - genuine-empty (totalTrades==0) but /stats reports a non-zero
+    #     totalPnL → the all-window aggregate is stale/partial, so prefer the
+    #     /stats figure rather than render performance's $0.00.
     hb_paper = s.get("paper") or {}
     hb_all, hb_all_err = _fetch("/api/bot/performance?window=all")
     hb_all = hb_all if isinstance(hb_all, dict) else {}
-    hb_all_ok = (not hb_all_err) and ("winRate" in hb_all)
+    _all_db_error = bool(hb_all.get("error"))
+    hb_all_ok = (not hb_all_err) and (not _all_db_error) and ("winRate" in hb_all)
     hb_all_paper = (hb_all.get("paper") or {}) if hb_all_ok else {}
-    hb_real_total = hb_all.get("totalPnl") if hb_all_ok else s.get("totalPnL")
+    _stats_total = s.get("totalPnL")
+    _perf_empty = hb_all_ok and not (hb_all.get("totalTrades") or 0)
+    if hb_all_ok and not (_perf_empty and _stats_total):
+        hb_real_total = hb_all.get("totalPnl")
+    else:
+        hb_real_total = _stats_total
     hb_real_wr = hb_all.get("winRate") if hb_all_ok else s.get("winRate")
     hb_paper_total = hb_all_paper.get("totalPnl") if hb_all_ok else hb_paper.get("totalPnL")
     hb_paper_wr = hb_all_paper.get("winRate") if hb_all_ok else hb_paper.get("winRate")
@@ -1650,7 +1940,11 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     # Trade-context overlays are symbol-agnostic on the wire — fetch each once
     # and let render_tv_chart filter per symbol, rather than re-fetching per chart.
     sig_data, _ = _fetch("/api/bot/signals")
-    trade_data, _ = _fetch(f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}")
+    # include_paper=true so PAPER closed-trade markers render on the charts too
+    # (the charts already draw paper open positions) — markers are visual
+    # context, not a real-money aggregate, so mixing classes here is fine.
+    trade_data, _ = _fetch(
+        f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}&include_paper=true")
 
     def _pos_caption(p: dict) -> str:
         # "SIDE qty @ entry · strategy · acct [· 🧪 paper]" — pattern is
@@ -1682,26 +1976,32 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             # uses include_paper=true). NEVER blend them: split by account class
             # so the primary "Live PnL" metric is real-money only, and paper
             # rides as a separate labeled metric when any paper leg exists.
-            real_legs = [p for p in sym_positions
-                         if _row_account_class(p) == "real_money"]
+            real_legs = [p for p in sym_positions if _is_real_money(p)]
             paper_legs = [p for p in sym_positions
                           if _row_account_class(p) == "paper"]
-            real_pnl = sum(_position_upnl(p) for p in real_legs)
-            paper_pnl = sum(_position_upnl(p) for p in paper_legs)
+            real_pnl, real_unk = _sum_upnl(real_legs)
+            paper_pnl, paper_unk = _sum_upnl(paper_legs)
+            real_known = len(real_legs) - real_unk
             if paper_legs:
                 pc1, pc1b, pc2 = st.columns([1, 1, 2])
             else:
                 pc1, pc2 = st.columns([1, 3])
                 pc1b = None
             if real_legs:
-                pc1.metric(f"Live PnL · {ov_symbol}", fmt_usd(real_pnl),
-                           delta=round(real_pnl, 2))
+                pc1.metric(f"Live PnL · {ov_symbol}",
+                           _upnl_metric(real_pnl, real_known, real_unk),
+                           delta=round(real_pnl, 2) if real_known else None)
             else:
                 pc1.metric(f"Live PnL · {ov_symbol}", "—")
             if pc1b is not None:
-                pc1b.metric(f"🧪 Paper PnL · {ov_symbol}", fmt_usd(paper_pnl),
-                            delta=round(paper_pnl, 2))
+                paper_known = len(paper_legs) - paper_unk
+                pc1b.metric(f"🧪 Paper PnL · {ov_symbol}",
+                            _upnl_metric(paper_pnl, paper_known, paper_unk),
+                            delta=round(paper_pnl, 2) if paper_known else None)
             pc2.caption(" · ".join(_pos_caption(p) for p in sym_positions))
+            _unk_cap = _upnl_caption(real_unk + paper_unk)
+            if _unk_cap:
+                st.caption("⚠️ " + _unk_cap)
 
         if candles_err:
             st.warning(f"{ov_symbol}: candles unavailable: {candles_err}")
@@ -1768,7 +2068,11 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             # unrealizedPnl (broker-truth or markprice_local; ict-trading-bot
             # #3761). No client-side recompute — the old (price-entry)*qty was
             # multiplier-blind for futures (BL-20260616-DASH-UPNL-MULTIPLIER).
-            pdf["uPnL"] = [_position_upnl(p) for p in pos_sorted]
+            # A leg whose value is "unavailable" renders "—", never a fake $0.
+            def _upnl_cell(p: dict) -> str:
+                v, known = _open_upnl(p)
+                return fmt_usd(v) if known else "—"
+            pdf["uPnL"] = [_upnl_cell(p) for p in pos_sorted]
             # Clear paper/real label derived from accountClass (isDemo fallback).
             pdf["Type"] = [
                 "🧪 paper" if _row_account_class(p) == "paper" else "real"
@@ -1829,7 +2133,9 @@ PERF_INTERVALS = ["5m", "15m", "1h", "4h", "1d"]
 
 
 def _positions_for_symbol(symbol: str) -> tuple[list[dict], str | None]:
-    rows, err = _fetch("/api/bot/positions")
+    # include_paper=true so a paper open trade on this symbol (e.g. IBKR
+    # ib_paper MGC/MHG) draws its entry/SL/TP lines on the chart too.
+    rows, err = _fetch("/api/bot/positions?include_paper=true")
     if err:
         return [], err
     return [p for p in (rows or []) if str(p.get("symbol")) == symbol], None
@@ -1845,15 +2151,17 @@ def _render_open_trade_header(
         )
         return
     # uPnL straight from the API's multiplier-aware unrealizedPnl
-    # (broker-truth or markprice_local; ict-trading-bot #3761).
-    net_pnl = sum(_position_upnl(p) for p in positions)
+    # (broker-truth or markprice_local; ict-trading-bot #3761). Legs whose
+    # value is "unavailable" are excluded from the sum (not summed as $0).
+    net_pnl, net_unk = _sum_upnl(positions)
+    net_known = len(positions) - net_unk
     p = positions[0]  # primary leg for the detail metrics
     side = str(p.get("side", "")).upper() or "—"
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("Open legs", len(positions))
     c2.metric(
-        "Live PnL", fmt_usd(net_pnl),
-        delta=round(net_pnl, 2) if net_pnl else None,
+        "Live PnL", _upnl_metric(net_pnl, net_known, net_unk),
+        delta=round(net_pnl, 2) if (net_known and net_pnl) else None,
     )
     c3.metric("Side · Qty", f"{side} · {p.get('qty', '—')}")
     c4.metric("Entry", fmt_num(p.get("entryPrice")))
@@ -1904,7 +2212,10 @@ def _add_signal_markers(fig: go.Figure, symbol: str, last_price: float) -> None:
 
 
 def _add_closed_trade_markers(fig: go.Figure, symbol: str) -> None:
-    trades, tr_err = _fetch(f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}")
+    # include_paper=true so a paper closed trade on this symbol still draws its
+    # entry/exit markers (visual context, not a real-money aggregate).
+    trades, tr_err = _fetch(
+        f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}&include_paper=true")
     if tr_err or not trades:
         return
     tdf = pd.DataFrame(trades)
@@ -2133,35 +2444,81 @@ def page_accounts() -> None:
     positions, _ = _fetch("/api/bot/positions?include_paper=true")
     positions = positions or []
 
+    # Surface config load errors as a banner rather than silently rendering
+    # an empty/partial account roster.
+    _cfg_errs = cfg.get("config_load_errors") or []
+    if _cfg_errs:
+        if isinstance(_cfg_errs, (list, tuple)):
+            st.warning("⚠️ Config load errors:\n" + "\n".join(
+                f"- {e}" for e in _cfg_errs))
+        else:
+            st.warning(f"⚠️ Config load errors: {_cfg_errs}")
+
     # ── Header band: portfolio balance + open exposure ─────────────────────
     # Real-money accounts PRIMARY (tracked balance + open count + uPnL), paper
-    # SECONDARY — never blended. Balances are the bot's tracked snapshots.
-    def _acct_is_paper(a: dict) -> bool:
-        return str(a.get("account_class") or "real_money").lower() == "paper"
-    _real_ids = {a.get("id") for a in accounts if not _acct_is_paper(a)}
-    _paper_ids = {a.get("id") for a in accounts if _acct_is_paper(a)}
+    # SECONDARY — never blended. Prop-firm accounts are NOT real money and are
+    # excluded from the real headline (they ride the "prop" sub-block).
+    # Balances are the bot's tracked snapshots.
+    def _acct_class(a: dict) -> str:
+        return str(a.get("account_class") or "real_money").lower()
+    _real_ids = {a.get("id") for a in accounts
+                 if _acct_class(a) not in _NON_REAL_CLASSES}
+    _paper_ids = {a.get("id") for a in accounts if _acct_class(a) == "paper"}
+    _prop_ids = {a.get("id") for a in accounts if _acct_class(a) == "prop"}
 
-    def _bal_sum(ids: set) -> float:
-        return sum(float((balances.get(i) or {}).get("balance") or 0) for i in ids)
+    def _bal_sum(ids: set) -> tuple[float, int, int]:
+        """(sum of PRESENT balances, n_present, n_missing) — a missing balance
+        is excluded from the sum, never summed as 0."""
+        total = 0.0
+        present = missing = 0
+        for i in ids:
+            b = (balances.get(i) or {}).get("balance")
+            if b is None:
+                missing += 1
+                continue
+            try:
+                total += float(b)
+                present += 1
+            except (TypeError, ValueError):
+                missing += 1
+        return total, present, missing
+
+    def _bal_metric(ids: set) -> str:
+        total, present, _ = _bal_sum(ids)
+        return fmt_usd(total) if present else "—"
 
     def _open_count(ids: set) -> int:
         return sum(1 for p in positions if p.get("account") in ids)
 
-    def _upnl_sum(ids: set) -> float:
-        return sum(_position_upnl(p) for p in positions if p.get("account") in ids)
+    def _upnl_metric_for(ids: set) -> str:
+        legs = [p for p in positions if p.get("account") in ids]
+        total, unk = _sum_upnl(legs)
+        return _upnl_metric(total, len(legs) - unk, unk)
 
     _render_header_band(
         real=[
-            ("Real balance", fmt_usd(_bal_sum(_real_ids))),
+            ("Real balance", _bal_metric(_real_ids)),
             ("Open · real", _open_count(_real_ids)),
-            ("uPnL · real", fmt_usd(_upnl_sum(_real_ids))),
+            ("uPnL · real", _upnl_metric_for(_real_ids)),
         ],
-        paper=[
-            ("balance", fmt_usd(_bal_sum(_paper_ids))),
+        paper=([
+            ("balance", _bal_metric(_paper_ids)),
             ("open", _open_count(_paper_ids)),
-            ("uPnL", fmt_usd(_upnl_sum(_paper_ids))),
-        ] if _paper_ids else None,
+            ("uPnL", _upnl_metric_for(_paper_ids)),
+        ] if _paper_ids else None),
     )
+    # Prop-firm accounts: kept strictly separate from real money.
+    if _prop_ids:
+        _pt, _pp, _pm = _bal_sum(_prop_ids)
+        st.caption(
+            f"🏦 Prop · balance {fmt_usd(_pt) if _pp else '—'} · "
+            f"open {_open_count(_prop_ids)} · uPnL {_upnl_metric_for(_prop_ids)}"
+        )
+    # Caption when any real-money balance is missing from the snapshot.
+    _r_total, _r_present, _r_missing = _bal_sum(_real_ids)
+    if _r_missing:
+        st.caption(f"⚠️ {_r_missing} real-money account(s) have no tracked "
+                   "balance snapshot yet (excluded from the Real balance sum).")
     st.divider()
 
     since_7d = (dt.datetime.utcnow() - dt.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -2182,10 +2539,11 @@ def page_accounts() -> None:
         bal_val = (balances.get(aid) or {}).get("balance")
         acc_positions = [p for p in positions if p.get("account") == aid]
         # uPnL straight from the API's multiplier-aware unrealizedPnl
-        # (broker-truth or markprice_local; ict-trading-bot #3761). A position
-        # whose value is "unavailable" contributes 0 to this account-level
-        # summary (the API no longer leaves futures uPnL multiplier-blind).
-        unrealized = sum(_position_upnl(p) for p in acc_positions)
+        # (broker-truth or markprice_local; ict-trading-bot #3761). A leg whose
+        # value is "unavailable" is EXCLUDED from this sum (not counted as $0);
+        # the metric shows "—" when no leg has a known value.
+        unrealized, unrealized_unk = _sum_upnl(acc_positions)
+        unrealized_known = len(acc_positions) - unrealized_unk
 
         # 30-day realised-PnL history via the no-session, account-filtered
         # endpoint. Rows are `{date, pnl, trades}` — `pnl`, not `realizedPnl`
@@ -2215,9 +2573,12 @@ def page_accounts() -> None:
             m1, m2, m3, m4, m5 = st.columns(5)
             m1.metric("Balance",        fmt_usd(bal_val) if bal_val is not None else "—")
             m2.metric("Realized · 30d", fmt_usd(realized))
-            m3.metric("Unrealized",     fmt_usd(unrealized) if acc_positions else "—")
+            m3.metric("Unrealized",     _upnl_metric(unrealized, unrealized_known, unrealized_unk))
             m4.metric("Open trades",    len(acc_positions))
             m5.metric("Trades · 30d",   trades_30d)
+            _acc_unk_cap = _upnl_caption(unrealized_unk)
+            if _acc_unk_cap:
+                st.caption("⚠️ " + _acc_unk_cap)
 
             fig = build_daily_pnl_fig(ph, height=220)
             if fig is not None:
@@ -2257,43 +2618,68 @@ _CLOSED_WINDOWS = {"Last 24h": 1, "Last 7 days": 7, "Last 30 days": 30,
                    "All": 3650}
 
 
-def page_positions() -> None:
-    st.header("Positions")
-    st.caption("Live open positions on top; the closed-position history below. "
-               "Use the segment picker to switch between real money and paper.")
+def _trade_card_join_data() -> tuple[dict[str, dict], list[dict]]:
+    """Fetch the order-package + signal join data the detail cards overlay.
 
-    segment = _segment_picker("pos_segment")
-
-    # ── Header band: open exposure (real PRIMARY, paper SECONDARY) ──────────
-    # Computed over ALL open positions (both classes), independent of the
-    # segment picker, so the headline never reads as dead when only paper is on.
-    _open_all, _ = _fetch("/api/bot/positions?include_paper=true")
-    _open_all = _open_all or []
-    _real_open = [p for p in _open_all if _row_account_class(p) == "real_money"]
-    _paper_open = [p for p in _open_all if _row_account_class(p) == "paper"]
-    _render_header_band(
-        real=[
-            ("Open · real", len(_real_open)),
-            ("Unrealized PnL · real",
-             fmt_usd(sum(_position_upnl(p) for p in _real_open))),
-        ],
-        paper=[
-            ("open", len(_paper_open)),
-            ("uPnL", fmt_usd(sum(_position_upnl(p) for p in _paper_open))),
-        ],
-    )
-    st.divider()
-
-    # Join data for the trade cards — all fast journal/DB pulls now that the
-    # per-model ML scores are persisted ON the order package (modelScores),
-    # so there's no slow shadow-log recompile. order-packages carries the
-    # reasoning AND the model scores; signals adds the triggering-signal
-    # correlation. Fetched concurrently, time-boxed.
+    All fast journal/DB pulls now that the per-model ML scores are persisted ON
+    the order package (``modelScores``) — no slow shadow-log recompile.
+    order-packages carries the reasoning AND the model scores; signals adds the
+    triggering-signal correlation. Fetched concurrently, time-boxed.
+    """
     _op_path = "/api/bot/order-packages?" + urlencode({"limit": 50, "include_paper": "true"})
     _sig_path = "/api/bot/signals"
     _joins = _fetch_parallel([_op_path, _sig_path], timeout=6.0)
     op_map = _order_package_map(_joins.get(_op_path, (None, None))[0])
     signals = _joins.get(_sig_path, (None, None))[0] or []
+    return op_map, signals
+
+
+def page_positions() -> None:
+    """OPEN positions only — full detail cards. Closed-trade history is the
+    separate **Trades** page (split out 2026-06-20 to mirror the Android app,
+    where Positions and Trades are distinct views)."""
+    st.header("Positions")
+    st.caption("Live OPEN positions — full detail cards. Closed-trade history "
+               "lives on the separate **Trades** page. Use the segment picker "
+               "to switch between real money and paper.")
+
+    segment = _segment_picker("pos_segment")
+
+    # ── Header band: open exposure (real PRIMARY, paper SECONDARY) ──────────
+    # Computed over ALL open positions (every class), independent of the
+    # segment picker, so the headline never reads as dead when only paper is on.
+    _open_all, _ = _fetch("/api/bot/positions?include_paper=true")
+    _open_all = _open_all or []
+    # Prop is NOT real money — exclude it from the real headline (it rides the
+    # prop caption below). paper / prop both kept separate from real.
+    _real_open = [p for p in _open_all if _is_real_money(p)]
+    _paper_open = [p for p in _open_all if _row_account_class(p) == "paper"]
+    _prop_open = [p for p in _open_all if _row_account_class(p) == "prop"]
+    _real_upnl, _real_unk = _sum_upnl(_real_open)
+    _paper_upnl, _paper_unk = _sum_upnl(_paper_open)
+    _render_header_band(
+        real=[
+            ("Open · real", len(_real_open)),
+            ("Unrealized PnL · real",
+             _upnl_metric(_real_upnl, len(_real_open) - _real_unk, _real_unk)),
+        ],
+        paper=[
+            ("open", len(_paper_open)),
+            ("uPnL", _upnl_metric(_paper_upnl, len(_paper_open) - _paper_unk, _paper_unk)),
+        ],
+    )
+    if _prop_open:
+        _prop_upnl, _prop_unk = _sum_upnl(_prop_open)
+        st.caption(
+            f"🏦 Prop · open {len(_prop_open)} · uPnL "
+            + _upnl_metric(_prop_upnl, len(_prop_open) - _prop_unk, _prop_unk)
+        )
+    _pos_unk_cap = _upnl_caption(_real_unk + _paper_unk)
+    if _pos_unk_cap:
+        st.caption("⚠️ " + _pos_unk_cap)
+    st.divider()
+
+    op_map, signals = _trade_card_join_data()
 
     st.subheader("Open")
     rows, err = _fetch("/api/bot/positions?include_paper=true")
@@ -2314,7 +2700,17 @@ def page_positions() -> None:
                     p, is_open=True, op_map=op_map, signals=signals,
                 )
 
-    st.subheader("Closed positions")
+
+def page_trades() -> None:
+    """Closed-trade HISTORY — the window selector + clickable rows → detail
+    card. Split from Positions (open) 2026-06-20 to mirror the Android app."""
+    st.header("Trades")
+    st.caption("Closed-trade history. Pick a window and segment; click a row "
+               "for the full trade card. Open positions live on **Positions**.")
+
+    segment = _segment_picker("trades_segment")
+    op_map, signals = _trade_card_join_data()
+
     wlabel = st.selectbox("History window", list(_CLOSED_WINDOWS), index=1,
                           key="pos_closed_win")
     days = _CLOSED_WINDOWS[wlabel]
@@ -2641,6 +3037,17 @@ def _render_trade_card(
                 fmt_usd(upnl) if upnl_known else "—",
                 delta=round(upnl, 2) if (upnl_known and upnl) else None,
             )
+            # Surface where the uPnL figure came from: broker truth vs a
+            # server-side mark-price compute vs unavailable (broker read
+            # failed and no mark price → the "—" above).
+            _src = str(trade.get("unrealizedPnlSource") or "").lower()
+            _src_lbl = {
+                "broker": "🛰️ broker truth",
+                "markprice_local": "📐 mark-price (local compute)",
+                "unavailable": "⚠️ unavailable (broker read failed, no mark price)",
+            }.get(_src)
+            if _src_lbl:
+                h2.caption(f"uPnL source: {_src_lbl}")
         else:
             rp = trade.get("realizedPnl")
             h2.metric("Realized PnL", fmt_usd(rp) if rp is not None else "—")
@@ -3619,11 +4026,14 @@ def page_promotion() -> None:
                 m1.metric("Verdict", f"{vcol} {verdict}")
                 m2.metric("KS", fmt_num(d.get("ks")))
                 m3.metric("PSI", fmt_num(d.get("psi")))
+                # Only a real shift when BOTH means are present — coercing a
+                # null mean to 0 fabricates a "shift" of the other mean's value.
+                _ref_mean = d.get("reference_mean")
+                _cur_mean = d.get("current_mean")
                 m4.metric(
                     "Mean shift",
-                    fmt_num(
-                        (d.get("current_mean") or 0) - (d.get("reference_mean") or 0)
-                    ),
+                    fmt_num(_cur_mean - _ref_mean)
+                    if (_ref_mean is not None and _cur_mean is not None) else "—",
                 )
                 st.caption(
                     f"Reference {fmt_num(d.get('reference_mean'))}±"
@@ -4766,6 +5176,7 @@ def main() -> None:
         "Insights":      page_insights,
         "Accounts":      page_accounts,
         "Positions":     page_positions,
+        "Trades":        page_trades,
         "Signals":       page_signals,
         "News":          page_news,
         "Exit Ladder":   page_exit_ladder,
