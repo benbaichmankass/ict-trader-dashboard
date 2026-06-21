@@ -194,6 +194,36 @@ def _fetch(path: str) -> tuple[Any, str | None]:
         return None, f"Bad JSON from {path}: {e}"
 
 
+def _post(path: str, json_data: dict) -> tuple[Any, str | None]:
+    """POST JSON to a bot API endpoint (NOT cached — it mutates).
+
+    Sends the ``DASHBOARD_API_TOKEN`` bearer when one is configured (the bot
+    gates the prop ingest on it). Returns ``(json_or_None, error_or_None)``.
+    """
+    url = f"{BOT_API}{path}"
+    headers = {}
+    token = _cfg("DASHBOARD_API_TOKEN").strip()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        r = requests.post(url, json=json_data, headers=headers, timeout=TIMEOUT_S)
+        r.raise_for_status()
+        return r.json(), None
+    except requests.HTTPError as e:
+        detail = ""
+        try:
+            detail = f" — {e.response.json().get('detail', '')}"
+        except Exception:  # noqa: BLE001
+            pass
+        return None, f"HTTP {e.response.status_code} on {path}{detail}"
+    except requests.Timeout:
+        return None, f"Timed out after {TIMEOUT_S}s on {path}"
+    except requests.RequestException as e:
+        return None, f"Network error on {path}: {e}"
+    except ValueError as e:
+        return None, f"Bad JSON from {path}: {e}"
+
+
 def _fetch_parallel(
     paths: list[str], timeout: float = TIMEOUT_S
 ) -> dict[str, tuple[Any, str | None]]:
@@ -395,6 +425,7 @@ PAGES = [
     # routing → decisions/fills → raw feed; then ops/diagnostics; then dev tools.
     "Overview", "Performance", "Insights", "Strategies", "Models", "Accounts",
     "Order Packages", "Positions", "Trades", "Signals", "News", "Exit Ladder",
+    "Prop",
     "Backtesting", "Promotion", "Health",
     "Data Explorer", "Logs",
 ]
@@ -5603,6 +5634,188 @@ def page_exit_ladder() -> None:
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True, height=560)
 
 
+def _money(v: Any) -> str:
+    """Format a USD figure, em-dash for null."""
+    if v is None:
+        return "—"
+    try:
+        return f"${float(v):,.2f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def page_prop() -> None:
+    """Breakout prop manual-bridge — the inbound report-back loop (P2/P3).
+
+    The prop account has no broker API, so the bot only learns a prop trade's
+    fill / close when the executor (or operator) posts it back. This tab shows
+    the rule-distance to the account-killer limits, lets you submit a
+    fill/close or account-status report, and renders the prop journal +
+    un-acted tickets. Reads `/api/bot/prop/{status,fills,tickets,reconcile}`;
+    posts to `/api/bot/prop/report`.
+    """
+    st.header("Prop")
+    st.caption(
+        "Breakout 1-Step manual bridge. The bot emits the ticket; you/the "
+        "executor place it on the DXTrade terminal and report the fill/close "
+        "back here. Prop is a third funding class — tracked separately, never "
+        "blended into real-money or paper KPIs."
+    )
+    account_id = st.text_input("Account", value="breakout_1", key="prop_account")
+
+    # ── Rule-distance panel (distance to the account-killer limits) ──
+    status_payload, status_err = _fetch(f"/api/bot/prop/status?account_id={account_id}")
+    if status_err:
+        st.warning(status_err)
+    elif isinstance(status_payload, dict):
+        rd = status_payload.get("rule_distance") or {}
+        st.subheader("Rule distance")
+        if not status_payload.get("present"):
+            st.info(
+                "No account-status snapshot yet — submit one below (balance / "
+                "equity / today's P&L) to compute distance to the limits."
+            )
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Equity", _money(rd.get("equity")))
+        dd = rd.get("distance_to_dd_floor_usd")
+        c2.metric("→ DD floor", _money(dd),
+                  help=f"Static-DD floor {_money(rd.get('static_dd_floor_usd'))} "
+                       "(breach permanently disables the account)")
+        dl = rd.get("distance_to_daily_loss_usd")
+        c3.metric("→ Daily-loss", _money(dl),
+                  help=f"Daily-loss limit {_money(rd.get('daily_loss_limit_usd'))}")
+        c4.metric("Day P&L", _money(rd.get("day_pnl")))
+        # Loud warning as either cushion thins.
+        for label, val in (("static-drawdown floor", dd), ("daily-loss limit", dl)):
+            if isinstance(val, (int, float)) and val <= 0:
+                st.error(f"⛔ BREACHED the {label} ({_money(val)} cushion).")
+            elif isinstance(val, (int, float)) and val < 50:
+                st.warning(f"⚠ Thin cushion to the {label}: {_money(val)} left.")
+        if rd.get("as_of"):
+            st.caption(f"As of {rd['as_of']}")
+
+    # ── Report-back form ──
+    st.subheader("Report a fill / close")
+    with st.form("prop_close_form", clear_on_submit=False):
+        cc = st.columns(4)
+        f_symbol = cc[0].text_input("Symbol", value="SOLUSDT")
+        f_dir = cc[1].selectbox("Direction", ["long", "short"], index=0)
+        f_status = cc[2].selectbox("Status", ["closed", "open", "skipped"], index=0)
+        f_reason = cc[3].text_input("Reason", value="tp")
+        cn = st.columns(4)
+        f_entry = cn[0].text_input("Entry price", value="")
+        f_exit = cn[1].text_input("Exit price", value="")
+        f_qty = cn[2].text_input("Qty", value="")
+        f_pnl = cn[3].text_input("PnL ($)", value="")
+        submitted = st.form_submit_button("Submit fill/close report")
+        if submitted:
+            report: dict[str, Any] = {
+                "account_id": account_id, "symbol": f_symbol,
+                "direction": f_dir, "status": f_status, "reason": f_reason,
+            }
+            for key, raw in (("entry_price", f_entry), ("exit_price", f_exit),
+                             ("qty", f_qty), ("pnl", f_pnl)):
+                if str(raw).strip():
+                    try:
+                        report[key] = float(raw)
+                    except ValueError:
+                        st.error(f"{key} must be a number, got {raw!r}")
+                        report = {}
+                        break
+            if report:
+                res, err = _post("/api/bot/prop/report", report)
+                if err:
+                    st.error(err)
+                else:
+                    st.success(f"Reported: {res}")
+                    _fetch.clear()
+
+    with st.expander("Submit an account-status snapshot (drives rule-distance)"):
+        with st.form("prop_status_form", clear_on_submit=False):
+            sc = st.columns(4)
+            s_bal = sc[0].text_input("Balance ($)", value="")
+            s_eq = sc[1].text_input("Equity ($)", value="")
+            s_real = sc[2].text_input("Realized today ($)", value="")
+            s_unreal = sc[3].text_input("Unrealized ($)", value="")
+            s_submit = st.form_submit_button("Submit account status")
+            if s_submit:
+                report = {"kind": "account_status", "account_id": account_id}
+                ok = True
+                for key, raw in (("balance", s_bal), ("equity", s_eq),
+                                 ("realized_today", s_real), ("unrealized", s_unreal)):
+                    if str(raw).strip():
+                        try:
+                            report[key] = float(raw)
+                        except ValueError:
+                            st.error(f"{key} must be a number, got {raw!r}")
+                            ok = False
+                            break
+                if ok:
+                    res, err = _post("/api/bot/prop/report", report)
+                    if err:
+                        st.error(err)
+                    else:
+                        st.success("Account status recorded.")
+                        _fetch.clear()
+
+    with st.expander("Advanced — raw JSON report"):
+        st.caption(
+            "Posts verbatim to /api/bot/prop/report. A fill/close needs "
+            "account_id + symbol + status; an account-status needs "
+            'kind:"account_status" + account_id.'
+        )
+        raw_json = st.text_area("Report JSON", value="", height=120, key="prop_raw")
+        if st.button("POST raw JSON"):
+            try:
+                parsed = json.loads(raw_json)
+            except (ValueError, TypeError) as exc:
+                st.error(f"Invalid JSON: {exc}")
+            else:
+                res, err = _post("/api/bot/prop/report", parsed)
+                st.error(err) if err else st.success(f"Reported: {res}")
+                if not err:
+                    _fetch.clear()
+
+    # ── Un-acted tickets (P3 drift) ──
+    recon, recon_err = _fetch(f"/api/bot/prop/reconcile?account_id={account_id}")
+    if not recon_err and isinstance(recon, dict):
+        summ = recon.get("summary") or {}
+        st.subheader("Reconciliation")
+        rc = st.columns(3)
+        rc[0].metric("Tickets emitted", summ.get("tickets_total", 0))
+        rc[1].metric("Fills reported", summ.get("fills_total", 0))
+        rc[2].metric("Un-acted tickets", summ.get("unacted_count", 0))
+        unacted = recon.get("unacted_tickets") or []
+        if unacted:
+            st.warning(
+                f"{len(unacted)} ticket(s) emitted, past validity, with no "
+                "fill reported back — placed-but-unreported, or never acted on."
+            )
+            st.dataframe(pd.DataFrame(unacted), hide_index=True,
+                         use_container_width=True)
+
+    # ── Journal: fills + outbound tickets ──
+    st.subheader("Fills (inbound)")
+    fills, fills_err = _fetch(f"/api/bot/prop/fills?account_id={account_id}&limit=200")
+    if fills_err:
+        st.warning(fills_err)
+    elif isinstance(fills, dict) and fills.get("fills"):
+        st.dataframe(pd.DataFrame(fills["fills"]), hide_index=True,
+                     use_container_width=True, height=320)
+    else:
+        st.caption("No fills reported yet.")
+
+    st.subheader("Tickets (outbound)")
+    tickets, tickets_err = _fetch(f"/api/bot/prop/tickets?account_id={account_id}&limit=200")
+    if tickets_err:
+        st.warning(tickets_err)
+    elif isinstance(tickets, dict) and tickets.get("tickets"):
+        st.dataframe(pd.DataFrame(tickets["tickets"]), hide_index=True,
+                     use_container_width=True, height=320)
+    else:
+        st.caption("No prop tickets emitted yet.")
+
+
 def page_logs() -> None:
     st.header("Logs")
     rows, err = _fetch("/api/bot/logs")
@@ -5642,6 +5855,7 @@ def main() -> None:
         "Signals":       page_signals,
         "News":          page_news,
         "Exit Ladder":   page_exit_ladder,
+        "Prop":          page_prop,
         "Order Packages": page_order_packages,
         "Models":        page_models,
         "Promotion":     page_promotion,
