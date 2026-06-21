@@ -2,7 +2,11 @@
 
 > **Production environment — live money is at risk.** This dashboard renders
 > live trader and trainer state. It is a **read-only consumer** of the bot's
-> REST API and holds no runtime state of its own.
+> REST API and holds no runtime state of its own. **One exception (2026-06-21):**
+> the **Prop** tab POSTs a fill/close or account-status *report* to
+> `/api/bot/prop/report` — an observability write to the prop journal, NOT a
+> live-trade action (it places/modifies no order). That's the only write the
+> dashboard makes.
 
 ## Operating rules live in the bot repo
 
@@ -137,7 +141,7 @@ docs/                  — ad-hoc design notes
 ## Tabs (current)
 
 Sidebar order is operational top-to-bottom: **Overview · Performance · Insights · Strategies ·
-Models · Accounts · Order Packages · Positions · Trades · Signals · News · Exit Ladder** (live/ops), then
+Models · Accounts · Order Packages · Positions · Trades · Signals · News · Exit Ladder · Prop** (live/ops), then
 **Backtesting · Promotion · Health** (diagnostics), then **Data Explorer · Logs**
 (dev tools). The list/registry pages — **Strategies, Models, Accounts** — share a
 uniform **collapsible-row** layout: each row is an `st.expander` whose label is a
@@ -159,6 +163,7 @@ Nested expanders are illegal in Streamlit, so the in-row "Show all" + config use
 | Signals | `/api/bot/signals` |
 | News | `/api/bot/news/recent` — M9 news layer shadow-soak feed: per-actionable-signal news decision (veto / boost / reduce / neutral, `adjustment`, `event_risk`) + applied reductive influence downsizes (`factor`/`action`). Headline counts (decisions / vetoes / boost·reduce / neutral) + a decisions table. Renders an explicit "not active yet" state until the bot's news layer is active — activation is source-driven (`NEWS_SOURCE=rss`, or `newsapi` + `NEWS_API_KEY`; the legacy `NEWS_ENABLED` flag was removed bot-side 2026-06-10) — the log is empty until then. **Read-only.** |
 | Exit Ladder | `/api/bot/exit-ladder/soak` — ExitPlan exit-ladder shadow-soak feed (dynamic-take-profit consistency P3). One row per executed order: the **laddered exit that would be used** (the materialized ExitPlan sized to the order's real qty — partial-TP rungs + final + stop) vs the **single SL/TP target actually placed**. Summary metrics (orders soaked, API/prop split, how many differ + %), a venue filter (All/api/prop), and a flattened per-order table. **Observe-only** — nothing here changes a live exit (graduating the ladder is the backtest-gated P4). Empty until the first live opening order writes a row. **Read-only.** |
+| Prop | `/api/bot/prop/{status,fills,tickets,reconcile}` (GET) + `/api/bot/prop/report` (POST) — **Breakout manual-bridge inbound loop (P2/P3)**. The prop account has no broker API, so the bot only learns a fill/close when the executor/operator reports it back. **Rule-distance panel**: distance to the account-killer limits (daily-loss $150 / static-DD floor $300) computed from the latest account-status snapshot + the prop ruleset; loud `st.error`/`st.warning` as a cushion thins/breaches. A **report-back form** (structured fill/close + an account-status snapshot + a raw-JSON expander) POSTs to `/api/bot/prop/report` via the new `_post` helper (sends the `DASHBOARD_API_TOKEN` bearer when configured; the only write the dashboard makes besides FCM device-registration). A **reconciliation** block (tickets emitted / fills reported / **un-acted tickets** = emitted-but-unreported past validity). Then the journal tables: inbound **fills** + outbound **tickets**. Prop is a third funding class — never blended into real-money/paper KPIs. |
 | Order Packages | `/api/bot/order-packages` + `/api/bot/trades/scores` — **decision-level** table: one row per order package (strategy, symbol, dir, entry/SL/TP, status, PnL) with the per-model shadow scores (joined client-side by `linkedTradeId`) and the Claude decision grade. Replaces the old fill-level "Closed Trades" tab (that list now lives on Positions). Claude column shows — until `/health-review` scores a package. |
 | Models | `/api/bot/ml/*` — per-model cards incl. the manifest `description` |
 | Promotion | `/api/bot/shadow/stats`, `/api/bot/shadow/drift`, `/api/bot/trades/scores`, `/api/bot/trades/closed` — shadow-model promotion-readiness tracker (per-model volume, days-in-shadow, score range, "wired" check, KS/PSI drift, win/loss score edge) |
