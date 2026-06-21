@@ -5663,6 +5663,38 @@ def page_prop() -> None:
     )
     account_id = st.text_input("Account", value="breakout_1", key="prop_account")
 
+    # Fetch the outbound tickets once — drives both the open-trade cards and the
+    # sent-messages log below.
+    tickets_payload, tickets_err = _fetch(
+        f"/api/bot/prop/tickets?account_id={account_id}&limit=200")
+    all_tickets = (
+        (tickets_payload or {}).get("tickets") or []
+        if isinstance(tickets_payload, dict) else []
+    )
+
+    # ── Open prop trades — cards at the very top, each with the trade message ──
+    open_trades = [t for t in all_tickets if str(t.get("status")) == "filled"]
+    if open_trades:
+        st.subheader(f"Open prop trades ({len(open_trades)})")
+        for t in open_trades:
+            sym = t.get("symbol") or "?"
+            direction = str(t.get("direction") or "").upper()
+            with st.container(border=True):
+                st.markdown(f"### {sym} {direction}  ·  {t.get('strategy') or '—'}")
+                m = st.columns(4)
+                m[0].metric("Entry", t.get("entry") if t.get("entry") is not None else "—")
+                m[1].metric("SL", t.get("sl") if t.get("sl") is not None else "—")
+                m[2].metric("TP", t.get("tp") if t.get("tp") is not None else "—")
+                m[3].metric("Qty", t.get("qty") if t.get("qty") is not None else "—")
+                with st.expander("📩 Trade message sent"):
+                    msg = t.get("message")
+                    if msg:
+                        st.code(msg)
+                    else:
+                        st.caption("No message text stored for this ticket "
+                                   "(pre-dates message capture).")
+        st.divider()
+
     # ── Rule-distance panel (distance to the account-killer limits) ──
     status_payload, status_err = _fetch(f"/api/bot/prop/status?account_id={account_id}")
     if status_err:
@@ -5805,13 +5837,26 @@ def page_prop() -> None:
     else:
         st.caption("No fills reported yet.")
 
-    st.subheader("Tickets (outbound)")
-    tickets, tickets_err = _fetch(f"/api/bot/prop/tickets?account_id={account_id}&limit=200")
+    st.subheader("Sent messages (outbound tickets)")
+    st.caption("Every trade-setup ticket the bot sent out, newest first — "
+               "expand a row to see the exact message.")
     if tickets_err:
         st.warning(tickets_err)
-    elif isinstance(tickets, dict) and tickets.get("tickets"):
-        st.dataframe(pd.DataFrame(tickets["tickets"]), hide_index=True,
-                     use_container_width=True, height=320)
+    elif all_tickets:
+        for t in all_tickets:
+            when = t.get("signal_time") or t.get("created_at") or ""
+            sym = t.get("symbol") or "?"
+            direction = str(t.get("direction") or "").upper()
+            status = t.get("status") or "—"
+            with st.expander(f"{when} · {sym} {direction} · {status}"):
+                msg = t.get("message")
+                if msg:
+                    st.code(msg)
+                else:
+                    st.caption("No message text stored for this ticket.")
+                st.json({k: t.get(k) for k in (
+                    "ticket_id", "entry", "sl", "tp", "qty", "risk_usd",
+                    "valid_until", "order_package_id")})
     else:
         st.caption("No prop tickets emitted yet.")
 
