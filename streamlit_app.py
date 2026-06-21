@@ -5644,6 +5644,21 @@ def _money(v: Any) -> str:
         return "—"
 
 
+def _prop_err(err: str | None) -> None:
+    """Render a prop-endpoint error: quiet 'not deployed yet' for 404, warn otherwise.
+
+    A 404 means the bot hasn't deployed the prop endpoints yet — expected during
+    the rollout window, so it shouldn't look like a failure.
+    """
+    if not err:
+        return
+    if "404" in err:
+        st.caption("⏳ Not available on the bot yet — populates once the prop "
+                   "endpoints deploy.")
+    else:
+        st.warning(err)
+
+
 def page_prop() -> None:
     """Breakout prop manual-bridge — the inbound report-back loop (P2/P3).
 
@@ -5672,6 +5687,13 @@ def page_prop() -> None:
         if isinstance(tickets_payload, dict) else []
     )
 
+    if tickets_err and "404" in tickets_err:
+        st.info(
+            "⏳ The prop API endpoints aren't live on the bot yet — they ship "
+            "with the bot update currently deploying. This tab (and the form "
+            "below) populates as soon as it's live; no action needed."
+        )
+
     # ── Open prop trades — cards at the very top, each with the trade message ──
     open_trades = [t for t in all_tickets if str(t.get("status")) == "filled"]
     if open_trades:
@@ -5698,7 +5720,7 @@ def page_prop() -> None:
     # ── Rule-distance panel (distance to the account-killer limits) ──
     status_payload, status_err = _fetch(f"/api/bot/prop/status?account_id={account_id}")
     if status_err:
-        st.warning(status_err)
+        _prop_err(status_err)
     elif isinstance(status_payload, dict):
         rd = status_payload.get("rule_distance") or {}
         st.subheader("Rule distance")
@@ -5830,7 +5852,7 @@ def page_prop() -> None:
     st.subheader("Fills (inbound)")
     fills, fills_err = _fetch(f"/api/bot/prop/fills?account_id={account_id}&limit=200")
     if fills_err:
-        st.warning(fills_err)
+        _prop_err(fills_err)
     elif isinstance(fills, dict) and fills.get("fills"):
         st.dataframe(pd.DataFrame(fills["fills"]), hide_index=True,
                      use_container_width=True, height=320)
@@ -5841,7 +5863,7 @@ def page_prop() -> None:
     st.caption("Every trade-setup ticket the bot sent out, newest first — "
                "expand a row to see the exact message.")
     if tickets_err:
-        st.warning(tickets_err)
+        _prop_err(tickets_err)
     elif all_tickets:
         for t in all_tickets:
             when = t.get("signal_time") or t.get("created_at") or ""
