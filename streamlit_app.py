@@ -2302,6 +2302,40 @@ def _render_strategy_snapshot(frame: pd.DataFrame, hours: int = 24,
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
 
 
+def _news_sentiment(records: list, hours: float) -> tuple[float | None, int]:
+    """Mean `adjustment` (net news sentiment ∈ [-1,1], +=bullish) over records
+    within the last `hours`, plus the count. None when no scored items."""
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=hours)
+    vals = []
+    for r in records or []:
+        ts, adj = r.get("ts"), r.get("adjustment")
+        if ts is None or adj is None:
+            continue
+        try:
+            t = dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=dt.timezone.utc)
+        except ValueError:
+            continue
+        if t >= cutoff:
+            try:
+                vals.append(float(adj))
+            except (TypeError, ValueError):
+                pass
+    return (sum(vals) / len(vals), len(vals)) if vals else (None, 0)
+
+
+def _sentiment_tag(avg: float | None) -> str:
+    """Render an avg sentiment as a colored +/- tag (news is a factor, not y/n)."""
+    if avg is None:
+        return "—"
+    if avg > 0.10:
+        return f"🟢 +{avg:.2f}"
+    if avg < -0.10:
+        return f"🔴 {avg:.2f}"
+    return f"⚪ {avg:+.2f}"
+
+
 def page_overview(stats: dict | None, stats_err: str | None) -> None:
     st.header("Overview")
     if stats_err:
@@ -2428,16 +2462,27 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
                 _goto("Reports")
     with nc:
         with st.container(border=True):
-            st.markdown("**📰 News layer**")
-            ndata, nerr = _fetch("/api/bot/news/recent?limit=50")
+            st.markdown("**📰 News — market sentiment**")
+            ndata, nerr = _fetch("/api/bot/news/recent?limit=500")
             if nerr:
                 st.caption(nerr)
             elif not (ndata or {}).get("present"):
                 st.caption("Not active yet (source-driven: NEWS_SOURCE=rss / newsapi+key).")
             else:
                 recs = (ndata or {}).get("records") or []
-                vetoes = sum(1 for r in recs if str(r.get("decision")).lower() == "veto")
-                st.caption(f"{len(recs)} recent decisions · {vetoes} vetoes")
+                a24, _ = _news_sentiment(recs, 24)
+                a7, _ = _news_sentiment(recs, 24 * 7)
+                a30, n30 = _news_sentiment(recs, 24 * 30)
+                st.caption(
+                    f"Avg sentiment · 24h {_sentiment_tag(a24)} · 7d {_sentiment_tag(a7)} "
+                    f"· 30d {_sentiment_tag(a30)}"
+                )
+                bias = ("bullish" if (a7 or 0) > 0.10 else
+                        "bearish" if (a7 or 0) < -0.10 else "neutral")
+                st.caption(
+                    f"Market read: **{bias}** over 7d · {n30} news-scored signals/30d. "
+                    "Reductive sizing factor (−1…+1), not a y/n veto."
+                )
             if st.button("Open News →", key="ov_card_news",
                          use_container_width=True):
                 _goto("News")
