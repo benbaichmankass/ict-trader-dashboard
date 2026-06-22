@@ -5881,7 +5881,6 @@ _REPORT_GRADE_DOT = {
     "caution": "🟡", "watch": "🟡", "mixed": "🟡",
     "investigate": "🔴", "concern": "🔴",
 }
-_REPORTS_BLOB_BASE = "https://github.com/benbaichmankass/ict-trading-bot/blob/main/"
 
 
 def page_reports() -> None:
@@ -5940,9 +5939,6 @@ def page_reports() -> None:
                         key="reports_pick")
     chosen = rows[pick]
     rid = chosen.get("id")
-    blob = _REPORTS_BLOB_BASE + chosen["html_path"] if chosen.get("html_path") else None
-    if blob:
-        st.markdown(f"[Open on GitHub ↗]({blob})")
 
     detail, derr = _fetch(f"/api/bot/reports/{rid}")
     if derr:
@@ -5952,6 +5948,15 @@ def page_reports() -> None:
     if not body:
         st.caption("Report HTML not available (artifact may not be mirrored yet).")
         return
+    # Download the self-contained HTML so it can be opened/saved in a normal
+    # browser (the repo is private, so a GitHub link would only show source).
+    st.download_button(
+        "⬇ Download HTML (open in your browser)",
+        data=body,
+        file_name=f"{rid or 'system-report'}.html",
+        mime="text/html",
+        use_container_width=True,
+    )
     components.html(body, height=900, scrolling=True)
 
 
