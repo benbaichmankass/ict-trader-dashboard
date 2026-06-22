@@ -426,6 +426,52 @@ PAGES = [
     "Reports", "Data Explorer", "Logs",
 ]
 
+# ── Information architecture: 6 sections, each a landing of summary cards that
+# drill into the existing detail page (2026-06-22 redesign). Principle:
+# overview first, details one click away. Overview is special — its landing IS
+# the exec summary + live monitor (no card grid). Every other section renders a
+# card per sub-page; clicking a card opens that page's existing render fn.
+SECTIONS: dict[str, list[str]] = {
+    "Overview": [],  # special-cased: renders page_overview directly
+    "Performance": ["Performance", "Insights", "Reports"],
+    "Strategies & Models": ["Strategies", "Models", "Exit Ladder", "Backtesting", "Promotion", "News"],
+    "Accounts": ["Accounts", "Prop"],
+    "Activity": ["Positions", "Trades", "Order Packages", "Signals"],
+    "Admin": ["Data Explorer", "Logs", "Health"],
+}
+SECTION_NAMES = list(SECTIONS.keys())
+
+# One-line "what's in here" blurb per sub-page, shown on the section-landing card.
+PAGE_DESC: dict[str, str] = {
+    "Performance": "Analytics deep-dive: equity curve, win-rate, expectancy, per-strategy + per-symbol.",
+    "Insights": "AI-analyst narrative + grade for the book and each strategy.",
+    "Reports": "Consolidated /system-report executive reports (health + trading + ML).",
+    "Strategies": "Live-runtime per-strategy status, routing, P&L curve, review packet.",
+    "Models": "ML fleet — per-model stage, training metric, drift.",
+    "Exit Ladder": "ExitPlan laddered-vs-single-target soak (observe-only).",
+    "Backtesting": "Trainer-VM sweeps + on-demand /test runs.",
+    "Promotion": "Shadow-model promotion-readiness tracker.",
+    "News": "M9 news-layer decisions (veto / boost / reduce) per actionable signal.",
+    "Accounts": "Per-account balance, realised/unrealised P&L, trade log.",
+    "Prop": "Breakout rule-distance cushion, report-back, journal.",
+    "Positions": "Open positions — full detail cards (entry/SL/TP/uPnL + decision).",
+    "Trades": "Closed-trade history (real / paper / all).",
+    "Order Packages": "Decision-level table with model scores + Claude grade.",
+    "Signals": "Recent ICT detections.",
+    "Data Explorer": "Read-only browse of the federated canonical store.",
+    "Logs": "Merged pipeline + outcome log feed.",
+    "Health": "VM / service health + last-tick + snapshot checks.",
+}
+
+
+def _section_for(page: str) -> str:
+    """Return the section that owns a sub-page (default Overview)."""
+    for sec, subs in SECTIONS.items():
+        if page in subs:
+            return sec
+    return "Overview"
+
+
 
 # ── Cross-page navigation + queued widget presets ─────────────────────────────
 #
@@ -452,15 +498,16 @@ def _apply_pending_widget(key: str) -> None:
 
 
 def _goto(page: str, **preset) -> None:
-    """Jump to `page`, optionally presetting target-page widget values.
+    """Jump to a sub-`page` (opening its detail view inside its section).
 
-    `preset` maps {widget_key: value} (e.g. trades_segment="Paper") — note the
-    segment/window controls store their DISPLAY label, not the slug. Queues all
-    presets + the nav page, then reruns so the queued values are applied before
-    the target widgets render."""
+    Resolves the owning section, queues it onto the section radio, sets the
+    detail target (a plain state key, not a widget), applies any target-page
+    widget presets, then reruns. `preset` maps {widget_key: value} (segment/
+    window controls store their DISPLAY label)."""
     for k, v in preset.items():
         _queue_widget(k, v)
-    _queue_widget("nav_page", page)
+    _queue_widget("nav_section", _section_for(page))
+    st.session_state["nav_detail"] = page
     st.rerun()
 
 
@@ -591,16 +638,16 @@ def render_sidebar() -> str:
         st.caption(f"{dt.datetime.utcnow().strftime('%H:%M:%S')} UTC")
         st.divider()
 
-        # Keyed nav so other pages can jump programmatically via `_goto`
-        # (which queues "nav_page" + reruns). Apply any queued page BEFORE the
-        # radio is instantiated, and seed a default so the choice persists
-        # across reruns. Don't pass `index=` once keyed — the key owns state.
-        _apply_pending_widget("nav_page")
-        st.session_state.setdefault("nav_page", PAGES[0])
-        page = st.radio(
-            "nav", PAGES,
+        # Keyed section nav so other pages can jump programmatically via `_goto`
+        # (which queues "nav_section" + sets nav_detail + reruns). Apply any
+        # queued section BEFORE the radio is instantiated, and seed a default so
+        # the choice persists across reruns. Don't pass `index=` once keyed.
+        _apply_pending_widget("nav_section")
+        st.session_state.setdefault("nav_section", SECTION_NAMES[0])
+        section = st.radio(
+            "nav", SECTION_NAMES,
             label_visibility="collapsed",
-            key="nav_page",
+            key="nav_section",
         )
         st.divider()
         # Live data: ON auto-polls the bot every POLL_INTERVAL_S (default). OFF
@@ -619,9 +666,9 @@ def render_sidebar() -> str:
         # Deploy marker — bump on each release so a stale Streamlit Cloud
         # instance is obvious at a glance. If this date is old, the app
         # needs a reboot/redeploy.
-        st.caption("build 2026-06-14 · live uPnL fallback for IBKR symbols")
+        st.caption("build 2026-06-22 · sectioned nav (overview→detail)")
 
-    return page  # type: ignore[return-value]
+    return section  # type: ignore[return-value]
 
 
 # ── Lightweight Charts helpers ────────────────────────────────────────────────────
@@ -2357,6 +2404,42 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         if st.button("View Strategies →", key="ov_nav_strategies",
                      use_container_width=True):
             _goto("Strategies")
+
+    # ── Glance cards: latest system-report + news layer — summary here, full
+    # detail one click away (the overview→drill-down principle).
+    rc, nc = st.columns(2)
+    with rc:
+        with st.container(border=True):
+            st.markdown("**📊 Latest system report**")
+            ridx, rerr = _fetch("/api/bot/reports?limit=1")
+            latest = ((ridx or {}).get("reports") or [None])[0]
+            if rerr or latest is None:
+                st.caption("No reports yet — run `/system-report`." if not rerr else rerr)
+            else:
+                dot = _REPORT_GRADE_DOT.get(str(latest.get("roll_up_grade")).lower(), "")
+                st.caption(
+                    f"{dot} {latest.get('roll_up_grade') or '—'} · {latest.get('window') or '—'} · "
+                    f"{(latest.get('generated_at') or '—')[:16].replace('T', ' ')}"
+                )
+                st.caption((latest.get("headline") or "—")[:160])
+            if st.button("Open full report →", key="ov_card_reports",
+                         use_container_width=True):
+                _goto("Reports")
+    with nc:
+        with st.container(border=True):
+            st.markdown("**📰 News layer**")
+            ndata, nerr = _fetch("/api/bot/news/recent?limit=50")
+            if nerr:
+                st.caption(nerr)
+            elif not (ndata or {}).get("present"):
+                st.caption("Not active yet (source-driven: NEWS_SOURCE=rss / newsapi+key).")
+            else:
+                recs = (ndata or {}).get("records") or []
+                vetoes = sum(1 for r in recs if str(r.get("decision")).lower() == "veto")
+                st.caption(f"{len(recs)} recent decisions · {vetoes} vetoes")
+            if st.button("Open News →", key="ov_card_news",
+                         use_container_width=True):
+                _goto("News")
     st.divider()
 
     # ── Live charts (top of page) ──────────────────────────────────────────────
@@ -5972,6 +6055,50 @@ def page_logs() -> None:
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True, height=600)
 
 
+# ── Detail-page dispatch (sub-page key → render fn) — reused as the detail
+# views behind the section landings. Overview is special (needs stats), handled
+# in main().
+def _detail_dispatch() -> dict:
+    return {
+        "Performance":   page_performance,
+        "Insights":      page_insights,
+        "Reports":       page_reports,
+        "Strategies":    page_strategies,
+        "Models":        page_models,
+        "Exit Ladder":   page_exit_ladder,
+        "Backtesting":   page_backtesting,
+        "Promotion":     page_promotion,
+        "News":          page_news,
+        "Accounts":      page_accounts,
+        "Prop":          page_prop,
+        "Positions":     page_positions,
+        "Trades":        page_trades,
+        "Order Packages": page_order_packages,
+        "Signals":       page_signals,
+        "Data Explorer": page_data_explorer,
+        "Logs":          page_logs,
+        "Health":        page_health,
+    }
+
+
+def _render_section_landing(section: str) -> None:
+    """Render a section as a grid of summary cards, one per sub-page. Clicking a
+    card's button opens that page's detail view (overview → drill-down)."""
+    st.header(section)
+    st.caption("Pick a card to open the full view.")
+    subs = SECTIONS.get(section, [])
+    cols = st.columns(2)
+    for i, pg in enumerate(subs):
+        with cols[i % 2]:
+            with st.container(border=True):
+                st.subheader(pg)
+                st.caption(PAGE_DESC.get(pg, ""))
+                if st.button(f"Open {pg} →", key=f"card_open_{pg}",
+                             use_container_width=True):
+                    st.session_state["nav_detail"] = pg
+                    st.rerun()
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -5979,7 +6106,7 @@ def main() -> None:
     # whether we auto-poll. When Live data is OFF we skip the auto-refresh
     # entirely, so the app only hits the bot when you load or navigate, rather
     # than polling it as a second always-on client.
-    page = render_sidebar()
+    section = render_sidebar()
     live = bool(st.session_state.get("live_data", _DEFAULT_LIVE))
 
     # Non-blocking poll via a frontend timer (streamlit-autorefresh) so nav
@@ -5989,28 +6116,23 @@ def main() -> None:
 
     stats, stats_err = _fetch("/api/bot/stats")
 
-    dispatch = {
-        "Overview":      lambda: page_overview(stats, stats_err),
-        "Performance":   page_performance,
-        "Insights":      page_insights,
-        "Accounts":      page_accounts,
-        "Positions":     page_positions,
-        "Trades":        page_trades,
-        "Signals":       page_signals,
-        "News":          page_news,
-        "Exit Ladder":   page_exit_ladder,
-        "Prop":          page_prop,
-        "Order Packages": page_order_packages,
-        "Models":        page_models,
-        "Promotion":     page_promotion,
-        "Backtesting":   page_backtesting,
-        "Strategies":    page_strategies,
-        "Data Explorer": page_data_explorer,
-        "Health":        page_health,
-        "Reports":       page_reports,
-        "Logs":          page_logs,
-    }
-    dispatch.get(page, page_overview)()
+    if section == "Overview":
+        # Overview is the exec glance + live monitor (no card grid).
+        st.session_state["nav_detail"] = None
+        page_overview(stats, stats_err)
+    else:
+        subs = SECTIONS.get(section, [])
+        detail = st.session_state.get("nav_detail")
+        if detail in subs:
+            # Detail view: back affordance + the existing page render fn.
+            if st.button(f"← {section}", key="nav_back"):
+                st.session_state["nav_detail"] = None
+                st.rerun()
+            _detail_dispatch().get(detail, lambda: page_overview(stats, stats_err))()
+        else:
+            # Section landing: card grid (clear any stale cross-section detail).
+            st.session_state["nav_detail"] = None
+            _render_section_landing(section)
 
     if live and not _AUTOREFRESH_AVAILABLE:
         time.sleep(POLL_INTERVAL_S)

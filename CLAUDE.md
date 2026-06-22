@@ -131,12 +131,33 @@ CLAUDE.md              — this file
 docs/                  — ad-hoc design notes
 ```
 
-## Tabs (current)
+## Information architecture — 6 sections (redesign 2026-06-22)
 
-Sidebar order is operational top-to-bottom: **Overview · Performance · Insights · Strategies ·
-Models · Accounts · Order Packages · Positions · Trades · Signals · News · Exit Ladder · Prop** (live/ops), then
-**Backtesting · Promotion · Health** (diagnostics), then **Reports · Data Explorer · Logs**
-(dev tools). The list/registry pages — **Strategies, Models, Accounts** — share a
+The sidebar collapsed from ~19 flat tabs to **6 sections**, each a **landing of
+summary cards** that drill into the existing detail page (principle: overview
+first, details one click away — `SECTIONS` / `PAGE_DESC` / `_section_for` +
+`_render_section_landing` + the `nav_section`/`nav_detail` state in
+`streamlit_app.py`). The detail pages themselves are the same `page_*()` renders
+as before (unchanged content), reached by clicking a card; a "← <Section>" button
+returns to the landing. `_goto(page)` resolves the owning section and opens that
+detail directly.
+
+| Section | Sub-pages (cards → detail) |
+|---|---|
+| **Overview** | the exec/CEO summary + **live trades monitor** (per-symbol charts + open positions) + glance cards for the **latest system report** (→ Reports) and the **News layer** (→ News). No card grid — it *is* the glance. |
+| **Performance** | Performance · Insights · Reports |
+| **Strategies & Models** | Strategies · Models · Exit Ladder · Backtesting · Promotion · News |
+| **Accounts** | Accounts · Prop |
+| **Activity** | Positions · Trades · Order Packages · Signals |
+| **Admin** | Data Explorer · Logs · Health |
+
+Section-landing cards currently show a title + one-line blurb (`PAGE_DESC`) +
+an "Open" button; enriching each card with a live summary metric is the
+immediate follow-up. The per-sub-page endpoint reference below is unchanged.
+
+## Sub-pages (endpoint reference)
+
+The list/registry pages — **Strategies, Models, Accounts** — share a
 uniform **collapsible-row** layout: each row is an `st.expander` whose label is a
 status dot (🟢 live · 🔵 shadow · 🟡 stale · 🔴 bad · ⚫ off) + name + a couple of
 summary stats; expanding shows detail metrics + a visualization, then the logs
