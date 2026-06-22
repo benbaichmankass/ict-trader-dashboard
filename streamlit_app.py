@@ -512,6 +512,33 @@ def _goto(page: str, **preset) -> None:
     st.rerun()
 
 
+def _consume_report_deeplink() -> None:
+    """Open a specific report when the URL carries ``?report=<id>``.
+
+    The Telegram system-report ping links to
+    ``<dashboard>/?report=RPT-…`` so tapping it lands directly on the
+    Reports card with that report rendered (the user can then Download
+    the HTML from there). Runs ONCE per session per id (guarded by
+    ``_deeplink_consumed``) so it deep-links on first load but never
+    fights the user's later navigation. The query param is left in the
+    URL so a refresh / shared link still works."""
+    try:
+        rid = st.query_params.get("report")
+    except Exception:
+        return
+    if not rid:
+        return
+    if st.session_state.get("_deeplink_consumed") == rid:
+        return
+    st.session_state["_deeplink_consumed"] = rid
+    st.session_state["_deep_report_id"] = rid
+    # Navigate to the Reports card (its owning section), opened in place,
+    # with the window unfiltered so the target id is present in the list.
+    _queue_widget("nav_section", _section_for("Reports"))
+    _queue_widget("reports_window", "All")
+    st.session_state.setdefault("expanded_pages", set()).add("Reports")
+
+
 def _status_dot(color: str) -> str:
     return (
         f"<span style='display:inline-block;width:9px;height:9px;border-radius:50%;"
@@ -6064,6 +6091,14 @@ def page_reports() -> None:
         f"{_REPORT_GRADE_DOT.get(str(r.get('roll_up_grade')).lower(), '')}{r.get('roll_up_grade') or '—'}"
         for r in rows
     ]
+    # If we arrived via a ``?report=<id>`` deep link, pre-select that report
+    # (the window was already forced to "All" so it's present). Consume the id
+    # once so the user can freely pick others afterwards.
+    deep_rid = st.session_state.pop("_deep_report_id", None)
+    if deep_rid:
+        match = next((i for i, r in enumerate(rows) if r.get("id") == deep_rid), None)
+        if match is not None:
+            st.session_state["reports_pick"] = match
     pick = st.selectbox("Open a report", list(range(len(rows))), format_func=lambda i: labels[i],
                         key="reports_pick")
     chosen = rows[pick]
@@ -6159,6 +6194,11 @@ def _render_section_landing(section: str) -> None:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
+    # Honor a ``?report=<id>`` deep link (the Telegram system-report ping) BEFORE
+    # the sidebar/nav widgets are instantiated, so the queued nav_section/window
+    # land on this run.
+    _consume_report_deeplink()
+
     # Render the sidebar first — it owns the "Live data" toggle that decides
     # whether we auto-poll. When Live data is OFF we skip the auto-refresh
     # entirely, so the app only hits the bot when you load or navigate, rather
