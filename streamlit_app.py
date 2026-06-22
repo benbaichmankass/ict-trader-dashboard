@@ -37,12 +37,8 @@ TIMEOUT_S = 10.0
 POLL_INTERVAL_S = 10
 DEFAULT_LIMIT = 50
 
-# Preview app vs production. The preview Streamlit app (tracking
-# claude/web-app-preview) sets DASHBOARD_PREVIEW=1 in its Secrets so it does
-# NOT auto-poll the bot by default — you flip "Live data" on only when actively
-# testing, sparing the bot from a second always-on poller. Production leaves it
-# unset → live by default. Streamlit Cloud surfaces Secrets via st.secrets (not
-# os.environ), so read both.
+# Config lookup: Streamlit Cloud surfaces Secrets via st.secrets (not
+# os.environ), so read both (e.g. DASHBOARD_API_TOKEN for the prop POST).
 def _cfg(key: str, default: str = "") -> str:
     try:
         if key in st.secrets:
@@ -52,8 +48,8 @@ def _cfg(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
 
-_PREVIEW_MODE = _cfg("DASHBOARD_PREVIEW").strip().lower() in {"1", "true", "yes"}
-_DEFAULT_LIVE = not _PREVIEW_MODE
+# Single production app (tracks `main`) — "Live data" auto-polls by default.
+_DEFAULT_LIVE = True
 
 # Yahoo Finance ticker mapping (dashboard uses bot symbol style for signal matching).
 # MES (Micro E-mini S&P 500, IBKR) maps to the full-size continuous E-mini
@@ -607,10 +603,9 @@ def render_sidebar() -> str:
             key="nav_page",
         )
         st.divider()
-        # Live data: ON auto-polls the bot every POLL_INTERVAL_S. OFF stops the
-        # auto-refresh so the app only hits the bot when you load/navigate —
-        # default OFF on the preview app (DASHBOARD_PREVIEW=1) so it isn't a
-        # second always-on poller against the bot.
+        # Live data: ON auto-polls the bot every POLL_INTERVAL_S (default). OFF
+        # stops the auto-refresh so the app only hits the bot when you
+        # load/navigate.
         live = st.toggle(
             "Live data", value=_DEFAULT_LIVE, key="live_data",
             help=f"On: auto-refresh every {POLL_INTERVAL_S}s. Off: fetch only "
@@ -621,8 +616,6 @@ def render_sidebar() -> str:
         else:
             st.caption("⏸ Paused — not polling the bot")
             st.button("Refresh now", use_container_width=True, key="refresh_now")
-        if _PREVIEW_MODE:
-            st.caption("preview app")
         # Deploy marker — bump on each release so a stale Streamlit Cloud
         # instance is obvious at a glance. If this date is old, the app
         # needs a reboot/redeploy.
@@ -5978,9 +5971,9 @@ def page_logs() -> None:
 
 def main() -> None:
     # Render the sidebar first — it owns the "Live data" toggle that decides
-    # whether we auto-poll. When Live data is OFF (default on the preview app)
-    # we skip the auto-refresh entirely, so the app only hits the bot when you
-    # load or navigate, rather than polling it as a second always-on client.
+    # whether we auto-poll. When Live data is OFF we skip the auto-refresh
+    # entirely, so the app only hits the bot when you load or navigate, rather
+    # than polling it as a second always-on client.
     page = render_sidebar()
     live = bool(st.session_state.get("live_data", _DEFAULT_LIVE))
 

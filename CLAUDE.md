@@ -37,37 +37,30 @@ Cloud (free), auto-redeploys from `main`.
 - Deploy + local-dev steps: [`README.md`](./README.md)
 - Migration history: [PR #32](https://github.com/benbaichmankass/ict-trader-dashboard/pull/32)
 
-## Preview app + branch (adopted 2026-05-25) — READ BEFORE BUILDING UI
+## Single app — `main` only (adopted 2026-06-22) — READ BEFORE BUILDING UI
 
-There are **two** Streamlit Community Cloud apps:
-
-| App | Tracks branch | Audience |
-|---|---|---|
-| **Production** | `main` | the operator's live dashboard — auto-redeploys on merge to `main` |
-| **Preview** | **`claude/web-app-preview`** (the standing preview branch) | a staging app the operator eyeballs **before** changes hit production |
-
-**The standing preview branch is `claude/web-app-preview`** — the preview app is
-pointed at it permanently, so the operator never has to create/re-point an app
-per feature.
+There is **one** Streamlit Community Cloud app, tracking **`main`**. It
+auto-redeploys on every merge to `main`. The earlier two-app setup (a separate
+preview app on a standing `claude/web-app-preview` branch, adopted 2026-05-25)
+was **retired 2026-06-22** at the operator's direction — it added a branch to
+keep in sync and an extra eyeball step for no real benefit.
 
 **Workflow for ANY dashboard UI/feature change** (this is the rule — follow it):
-1. Build the change and push it to **`claude/web-app-preview`** (the preview app
-   auto-redeploys from it within a minute or two).
-2. Open the PR against `main` as usual and tell the operator to preview on the
-   preview app.
-3. Only after the operator approves the preview, **merge to `main`** (production).
+1. Build the change on a feature branch and open the PR against `main`.
+2. Once CI is green, **merge to `main`** — the production app auto-redeploys
+   within a minute or two.
+3. **Verify live on the production app** after it redeploys. Because the
+   dashboard can't be rendered from a sandbox/CI, the live app is the
+   verification step — so check it right after merge and fix-forward if
+   anything is off.
 
-Keep `claude/web-app-preview` **long-lived — never delete it.** After a change
-lands on `main`, re-sync the preview branch onto `main` (so it starts the next
-change from the released base) or stack the next WIP on it. Because the
-dashboard can't be rendered from a sandbox/CI, **the preview app is the
-verification step** — don't merge UI changes to `main` unverified.
+Do **not** recreate a preview app or a `claude/web-app-preview` branch. If a
+change is risky enough that you'd want to stage it, gate it behind a feature
+flag in the app instead, or land it in a small reversible PR and verify live.
 
-**Preview app config:** set **`DASHBOARD_PREVIEW=1`** in the preview app's
-Streamlit **Secrets**. That makes the sidebar **"Live data" toggle default OFF**
-on the preview app, so it doesn't poll the bot's API as a second always-on
-client — flip it ON only while actively testing. Production leaves the env var
-unset → Live data defaults ON (auto-refresh every `POLL_INTERVAL_S`).
+(Historical note: the retired preview app used a `DASHBOARD_PREVIEW=1` Secret to
+default the "Live data" toggle OFF. That env var is no longer read — the toggle
+defaults ON everywhere now.)
 
 ## Architecture
 
