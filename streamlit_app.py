@@ -2331,12 +2331,25 @@ def _render_strategy_snapshot(frame: pd.DataFrame, hours: int = 24,
 
 def _news_sentiment(records: list, hours: float) -> tuple[float | None, int]:
     """Mean `adjustment` (net news sentiment ∈ [-1,1], +=bullish) over records
-    within the last `hours`, plus the count. None when no scored items."""
+    within the last `hours`, **counting only records that actually scored news**
+    (`item_count > 0`), plus that scored count.
+
+    Records with `item_count == 0` are no-ops ("all news items stale or
+    irrelevant", or a symbol with no configured query → no feed) — including
+    their `adjustment: 0.0` in the mean dilutes the real signal to ~0.00 and
+    inflates the "scored signals" count (the card looked unwired). They're
+    excluded here so the read reflects genuinely-scored news only. None when no
+    record scored any news in the window."""
     cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=hours)
     vals = []
     for r in records or []:
         ts, adj = r.get("ts"), r.get("adjustment")
         if ts is None or adj is None:
+            continue
+        try:
+            if int(r.get("item_count") or 0) <= 0:
+                continue  # no news actually scored — skip the no-op
+        except (TypeError, ValueError):
             continue
         try:
             t = dt.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
@@ -2353,14 +2366,18 @@ def _news_sentiment(records: list, hours: float) -> tuple[float | None, int]:
 
 
 def _sentiment_tag(avg: float | None) -> str:
-    """Render an avg sentiment as a colored +/- tag (news is a factor, not y/n)."""
+    """Render an avg sentiment as a colored +/- tag (news is a factor, not y/n).
+    Small-but-real reads get 3 decimals so a genuine ~+0.005 tilt isn't shown as
+    a misleading flat ``+0.00``."""
     if avg is None:
         return "—"
     if avg > 0.10:
         return f"🟢 +{avg:.2f}"
     if avg < -0.10:
         return f"🔴 {avg:.2f}"
-    return f"⚪ {avg:+.2f}"
+    if avg == 0:
+        return "⚪ 0.00"
+    return f"⚪ {avg:+.3f}"  # near-neutral but non-zero: show the real tilt
 
 
 def page_overview(stats: dict | None, stats_err: str | None) -> None:
@@ -2499,17 +2516,36 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
                 recs = (ndata or {}).get("records") or []
                 a24, _ = _news_sentiment(recs, 24)
                 a7, _ = _news_sentiment(recs, 24 * 7)
-                a30, n30 = _news_sentiment(recs, 24 * 30)
+                a30, scored30 = _news_sentiment(recs, 24 * 30)
+                # Total signals checked in 30d (incl. the no-relevant-news no-ops)
+                # for honest "X scored of Y checked" context.
+                cutoff30 = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)
+                total30 = 0
+                for r in recs:
+                    try:
+                        t = dt.datetime.fromisoformat(str(r.get("ts")).replace("Z", "+00:00"))
+                        if (t.tzinfo and t or t.replace(tzinfo=dt.timezone.utc)) >= cutoff30:
+                            total30 += 1
+                    except (ValueError, TypeError, AttributeError):
+                        pass
                 st.caption(
-                    f"Avg sentiment · 24h {_sentiment_tag(a24)} · 7d {_sentiment_tag(a7)} "
-                    f"· 30d {_sentiment_tag(a30)}"
+                    f"Avg sentiment (scored news) · 24h {_sentiment_tag(a24)} · "
+                    f"7d {_sentiment_tag(a7)} · 30d {_sentiment_tag(a30)}"
                 )
-                bias = ("bullish" if (a7 or 0) > 0.10 else
-                        "bearish" if (a7 or 0) < -0.10 else "neutral")
-                st.caption(
-                    f"Market read: **{bias}** over 7d · {n30} news-scored signals/30d. "
-                    "Reductive sizing factor (−1…+1), not a y/n veto."
-                )
+                if scored30 == 0:
+                    st.caption(
+                        f"Layer active — but **0 of {total30}** signals had relevant news "
+                        "in 30d (symbols without a configured query never score). "
+                        "Reductive sizing factor (−1…+1), not a y/n veto."
+                    )
+                else:
+                    bias = ("bullish" if (a7 or 0) > 0.10 else
+                            "bearish" if (a7 or 0) < -0.10 else "neutral")
+                    st.caption(
+                        f"Market read: **{bias}** over 7d · **{scored30} scored** of "
+                        f"{total30} signals/30d. Reductive sizing factor (−1…+1), "
+                        "not a y/n veto."
+                    )
             if st.button("Open News →", key="ov_card_news",
                          use_container_width=True):
                 _goto("News")
@@ -5692,11 +5728,24 @@ def page_news() -> None:
     if "decision" in df and len(decisions):
         counts = decisions["decision"].value_counts().to_dict()
         vetoes = int(decisions["veto"].fillna(False).sum()) if "veto" in decisions else 0
+        # "Scored" = decisions that actually evaluated >=1 news item; the rest
+        # are no-ops ("all news items stale or irrelevant" / no configured query)
+        # and shouldn't be read as real neutral sentiment.
+        scored = (
+            int((pd.to_numeric(decisions["item_count"], errors="coerce").fillna(0) > 0).sum())
+            if "item_count" in decisions else None
+        )
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Decisions", len(decisions))
-        c2.metric("Vetoes", vetoes)
-        c3.metric("Boost / Reduce", f"{counts.get('boost', 0)} / {counts.get('reduce', 0)}")
-        c4.metric("Neutral", counts.get("neutral", 0))
+        c2.metric("Scored (had news)", "—" if scored is None else scored)
+        c3.metric("Vetoes", vetoes)
+        c4.metric("Boost / Reduce", f"{counts.get('boost', 0)} / {counts.get('reduce', 0)}")
+        if scored is not None and scored < len(decisions):
+            st.caption(
+                f"⚪ {len(decisions) - scored} of {len(decisions)} decisions had **no "
+                "relevant news** (no configured query / stale items) — those are no-ops, "
+                "not real neutral reads. Avg sentiment is taken over the **scored** rows only."
+            )
 
     # Friendly column order when present; tolerate missing keys across row kinds.
     preferred = ["ts", "symbol", "side", "strategy", "decision", "adjustment",
