@@ -427,7 +427,7 @@ PAGES = [
     "Order Packages", "Positions", "Trades", "Signals", "News", "Exit Ladder",
     "Prop",
     "Backtesting", "Promotion", "Health",
-    "Data Explorer", "Logs",
+    "Reports", "Data Explorer", "Logs",
 ]
 
 
@@ -5883,6 +5883,85 @@ def page_prop() -> None:
         st.caption("No prop tickets emitted yet.")
 
 
+_REPORT_GRADE_DOT = {
+    "healthy": "🟢", "ok": "🟢",
+    "caution": "🟡", "watch": "🟡", "mixed": "🟡",
+    "investigate": "🔴", "concern": "🔴",
+}
+_REPORTS_BLOB_BASE = "https://github.com/benbaichmankass/ict-trading-bot/blob/main/"
+
+
+def page_reports() -> None:
+    """Log of consolidated /system-report executive reports + an inline viewer.
+
+    Reads the file-backed `/api/bot/reports` index (the master `/system-report`
+    skill's output) and embeds a selected report's self-contained responsive
+    HTML via `components.html`. Each report also links to its stable GitHub blob.
+    Read-only — the dashboard never generates a report (that's the bot-side skill).
+    """
+    st.header("Reports")
+    st.caption(
+        "Consolidated executive reports from `/system-report` — health + trading "
+        "(real/paper/prop) + ML, per window. Newest first."
+    )
+    idx, err = _fetch("/api/bot/reports?limit=200")
+    if err:
+        st.warning(err)
+        return
+    reports = (idx or {}).get("reports") or []
+    if not reports:
+        st.info(
+            "No reports yet. Run `/system-report` in a bot session (the report "
+            "renders to `comms/reports/` and appears here once it's committed)."
+        )
+        return
+
+    windows = ["All"] + sorted({r.get("window") for r in reports if r.get("window")})
+    wsel = _segmented_or_radio("Window", windows, index=0, key="reports_window")
+    rows = reports if wsel == "All" else [r for r in reports if r.get("window") == wsel]
+    if not rows:
+        st.caption("No reports in this window.")
+        return
+
+    # The index/log table.
+    table = [
+        {
+            "Generated": (r.get("generated_at") or "—")[:19].replace("T", " "),
+            "Window": r.get("window") or "—",
+            "Grade": f"{_REPORT_GRADE_DOT.get(str(r.get('roll_up_grade')).lower(), '')} "
+                     f"{r.get('roll_up_grade') or '—'}".strip(),
+            "Headline": r.get("headline") or "—",
+            "id": r.get("id") or "—",
+        }
+        for r in rows
+    ]
+    st.dataframe(pd.DataFrame(table), hide_index=True, use_container_width=True)
+
+    # Pick one and view it inline.
+    labels = [
+        f"{(r.get('generated_at') or '—')[:16].replace('T', ' ')} · {r.get('window') or '—'} · "
+        f"{_REPORT_GRADE_DOT.get(str(r.get('roll_up_grade')).lower(), '')}{r.get('roll_up_grade') or '—'}"
+        for r in rows
+    ]
+    pick = st.selectbox("Open a report", list(range(len(rows))), format_func=lambda i: labels[i],
+                        key="reports_pick")
+    chosen = rows[pick]
+    rid = chosen.get("id")
+    blob = _REPORTS_BLOB_BASE + chosen["html_path"] if chosen.get("html_path") else None
+    if blob:
+        st.markdown(f"[Open on GitHub ↗]({blob})")
+
+    detail, derr = _fetch(f"/api/bot/reports/{rid}")
+    if derr:
+        st.warning(derr)
+        return
+    body = (detail or {}).get("html")
+    if not body:
+        st.caption("Report HTML not available (artifact may not be mirrored yet).")
+        return
+    components.html(body, height=900, scrolling=True)
+
+
 def page_logs() -> None:
     st.header("Logs")
     rows, err = _fetch("/api/bot/logs")
@@ -5930,6 +6009,7 @@ def main() -> None:
         "Strategies":    page_strategies,
         "Data Explorer": page_data_explorer,
         "Health":        page_health,
+        "Reports":       page_reports,
         "Logs":          page_logs,
     }
     dispatch.get(page, page_overview)()

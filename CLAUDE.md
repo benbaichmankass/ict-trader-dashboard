@@ -142,7 +142,7 @@ docs/                  — ad-hoc design notes
 
 Sidebar order is operational top-to-bottom: **Overview · Performance · Insights · Strategies ·
 Models · Accounts · Order Packages · Positions · Trades · Signals · News · Exit Ladder · Prop** (live/ops), then
-**Backtesting · Promotion · Health** (diagnostics), then **Data Explorer · Logs**
+**Backtesting · Promotion · Health** (diagnostics), then **Reports · Data Explorer · Logs**
 (dev tools). The list/registry pages — **Strategies, Models, Accounts** — share a
 uniform **collapsible-row** layout: each row is an `st.expander` whose label is a
 status dot (🟢 live · 🔵 shadow · 🟡 stale · 🔴 bad · ⚫ off) + name + a couple of
@@ -171,6 +171,7 @@ Nested expanders are illegal in Streamlit, so the in-row "Show all" + config use
 | Strategies | `/api/bot/strategies` + `/api/bot/trades/closed` + `/api/bot/strategies/{name}/review` — live-runtime view: pipeline-running banner + per-strategy status (Running / Loaded·stale / Configured·not-loaded / Disabled) and account routing (which accounts run it, live/dry), lifetime stats, **trades·24h + a cumulative realised-P&L curve** (client-side from the closed-trade window), config, changelog. **M7 review packet** (gate doc: bot repo `docs/strategy-review-gate.md`) renders per-strategy: coloured action badge (`KILL`/`DEMOTE_SHADOW`/`TUNE`/`HOLD`/`PROMOTE`), n_closed / win_rate / expectancy / pnl_total, the matrix's `reasons[]`, Tier-3 SLA due-by when present, and a collapsed full-JSON drill-down. Renders a ghost caption pointing at the `generate-strategy-review-packets` operator action when no packet has been generated yet. |
 | Data Explorer | `/api/bot/db/tables`, `/api/bot/db/table/{name}` — read-only browse of the **federated canonical store**: the live trader's `trade_journal.db` AND the trainer-store sidecar `trainer_store.db` (trainer/ML lifecycle data: training_cycle, dataset_builds, db_pulls, model_registry, experiment_runs, backtest_sweeps). Each table is tagged with its owning `db`; reads pass `?db=` so the API routes to the right DB. Schema overview, table picker, per-column filter (eq/ne/gt/lt/gte/lte/like), ordering, and pagination |
 | Health | `/api/bot/health/services`, `/api/bot/health/latest` |
+| Reports | `/api/bot/reports` (index) + `/api/bot/reports/{id}` (one report's HTML) — **a log of links to the consolidated `/system-report` executive reports** (the bot-side master skill that runs health + performance + ML together per window). A window filter (All/since-last/daily/weekly/monthly), a newest-first table (generated/window/roll-up grade/headline), and an inline viewer that embeds the selected report's self-contained responsive HTML via `components.html` (plus an "Open on GitHub ↗" blob link). **Read-only** — the dashboard never generates a report; it renders what the bot committed under `comms/reports/`. |
 | Logs | `/api/bot/logs` |
 
 **Candles: bot endpoint first, Yahoo Finance fallback.** `_fetch_candles`
