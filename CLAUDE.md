@@ -33,6 +33,13 @@ Read-only — polls the bot's REST API and renders stats, positions,
 signals, closed trades, logs, and health. Hosted on Streamlit Community
 Cloud (free), auto-redeploys from `main`.
 
+**Public URL (canonical):**
+`https://ict-trader-dashboard-z67ryan2ttrxjdvk6ozcjc.streamlit.app/` — this is
+the URL the bot's Telegram system-report ping deep-links into
+(`…/?report=<report_id>` opens that report on the Reports page; see
+`_consume_report_deeplink`). Mirrored in the bot repo's `CLAUDE.md` §
+"Dashboard consumer".
+
 - Entry point: [`streamlit_app.py`](./streamlit_app.py)
 - Deploy + local-dev steps: [`README.md`](./README.md)
 - Migration history: [PR #32](https://github.com/benbaichmankass/ict-trader-dashboard/pull/32)
