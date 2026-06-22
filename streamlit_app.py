@@ -37,12 +37,8 @@ TIMEOUT_S = 10.0
 POLL_INTERVAL_S = 10
 DEFAULT_LIMIT = 50
 
-# Preview app vs production. The preview Streamlit app (tracking
-# claude/web-app-preview) sets DASHBOARD_PREVIEW=1 in its Secrets so it does
-# NOT auto-poll the bot by default — you flip "Live data" on only when actively
-# testing, sparing the bot from a second always-on poller. Production leaves it
-# unset → live by default. Streamlit Cloud surfaces Secrets via st.secrets (not
-# os.environ), so read both.
+# Config lookup: Streamlit Cloud surfaces Secrets via st.secrets (not
+# os.environ), so read both (e.g. DASHBOARD_API_TOKEN for the prop POST).
 def _cfg(key: str, default: str = "") -> str:
     try:
         if key in st.secrets:
@@ -52,8 +48,8 @@ def _cfg(key: str, default: str = "") -> str:
     return os.environ.get(key, default)
 
 
-_PREVIEW_MODE = _cfg("DASHBOARD_PREVIEW").strip().lower() in {"1", "true", "yes"}
-_DEFAULT_LIVE = not _PREVIEW_MODE
+# Single production app (tracks `main`) — "Live data" auto-polls by default.
+_DEFAULT_LIVE = True
 
 # Yahoo Finance ticker mapping (dashboard uses bot symbol style for signal matching).
 # MES (Micro E-mini S&P 500, IBKR) maps to the full-size continuous E-mini
@@ -427,7 +423,7 @@ PAGES = [
     "Order Packages", "Positions", "Trades", "Signals", "News", "Exit Ladder",
     "Prop",
     "Backtesting", "Promotion", "Health",
-    "Data Explorer", "Logs",
+    "Reports", "Data Explorer", "Logs",
 ]
 
 
@@ -607,10 +603,9 @@ def render_sidebar() -> str:
             key="nav_page",
         )
         st.divider()
-        # Live data: ON auto-polls the bot every POLL_INTERVAL_S. OFF stops the
-        # auto-refresh so the app only hits the bot when you load/navigate —
-        # default OFF on the preview app (DASHBOARD_PREVIEW=1) so it isn't a
-        # second always-on poller against the bot.
+        # Live data: ON auto-polls the bot every POLL_INTERVAL_S (default). OFF
+        # stops the auto-refresh so the app only hits the bot when you
+        # load/navigate.
         live = st.toggle(
             "Live data", value=_DEFAULT_LIVE, key="live_data",
             help=f"On: auto-refresh every {POLL_INTERVAL_S}s. Off: fetch only "
@@ -621,8 +616,6 @@ def render_sidebar() -> str:
         else:
             st.caption("⏸ Paused — not polling the bot")
             st.button("Refresh now", use_container_width=True, key="refresh_now")
-        if _PREVIEW_MODE:
-            st.caption("preview app")
         # Deploy marker — bump on each release so a stale Streamlit Cloud
         # instance is obvious at a glance. If this date is old, the app
         # needs a reboot/redeploy.
@@ -5883,6 +5876,85 @@ def page_prop() -> None:
         st.caption("No prop tickets emitted yet.")
 
 
+_REPORT_GRADE_DOT = {
+    "healthy": "🟢", "ok": "🟢",
+    "caution": "🟡", "watch": "🟡", "mixed": "🟡",
+    "investigate": "🔴", "concern": "🔴",
+}
+_REPORTS_BLOB_BASE = "https://github.com/benbaichmankass/ict-trading-bot/blob/main/"
+
+
+def page_reports() -> None:
+    """Log of consolidated /system-report executive reports + an inline viewer.
+
+    Reads the file-backed `/api/bot/reports` index (the master `/system-report`
+    skill's output) and embeds a selected report's self-contained responsive
+    HTML via `components.html`. Each report also links to its stable GitHub blob.
+    Read-only — the dashboard never generates a report (that's the bot-side skill).
+    """
+    st.header("Reports")
+    st.caption(
+        "Consolidated executive reports from `/system-report` — health + trading "
+        "(real/paper/prop) + ML, per window. Newest first."
+    )
+    idx, err = _fetch("/api/bot/reports?limit=200")
+    if err:
+        st.warning(err)
+        return
+    reports = (idx or {}).get("reports") or []
+    if not reports:
+        st.info(
+            "No reports yet. Run `/system-report` in a bot session (the report "
+            "renders to `comms/reports/` and appears here once it's committed)."
+        )
+        return
+
+    windows = ["All"] + sorted({r.get("window") for r in reports if r.get("window")})
+    wsel = _segmented_or_radio("Window", windows, index=0, key="reports_window")
+    rows = reports if wsel == "All" else [r for r in reports if r.get("window") == wsel]
+    if not rows:
+        st.caption("No reports in this window.")
+        return
+
+    # The index/log table.
+    table = [
+        {
+            "Generated": (r.get("generated_at") or "—")[:19].replace("T", " "),
+            "Window": r.get("window") or "—",
+            "Grade": f"{_REPORT_GRADE_DOT.get(str(r.get('roll_up_grade')).lower(), '')} "
+                     f"{r.get('roll_up_grade') or '—'}".strip(),
+            "Headline": r.get("headline") or "—",
+            "id": r.get("id") or "—",
+        }
+        for r in rows
+    ]
+    st.dataframe(pd.DataFrame(table), hide_index=True, use_container_width=True)
+
+    # Pick one and view it inline.
+    labels = [
+        f"{(r.get('generated_at') or '—')[:16].replace('T', ' ')} · {r.get('window') or '—'} · "
+        f"{_REPORT_GRADE_DOT.get(str(r.get('roll_up_grade')).lower(), '')}{r.get('roll_up_grade') or '—'}"
+        for r in rows
+    ]
+    pick = st.selectbox("Open a report", list(range(len(rows))), format_func=lambda i: labels[i],
+                        key="reports_pick")
+    chosen = rows[pick]
+    rid = chosen.get("id")
+    blob = _REPORTS_BLOB_BASE + chosen["html_path"] if chosen.get("html_path") else None
+    if blob:
+        st.markdown(f"[Open on GitHub ↗]({blob})")
+
+    detail, derr = _fetch(f"/api/bot/reports/{rid}")
+    if derr:
+        st.warning(derr)
+        return
+    body = (detail or {}).get("html")
+    if not body:
+        st.caption("Report HTML not available (artifact may not be mirrored yet).")
+        return
+    components.html(body, height=900, scrolling=True)
+
+
 def page_logs() -> None:
     st.header("Logs")
     rows, err = _fetch("/api/bot/logs")
@@ -5899,9 +5971,9 @@ def page_logs() -> None:
 
 def main() -> None:
     # Render the sidebar first — it owns the "Live data" toggle that decides
-    # whether we auto-poll. When Live data is OFF (default on the preview app)
-    # we skip the auto-refresh entirely, so the app only hits the bot when you
-    # load or navigate, rather than polling it as a second always-on client.
+    # whether we auto-poll. When Live data is OFF we skip the auto-refresh
+    # entirely, so the app only hits the bot when you load or navigate, rather
+    # than polling it as a second always-on client.
     page = render_sidebar()
     live = bool(st.session_state.get("live_data", _DEFAULT_LIVE))
 
@@ -5930,6 +6002,7 @@ def main() -> None:
         "Strategies":    page_strategies,
         "Data Explorer": page_data_explorer,
         "Health":        page_health,
+        "Reports":       page_reports,
         "Logs":          page_logs,
     }
     dispatch.get(page, page_overview)()
