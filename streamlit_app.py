@@ -498,16 +498,17 @@ def _apply_pending_widget(key: str) -> None:
 
 
 def _goto(page: str, **preset) -> None:
-    """Jump to a sub-`page` (opening its detail view inside its section).
+    """Jump to `page`'s section and EXPAND its card in place.
 
-    Resolves the owning section, queues it onto the section radio, sets the
-    detail target (a plain state key, not a widget), applies any target-page
-    widget presets, then reruns. `preset` maps {widget_key: value} (segment/
-    window controls store their DISPLAY label)."""
+    Resolves the owning section, queues it onto the section radio, adds the page
+    to the expanded set (the section landing renders open cards inline — stacked
+    expand/collapse, not a separate page), applies any target-page widget
+    presets, then reruns. `preset` maps {widget_key: value} (segment/window
+    controls store their DISPLAY label)."""
     for k, v in preset.items():
         _queue_widget(k, v)
     _queue_widget("nav_section", _section_for(page))
-    st.session_state["nav_detail"] = page
+    st.session_state.setdefault("expanded_pages", set()).add(page)
     st.rerun()
 
 
@@ -639,8 +640,8 @@ def render_sidebar() -> str:
         st.divider()
 
         # Keyed section nav so other pages can jump programmatically via `_goto`
-        # (which queues "nav_section" + sets nav_detail + reruns). Apply any
-        # queued section BEFORE the radio is instantiated, and seed a default so
+        # (which queues "nav_section" + expands the target card + reruns). Apply
+        # the queued section BEFORE the radio is instantiated, and seed a default so
         # the choice persists across reruns. Don't pass `index=` once keyed.
         _apply_pending_widget("nav_section")
         st.session_state.setdefault("nav_section", SECTION_NAMES[0])
@@ -6082,21 +6083,32 @@ def _detail_dispatch() -> dict:
 
 
 def _render_section_landing(section: str) -> None:
-    """Render a section as a grid of summary cards, one per sub-page. Clicking a
-    card's button opens that page's detail view (overview → drill-down)."""
+    """Render a section as a stack of summary cards that EXPAND/COLLAPSE in place.
+
+    Each sub-page is a bordered card: title + one-line blurb + an Open/Close
+    toggle. When open, the page's full content renders inline below — multiple
+    can be open at once (stacked), and switching sections keeps each card's
+    open state. We deliberately use a toggle + container (NOT st.expander): the
+    detail pages use st.expander internally and nested expanders are illegal."""
     st.header(section)
-    st.caption("Pick a card to open the full view.")
-    subs = SECTIONS.get(section, [])
-    cols = st.columns(2)
-    for i, pg in enumerate(subs):
-        with cols[i % 2]:
-            with st.container(border=True):
-                st.subheader(pg)
+    st.caption("Tap **Open** to expand a card in place; tap again to collapse.")
+    expanded: set = st.session_state.setdefault("expanded_pages", set())
+    dispatch = _detail_dispatch()
+    for pg in SECTIONS.get(section, []):
+        is_open = pg in expanded
+        with st.container(border=True):
+            head, ctrl = st.columns([5, 1])
+            with head:
+                st.markdown(f"**{pg}**")
                 st.caption(PAGE_DESC.get(pg, ""))
-                if st.button(f"Open {pg} →", key=f"card_open_{pg}",
-                             use_container_width=True):
-                    st.session_state["nav_detail"] = pg
+            with ctrl:
+                if st.button("▾ Close" if is_open else "▸ Open",
+                             key=f"toggle_{pg}", use_container_width=True):
+                    expanded.discard(pg) if is_open else expanded.add(pg)
                     st.rerun()
+            if is_open:
+                st.divider()
+                dispatch.get(pg, lambda: st.caption("—"))()
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -6117,22 +6129,11 @@ def main() -> None:
     stats, stats_err = _fetch("/api/bot/stats")
 
     if section == "Overview":
-        # Overview is the exec glance + live monitor (no card grid).
-        st.session_state["nav_detail"] = None
+        # Overview is the exec glance + live monitor (no card stack).
         page_overview(stats, stats_err)
     else:
-        subs = SECTIONS.get(section, [])
-        detail = st.session_state.get("nav_detail")
-        if detail in subs:
-            # Detail view: back affordance + the existing page render fn.
-            if st.button(f"← {section}", key="nav_back"):
-                st.session_state["nav_detail"] = None
-                st.rerun()
-            _detail_dispatch().get(detail, lambda: page_overview(stats, stats_err))()
-        else:
-            # Section landing: card grid (clear any stale cross-section detail).
-            st.session_state["nav_detail"] = None
-            _render_section_landing(section)
+        # Section landing: stacked cards that expand/collapse in place.
+        _render_section_landing(section)
 
     if live and not _AUTOREFRESH_AVAILABLE:
         time.sleep(POLL_INTERVAL_S)
