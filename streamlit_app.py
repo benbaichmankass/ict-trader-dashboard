@@ -5607,9 +5607,11 @@ def page_insights() -> None:
 
     st.divider()
 
-    # Per-strategy view. Discover strategy names from /api/bot/strategies
-    # so the picker stays in sync with whatever is configured on the bot;
-    # fall back to a small hardcoded list if that endpoint is unreachable.
+    # Per-strategy view. Discover strategy names from /api/bot/strategies so the
+    # picker stays in sync with whatever is configured on the bot; if that's
+    # unreachable, fall back to the /api/bot/config strategies block (a second
+    # live source), then an empty-state — never a hardcoded list (which drifted
+    # stale at 6 names vs ~36 configured; BL-20260611-SYM-1).
     st.subheader("Per-strategy")
     strategies_payload, strategies_err = _fetch("/api/bot/strategies")
     strategy_names: list[str] = []
@@ -5628,15 +5630,30 @@ def page_insights() -> None:
                 and name.islower()
             )
     if not strategy_names:
-        strategy_names = [
-            "turtle_soup", "vwap", "ict_scalp_5m",
-            "trend_donchian", "fade_breakout_4h", "squeeze_breakout_4h",
-        ]
-    selected = st.selectbox(
-        "Strategy",
-        options=strategy_names,
-        key="insights_strategy_select",
-    )
+        # Second LIVE source before any hardcode: the /api/bot/config strategies
+        # block (keyed by name). The old 6-name literal drifted stale vs the ~36
+        # configured strategies (BL-20260611-SYM-1) and let the user pick a
+        # strategy that no longer exists — derive from config instead so the
+        # fallback can never go stale.
+        cfg_payload, _cfg_err = _fetch("/api/bot/config")
+        if isinstance(cfg_payload, dict) and isinstance(cfg_payload.get("strategies"), dict):
+            strategy_names = sorted(
+                n for n in cfg_payload["strategies"]
+                if isinstance(n, str) and n.replace("_", "").isalnum() and n.islower()
+            )
+    if not strategy_names:
+        st.info(
+            "Strategy list unavailable — /api/bot/strategies and /api/bot/config "
+            "both returned nothing. Per-strategy insights populate when the API "
+            "is reachable."
+        )
+        selected = None
+    else:
+        selected = st.selectbox(
+            "Strategy",
+            options=strategy_names,
+            key="insights_strategy_select",
+        )
     if selected:
         strat_payload, strat_err = _fetch(
             f"/api/bot/insights/strategy/{quote(selected, safe='')}"
