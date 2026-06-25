@@ -806,6 +806,37 @@ def _lc_markers(
     return markers
 
 
+def _lc_position_markers(
+    positions: list[dict] | None,
+    symbol:    str,
+) -> list[dict]:
+    """Time-anchored ENTRY markers for OPEN positions on *symbol*.
+
+    `_lc_price_lines` already draws the open position's entry as a *horizontal*
+    price line, but that says nothing about WHEN the trade was entered. This
+    adds a marker on the time axis at ``openedAt`` (price = ``entryPrice``) so a
+    live trade's entry point is visible on the chart — green up for a long, red
+    down for a short. Skipped silently when openedAt/entry is missing.
+    """
+    markers: list[dict] = []
+    for p in positions or []:
+        if p.get("symbol") and p.get("symbol") != symbol:
+            continue
+        ts = pd.to_datetime(p.get("openedAt"), errors="coerce", utc=True)
+        if pd.isna(ts):
+            continue
+        is_long = str(p.get("side", "")).lower() in ("buy", "long")
+        markers.append({
+            "time":     int(ts.timestamp()),
+            "position": "belowBar" if is_long else "aboveBar",
+            "color":    _TV_ENTRY,
+            "shape":    "arrowUp" if is_long else "arrowDown",
+            "text":     "ENTRY",
+        })
+    markers.sort(key=lambda m: m["time"])
+    return markers
+
+
 def _lc_price_lines(
     positions: list[dict] | None,
     df:        pd.DataFrame,
@@ -1033,6 +1064,10 @@ _TV_CHART_HTML = """<!doctype html>
     var m = [];
     if (pref('signals', true)) m = m.concat(D.signalMarkers || []);
     if (pref('closed', false)) m = m.concat(D.tradeMarkers || []);
+    // Live-position ENTRY markers ride the 'Live' toggle (with the entry/SL/TP
+    // price-lines) so a live trade's entry point on the time axis shows by
+    // default alongside its horizontal entry line.
+    if (pref('live', true)) m = m.concat(D.positionMarkers || []);
     m.sort(function(a,b){ return a.time - b.time; });
     candle.setMarkers(m);
   }
@@ -1135,6 +1170,7 @@ def render_tv_chart(
         "ema": _lc_ema_data(df, ema_period),
         "signalMarkers": _lc_markers(signals, None, symbol),
         "tradeMarkers": _lc_markers(None, trades, symbol),
+        "positionMarkers": _lc_position_markers(positions, symbol),
         "priceLines": _lc_price_lines(positions, df, symbol),
         "zoneLines": _lc_zone_lines(signals, symbol),
         # Namespace the chart's localStorage (scroll range + overlay toggles)
@@ -1277,6 +1313,37 @@ def _parse_trade_ts(value: Any) -> dt.datetime | None:
     if d.tzinfo is not None:
         d = d.astimezone(dt.timezone.utc).replace(tzinfo=None)
     return d
+
+
+def _fmt_duration(start: Any, end: Any = None) -> str | None:
+    """Human-readable elapsed time between two trade timestamps.
+
+    For an OPEN trade pass only ``start`` (``openedAt``) — ``end`` defaults to
+    "now" (tz-naive UTC, matching :func:`_parse_trade_ts`), so the result reads
+    as "how long it has been live". For a CLOSED trade pass both ``openedAt``
+    and ``closedAt`` to get the trade's lifetime. Returns ``None`` when the
+    start can't be parsed or the span is negative (clock skew / bad data), so
+    callers render an em-dash rather than a fabricated "0s".
+    """
+    s = _parse_trade_ts(start)
+    if s is None:
+        return None
+    e = _parse_trade_ts(end) if end else dt.datetime.utcnow()
+    if e is None:
+        e = dt.datetime.utcnow()
+    secs = int((e - s).total_seconds())
+    if secs < 0:
+        return None
+    days, rem = divmod(secs, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins, _ = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {mins}m"
+    if mins:
+        return f"{mins}m"
+    return f"{secs}s"
 
 
 def _row_account_class(d: dict) -> str:
@@ -2578,19 +2645,34 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     trade_data, _ = _fetch(
         f"/api/bot/trades/closed?limit={DEFAULT_LIMIT}&include_paper=true")
 
-    def _pos_caption(p: dict) -> str:
-        # "SIDE qty @ entry · strategy · acct [· 🧪 paper]" — pattern is
-        # nullable per the API contract, so fall back to "?" rather than
-        # silently dropping it. Account is always shown next to the strategy
-        # for an open trade; paper rows carry a 🧪 tag so a mixed paper+real
-        # symbol's summary line reads clearly.
+    # Order-package join for the per-symbol expandable trade rows (the live
+    # trades monitor). Fetched ONCE here, not per chart — render_tv_chart and the
+    # rows below reuse it. _order_package_map keys by linkedTradeId.
+    _ov_op_payload, _ = _fetch(
+        "/api/bot/order-packages?" + urlencode({"limit": 50, "include_paper": "true"}))
+    ov_op_map_top = _order_package_map(_ov_op_payload)
+
+    def _pos_row_label(p: dict) -> str:
+        # Expander-row label for one open position: a clickable one-liner that
+        # carries the at-a-glance facts (side, qty@entry, strategy, account,
+        # live uPnL, ⏱️ how long it's been live) and opens to the full card.
+        # uPnL "—" (not a fake $0) when the broker value is unavailable; paper
+        # rows tagged 🧪 so a mixed paper+real symbol reads clearly. pattern is
+        # nullable per the API contract → "?" fallback.
         side = str(p.get("side", "")).upper()
+        dot = ("🟢" if side in ("BUY", "LONG")
+               else "🔴" if side in ("SELL", "SHORT") else "⚪")
         qty = p.get("qty", "?")
         entry = p.get("entryPrice", "?")
         strat = p.get("pattern") or "?"
         acct = p.get("account") or "?"
         tag = " · 🧪 paper" if _row_account_class(p) == "paper" else ""
-        return f"{side} {qty} @ {entry} · {strat} · acct {acct}{tag}"
+        upnl, known = _open_upnl(p)
+        pnl_s = fmt_usd(upnl) if known else "—"
+        dur = _fmt_duration(p.get("openedAt"))
+        dur_s = f" · ⏱️ {dur}" if dur else ""
+        return (f"{dot} {side} {qty} @ {entry} · {strat} · {acct} · "
+                f"uPnL {pnl_s}{dur_s}{tag}")
 
     if not ov_symbols:
         st.caption("No active symbols — the bot isn't trading any instrument.")
@@ -2630,10 +2712,23 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
                 pc1b.metric(f"🧪 Paper PnL · {ov_symbol}",
                             _upnl_metric(paper_pnl, paper_known, paper_unk),
                             delta=round(paper_pnl, 2) if paper_known else None)
-            pc2.caption(" · ".join(_pos_caption(p) for p in sym_positions))
+            pc2.caption(
+                f"{len(sym_positions)} open "
+                f"{'leg' if len(sym_positions) == 1 else 'legs'} — "
+                "tap a trade below to expand its full card.")
             _unk_cap = _upnl_caption(real_unk + paper_unk)
             if _unk_cap:
                 st.caption("⚠️ " + _unk_cap)
+
+            # Clickable rows — one expander per open position; expands in place
+            # to the SAME full detail card the Positions tab renders (levels,
+            # R:R, duration, decision/reasoning, model scores, raw package).
+            for _i, _p in enumerate(sym_positions):
+                _render_trade_card(
+                    _p, is_open=True, op_map=ov_op_map_top, signals=sig_data,
+                    expander_label=_pos_row_label(_p),
+                    key_prefix=f"ovsym_{ov_symbol}_{_i}_",
+                )
 
         if candles_err:
             st.warning(f"{ov_symbol}: candles unavailable: {candles_err}")
@@ -2749,6 +2844,7 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
                 for p in pos_sorted:
                     _render_trade_card(
                         p, is_open=True, op_map=ov_op_map, signals=ov_signals,
+                        key_prefix="ovsnap_",
                     )
         else:
             # Smart empty state — if another segment has open positions, name it
@@ -3366,6 +3462,7 @@ def page_positions() -> None:
             for p in rows:
                 _render_trade_card(
                     p, is_open=True, op_map=op_map, signals=signals,
+                    key_prefix="postab_",
                 )
 
 
@@ -3451,6 +3548,7 @@ def page_trades() -> None:
             st.markdown("#### Selected trade")
             _render_trade_card(
                 closed[sel_idx], is_open=False, op_map=op_map, signals=signals,
+                key_prefix="trtab_",
             )
 
 
@@ -3637,6 +3735,7 @@ def _signal_logic_text(sl: Any) -> str | None:
 
 def _render_card_chart(
     trade: dict, *, is_open: bool, signals: list[dict] | None,
+    key_prefix: str = "",
 ) -> None:
     """Embed the live price chart inside a trade detail card.
 
@@ -3651,7 +3750,7 @@ def _render_card_chart(
     if not sym:
         return
     tid = trade.get("id")
-    ck = f"card_chart_{tid}_{sym}_{'o' if is_open else 'c'}"
+    ck = f"card_chart_{key_prefix}{tid}_{sym}_{'o' if is_open else 'c'}"
     if not st.checkbox("📈 Price chart", value=True, key=ck):
         return
     df, candles_err = _fetch_candles(sym, "15m", limit=400)
@@ -3668,7 +3767,7 @@ def _render_card_chart(
         sym,
         positions=[trade] if is_open else None,
         height=320,
-        storage_key=f"tvccard_{re.sub(r'[^A-Za-z0-9]', '', str(tid) + sym)}",
+        storage_key=f"tvccard_{re.sub(r'[^A-Za-z0-9]', '', key_prefix + str(tid) + sym)}",
     )
 
 
@@ -3678,11 +3777,21 @@ def _render_trade_card(
     is_open: bool,
     op_map: dict[str, dict],
     signals: list[dict] | None,
+    expander_label: str | None = None,
+    key_prefix: str = "",
 ) -> None:
     """Render one trade as a bordered, scannable detail card (open or closed).
 
     Model scores come straight off the linked order package's ``modelScores``
     (persisted at decision time — a cheap read), not a per-request recompile.
+
+    When ``expander_label`` is given the whole card renders inside a collapsed
+    ``st.expander`` so callers can present a clickable, expand-in-place ROW per
+    trade (the Overview live-trades monitor) instead of a wall of open cards.
+    The card no longer nests its own expander (the raw order package moved to a
+    checkbox-gated ``st.json``), so wrapping it in one is now legal. ``key_prefix``
+    namespaces the per-card widget keys so the same trade can render in more than
+    one place on a page without a duplicate-key collision.
     """
     sym = trade.get("symbol", "?")
     side_raw = str(trade.get("side", "")).lower()
@@ -3703,7 +3812,11 @@ def _render_trade_card(
     entry, sl_lvl, tp_lvl = trade.get("entryPrice"), trade.get("stopLoss"), trade.get("takeProfit")
     rr, risk_pct, reward_pct = _trade_geometry(entry, sl_lvl, tp_lvl)
 
-    with st.container(border=True):
+    # Either a clickable expand-in-place row (Overview live-trades monitor) or a
+    # bordered always-open card (Positions / Trades tabs).
+    card = (st.expander(expander_label, expanded=False)
+            if expander_label is not None else st.container(border=True))
+    with card:
         # ── Header: symbol + side, PnL on the right ────────────────────
         demo = " · 🧪 paper" if _row_account_class(trade) == "paper" else ""
         h1, h2 = st.columns([3, 1])
@@ -3759,19 +3872,26 @@ def _render_trade_card(
             ev[3].metric("PnL %", fmt_pct(trade.get("realizedPnlPct")))
 
         if is_open:
+            # Live trade: how long it has been open (now − openedAt).
+            live_dur = _fmt_duration(trade.get("openedAt"))
             st.caption(
-                f"opened {trade.get('openedAt') or '—'} · SL/TP set at entry "
+                f"opened {trade.get('openedAt') or '—'} · "
+                f"⏱️ live for **{live_dur or '—'}** · SL/TP set at entry "
                 "(not trailed or modified post-open)"
             )
         else:
+            # Closed trade: how long it ran (closedAt − openedAt).
+            held_dur = _fmt_duration(trade.get("openedAt"), trade.get("closedAt"))
             st.caption(
                 f"opened {trade.get('openedAt') or '—'} · closed "
-                f"{trade.get('closedAt') or '—'} · close reason: "
+                f"{trade.get('closedAt') or '—'} · ⏱️ duration **{held_dur or '—'}** "
+                f"· close reason: "
                 f"**{trade.get('closeReason') or '—'}**"
             )
 
         # ── Live price chart with this trade's context overlaid ────────
-        _render_card_chart(trade, is_open=is_open, signals=signals)
+        _render_card_chart(trade, is_open=is_open, signals=signals,
+                           key_prefix=key_prefix)
 
         st.divider()
 
@@ -3842,7 +3962,10 @@ def _render_trade_card(
             st.caption(line + "  _(matched by symbol+strategy+time)_")
 
         # ── Raw drill-down ─────────────────────────────────────────────
-        with st.expander("Raw order package"):
+        # Checkbox-gated (not an st.expander) so the whole card can itself be
+        # wrapped in an expander row — nested expanders are illegal in Streamlit.
+        _raw_key = f"rawpkg_{key_prefix}{tid or id(trade)}_{'o' if is_open else 'c'}"
+        if st.checkbox("Raw order package", key=_raw_key):
             st.json(op or {"note": "no linked order package"})
 
 
