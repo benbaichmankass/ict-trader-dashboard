@@ -3771,6 +3771,42 @@ def _render_card_chart(
     )
 
 
+def _render_options_structure(opt: dict) -> None:
+    """Render the defined-risk options structure block (Slice-5 surfacing).
+
+    ``opt`` is the bot's ``Position.options`` payload: structure + contracts +
+    net_debit + max_loss/max_gain + breakeven + expiration + per-leg
+    {symbol(OCC), side, strike, type}. All null→"—" per the contract. No live
+    broker call — decision-time geometry only.
+    """
+    structure = str(opt.get("structure") or "spread").replace("_", " ").title()
+    st.markdown(f"**🧩 Options structure · {structure}**")
+    m = st.columns(4)
+    m[0].metric("Net debit", fmt_num(opt.get("net_debit")))
+    m[1].metric("Max loss", fmt_usd(opt.get("max_loss_usd")) if opt.get("max_loss_usd") is not None else "—")
+    m[2].metric("Max gain", fmt_usd(opt.get("max_gain_usd")) if opt.get("max_gain_usd") is not None else "—")
+    m[3].metric("Contracts", fmt_num(opt.get("contracts")))
+    st.caption(
+        f"expiration **{opt.get('expiration') or '—'}** · "
+        f"breakeven **{fmt_num(opt.get('breakeven'))}** · "
+        f"width **{fmt_num(opt.get('width'))}**"
+    )
+    legs = opt.get("legs")
+    if isinstance(legs, list) and legs:
+        rows = []
+        for leg in legs:
+            if not isinstance(leg, dict):
+                continue
+            rows.append({
+                "Leg": str(leg.get("side") or "—").upper(),
+                "Type": str(leg.get("type") or "—").upper(),
+                "Strike": leg.get("strike"),
+                "OCC symbol": leg.get("symbol") or "—",
+            })
+        if rows:
+            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+
+
 def _render_trade_card(
     trade: dict,
     *,
@@ -3888,6 +3924,15 @@ def _render_trade_card(
                 f"· close reason: "
                 f"**{trade.get('closeReason') or '—'}**"
             )
+
+        # ── Options structure (defined-risk spread legs) ───────────────
+        # Present only for an options-expression row (alpaca_options_paper);
+        # `null`/absent for every equity/futures/crypto trade. Decision-time
+        # geometry from the bot's notes.options (connection-free; per-leg live
+        # greeks/PnL are a documented bot-side follow-up).
+        _opt = trade.get("options")
+        if isinstance(_opt, dict):
+            _render_options_structure(_opt)
 
         # ── Live price chart with this trade's context overlaid ────────
         _render_card_chart(trade, is_open=is_open, signals=signals,
