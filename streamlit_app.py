@@ -3270,10 +3270,25 @@ def page_accounts() -> None:
             f"🏦 Prop · balance {fmt_usd(_pt) if _pp else '—'} · "
             f"open {_open_count(_prop_ids)} · uPnL {_upnl_metric_for(_prop_ids)}"
         )
-    # Caption when any real-money balance is missing from the snapshot.
+    # Caption when any real-money balance is missing from the snapshot — split
+    # a FAILED broker read (api_ok=False) from a genuinely never-snapshotted
+    # account, so a credential/host failure reads as an error, not "no data yet".
+    def _api_failed_count(ids: set) -> int:
+        n = 0
+        for i in ids:
+            e = balances.get(i) or {}
+            if e.get("balance") is None and e.get("api_ok") is False:
+                n += 1
+        return n
+
     _r_total, _r_present, _r_missing = _bal_sum(_real_ids)
-    if _r_missing:
-        st.caption(f"⚠️ {_r_missing} real-money account(s) have no tracked "
+    _r_failed = _api_failed_count(_real_ids)
+    if _r_failed:
+        st.caption(f"⚠️ {_r_failed} real-money account(s) had a FAILED broker "
+                   "balance read (excluded from the Real balance sum — not $0).")
+    _r_nosnap = _r_missing - _r_failed
+    if _r_nosnap > 0:
+        st.caption(f"⚠️ {_r_nosnap} real-money account(s) have no tracked "
                    "balance snapshot yet (excluded from the Real balance sum).")
     st.divider()
 
@@ -3292,7 +3307,15 @@ def page_accounts() -> None:
         is_paper   = (acct_class == "paper")
         class_tag  = "🧪 PAPER" if is_paper else "💵 REAL"
 
-        bal_val = (balances.get(aid) or {}).get("balance")
+        _bal_entry = balances.get(aid) or {}
+        bal_val = _bal_entry.get("balance")
+        # Broker-read health: api_ok=False ⇒ the trader's last balance read for
+        # this account FAILED (balance is then null because of the failure, not
+        # because none was ever recorded) — render distinctly, never as a bare
+        # "—" that looks like "no snapshot yet". None ⇒ legacy/JSON-fallback
+        # envelope (no api_ok) or no snapshot.
+        bal_api_ok = _bal_entry.get("api_ok")
+        bal_read_failed = bal_val is None and bal_api_ok is False
         acc_positions = [p for p in positions if p.get("account") == aid]
         # uPnL straight from the API's multiplier-aware unrealizedPnl
         # (broker-truth or markprice_local; ict-trading-bot #3761). A leg whose
@@ -3327,11 +3350,18 @@ def page_accounts() -> None:
                 f"strategies: {', '.join(strategies) if strategies else '— (none assigned)'}"
             )
             m1, m2, m3, m4, m5 = st.columns(5)
-            m1.metric("Balance",        fmt_usd(bal_val) if bal_val is not None else "—")
+            _bal_display = (
+                "API error" if bal_read_failed
+                else fmt_usd(bal_val) if bal_val is not None else "—"
+            )
+            m1.metric("Balance",        _bal_display)
             m2.metric("Realized · 30d", fmt_usd(realized))
             m3.metric("Unrealized",     _upnl_metric(unrealized, unrealized_known, unrealized_unk))
             m4.metric("Open trades",    len(acc_positions))
             m5.metric("Trades · 30d",   trades_30d)
+            if bal_read_failed:
+                st.caption("⚠️ Broker balance read failed — last snapshot "
+                           "unavailable for this account (not $0).")
             _acc_unk_cap = _upnl_caption(unrealized_unk)
             if _acc_unk_cap:
                 st.caption("⚠️ " + _acc_unk_cap)
