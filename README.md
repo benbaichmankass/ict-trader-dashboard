@@ -35,16 +35,15 @@ streamlit run streamlit_app.py
 # BOT_API_URL=http://localhost:8001 streamlit run streamlit_app.py
 ```
 
-## Tabs
+## Sections
 
-| Tab | Endpoints |
-|---|---|
-| Overview | `/api/bot/stats`, `/api/pnl/history?days=30` |
-| Positions | `/api/bot/positions` |
-| Signals | `/api/bot/signals` |
-| Closed trades | `/api/bot/trades/closed?limit=50` |
-| Logs | `/api/bot/logs` |
-| Health | `/api/bot/health/services`, `/api/bot/health/latest` |
+The sidebar is organized into **6 sections** — Overview · Performance ·
+Strategies & Models · Accounts · Activity · Admin — each a landing of summary
+cards that drill into the detail sub-pages (Overview, Performance, Insights,
+Accounts, Positions, **Trades**, Signals, News, Exit Ladder, Prop, Order
+Packages, Models, Promotion, Backtesting, Strategies, Data Explorer, Health,
+Reports, Logs). The full per-sub-page endpoint map lives in
+[`CLAUDE.md`](./CLAUDE.md) § "Sub-pages (endpoint reference)".
 
 Full API contract: [`ict-trading-bot/CLAUDE.md`](https://github.com/benbaichmankass/ict-trading-bot/blob/main/CLAUDE.md) § Dashboard REST API.
 

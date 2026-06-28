@@ -684,7 +684,7 @@ def render_sidebar() -> str:
         # Deploy marker — bump on each release so a stale Streamlit Cloud
         # instance is obvious at a glance. If this date is old, the app
         # needs a reboot/redeploy.
-        st.caption("build 2026-06-22 · sectioned nav (overview→detail)")
+        st.caption("build 2026-06-28 · sectioned nav (overview→detail)")
 
     return section  # type: ignore[return-value]
 
