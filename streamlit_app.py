@@ -416,16 +416,6 @@ def fmt_num(x: float | None) -> str:
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
-PAGES = [
-    # Operational, top-to-bottom: glance → performance → what's trading →
-    # routing → decisions/fills → raw feed; then ops/diagnostics; then dev tools.
-    "Overview", "Performance", "Insights", "Strategies", "Models", "Accounts",
-    "Order Packages", "Positions", "Trades", "Signals", "News", "Exit Ladder",
-    "Prop",
-    "Backtesting", "Promotion", "Health",
-    "Reports", "Data Explorer", "Logs",
-]
-
 # ── Information architecture: 6 sections, each a landing of summary cards that
 # drill into the existing detail page (2026-06-22 redesign). Principle:
 # overview first, details one click away. Overview is special — its landing IS
@@ -1517,8 +1507,10 @@ def _segment_filter_frame(df: pd.DataFrame, segment: str) -> pd.DataFrame:
 # aggregate. Order is the operator's natural escalation: recent → wider.
 _WINDOW_CHOICES: list[str] = ["24h", "7d", "30d", "All"]
 _WINDOW_SLUG: dict[str, str] = {"24h": "24h", "7d": "7d", "30d": "30d", "All": "all"}
-# window slug → days, for the client-side closed-trade `since=` math (All uses a
-# 10-year lookback like _CLOSED_WINDOWS, reaching every trade without a branch).
+# window slug → days, for the client-side closed-trade `since=` math. "All" uses
+# a 10-year lookback (3650 days) rather than a special sentinel — the since-calc
+# (utcnow() - timedelta(days=days)) handles it directly, reaching every trade
+# this bot will ever produce without any branch in the date math.
 _WINDOW_DAYS: dict[str, int] = {"24h": 1, "7d": 7, "30d": 30, "all": 3650}
 
 
@@ -2536,7 +2528,7 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
 
     # ── Cross-links — one compact row jumping to the detail pages behind these
     # headline figures (closed-trade log, open positions, the strategy fleet).
-    # `_goto` queues the nav page + reruns; page labels match the PAGES list.
+    # `_goto` queues the nav page + reruns; page labels match the SECTIONS map.
     nav1, nav2, nav3 = st.columns(3)
     with nav1:
         if st.button("Open Trades log →", key="ov_nav_trades",
@@ -3396,14 +3388,6 @@ def page_accounts() -> None:
 
 # ── Positions ───────────────────────────────────────────────────────────────────
 
-# "All" uses a 10-year lookback (3650 days) rather than a special sentinel —
-# the since-calc below (utcnow() - timedelta(days=days)) handles it directly,
-# and it reaches every closed trade this bot will ever have produced without
-# any branch in the date math.
-_CLOSED_WINDOWS = {"Last 24h": 1, "Last 7 days": 7, "Last 30 days": 30,
-                   "All": 3650}
-
-
 def _trade_card_join_data() -> tuple[dict[str, dict], list[dict]]:
     """Fetch the order-package + signal join data the detail cards overlay.
 
@@ -4121,22 +4105,15 @@ def page_order_packages() -> None:
 
 # ── Models & Training ──────────────────────────────────────────────────────────────
 
-_STAGE_ICON = {
-    "live_approved": "\U0001f7e2", "limited_live": "\U0001f7e1", "shadow": "\U0001f535",
-    "backtest_approved": "\U0001f7e4", "candidate": "⚪", "research_only": "⚫",
-}
-
 # Operator's 3-bucket deployment view (2026-05-18; default-flip update
 # 2026-05-19). The canonical deployment ladder is 3-stage:
 # ``candidate → shadow → advisory``. ``advisory`` is the live-influence
-# stage — only advisory predictions ever change an order decision. The
-# extra entries in the ``_STAGE_ICON`` fallback map above (``live_approved``,
-# ``limited_live``, ``backtest_approved``, ``research_only``) are the
-# legacy 7-stage names, retained ONLY because the bot still aliases them
-# for old registry rows (via ``ml.manifest.canonical_stage`` — e.g.
-# ``live_approved``/``limited_live`` → ``advisory``,
-# ``backtest_approved``/``research_only`` → ``candidate``). New rows never
-# use them. The 3 operator buckets answer "is this model influencing real
+# stage — only advisory predictions ever change an order decision. The bot
+# still aliases the legacy 7-stage names for old registry rows (via
+# ``ml.manifest.canonical_stage`` — e.g. ``live_approved``/``limited_live`` →
+# ``advisory``, ``backtest_approved``/``research_only`` → ``candidate``), so
+# ``_normalize_bucket`` below folds those aliases in too. New rows never use
+# them. The 3 operator buckets answer "is this model influencing real
 # money, just observing, or parked?":
 #   LIVE    — predictions influence trade decisions on live accounts
 #             (canonical stage: advisory; legacy aliases limited_live /
