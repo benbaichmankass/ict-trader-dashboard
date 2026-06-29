@@ -162,6 +162,37 @@ Section-landing cards currently show a title + one-line blurb (`PAGE_DESC`) +
 an "Open" button; enriching each card with a live summary metric is the
 immediate follow-up. The per-sub-page endpoint reference below is unchanged.
 
+## Organize-by / focus + time window everywhere (2026-06-29)
+
+Operator ask: organize the live-trades and trade/position views by **strategy**,
+**account**, or **asset group** (crypto / metals / equities / …), isolate a
+single group to see just its trades **and its performance**, and apply the
+24h/7d/30d/All window much more widely. Implemented as a reusable client-side
+layer (no per-page bespoke logic):
+
+- **Asset class** comes from the bot's authoritative `assetClass` field (added
+  bot-side 2026-06-29 on `/api/bot/positions`, `/api/bot/trades/closed`,
+  `/api/bot/order-packages`, resolved from `config/instruments.yaml`). A
+  client-side classifier (`_symbol_asset_class`, mirroring the bot's
+  `_asset_class._infer` roots) is the fallback in `_row_asset_class`, so the
+  dashboard still buckets correctly against a bot that predates the field —
+  graceful degradation, never a crash.
+- **Organize / focus** — `_organize_controls(key, rows)` renders an *Organize
+  by* picker (None / Strategy / Account / Asset class / Symbol) + a *Focus on*
+  selectbox (isolate one group). Helpers: `_row_group_key` / `_group_rows` /
+  `_group_label` / `_apply_focus` / `_focus_symbols`; per-group performance via
+  `_open_group_caption` (open uPnL) + `_closed_group_stats` / `_closed_group_caption`
+  (closed trades/win-rate/PnL). Wired into **Overview** (the live-trades monitor
+  — focus narrows both the charts shown and the rows + the open-positions
+  snapshot), **Positions** (grouped detail-card sections, each with its open
+  exposure), **Trades** (a per-group performance table + clustered clickable
+  history), and **Signals** (strategy / asset / symbol).
+- **Time window** — the shared `_control_bar` / `_window_control` 24h/7d/30d/All
+  axis is now also on **Performance** (the analytics deep-dive), **Accounts**
+  (per-account realised PnL + daily chart + trade log), and **Order Packages**
+  (`since=`), in addition to the Overview/Trades pages that already had it. Open
+  Positions stay window-less (they're point-in-time live state).
+
 ## Sub-pages (endpoint reference)
 
 The list/registry pages — **Strategies, Models, Accounts** — share a

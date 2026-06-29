@@ -1992,12 +1992,20 @@ def render_trade_analytics() -> None:
     can inspect each segment in isolation without mixing real-money KPIs with
     paper activity.
     """
-    segment = _segment_control("perf_segment")
+    # Segment + time-window control bar — the deep-dive now honours the same
+    # 24h/7d/30d/All axis as the rest of the app (defaults to All-time, the
+    # page's purpose). The window drives the headline metrics, equity curve,
+    # calendar and win/loss bar via the shared `df`.
+    segment, dd_wlabel, dd_wslug = _control_bar(
+        "perf_segment", "perf_dd_window", win_index=3)
     df, raw_count, err = _analytics_frame(include_paper=True)
     if err:
         st.info(f"Trade analytics unavailable: {err}")
         return
     df = _segment_filter_frame(df, segment)
+    if not df.empty:
+        _dd_cutoff = dt.datetime.utcnow() - dt.timedelta(days=_WINDOW_DAYS[dd_wslug])
+        df = df[df["ts"] >= _dd_cutoff].reset_index(drop=True)
     if df.empty:
         if segment == "real":
             st.caption("No closed real-money trades yet — analytics will populate as trades close.")
@@ -2021,7 +2029,7 @@ def render_trade_analytics() -> None:
     wr = round(int((fdf["pnl"] > 0).sum()) / n * 100, 1) if n else 0.0
     exp = round(total_pnl / n, 2) if n else 0.0
     m = st.columns(4)
-    m[0].metric(f"Trades · {ANALYTICS_LOOKBACK_DAYS}d", n)
+    m[0].metric(f"Trades · {dd_wlabel}", n)
     m[1].metric("Win rate", f"{wr:.1f}%")
     m[2].metric("Expectancy", fmt_usd(exp))
     m[3].metric("Total P&L", fmt_usd(total_pnl))
@@ -2083,7 +2091,7 @@ def render_trade_analytics() -> None:
             st.plotly_chart(pie_fig, use_container_width=True,
                             config={"displayModeBar": False})
     with tbl_col:
-        st.markdown(f"**Per-strategy breakdown · {ANALYTICS_LOOKBACK_DAYS}d**")
+        st.markdown(f"**Per-strategy breakdown · {dd_wlabel}**")
         st.dataframe(_strategy_breakdown(df), hide_index=True,
                      use_container_width=True)
 
@@ -2104,6 +2112,249 @@ def _asset_class_order(c: str) -> int:
     keys = list(_ASSET_CLASS_ICON.keys())
     k = str(c).lower()
     return keys.index(k) if k in keys else len(keys)
+
+
+# ── Organize-by / focus: group live trades + history by strategy / account /
+#    asset class / symbol, isolate one group, and show per-group performance ────
+#
+# Operator ask (2026-06-29): organize the Overview live-trades monitor + the
+# Positions/Trades views by strategy, account, or asset GROUP (crypto / metals /
+# equities / …), and isolate a single group to see just its trades + its
+# performance. Asset class prefers the bot's authoritative ``assetClass`` field
+# (added 2026-06-29, resolved from config/instruments.yaml); a client-side
+# classifier is the fallback so the dashboard still buckets sensibly against a
+# bot that predates the field (graceful degradation — render, never crash).
+
+# Display labels + canonical order for the asset-class grouping dimension.
+# Superset of _ASSET_CLASS_ICON (adds bond + unknown), used only by the grouping
+# UI so the exec-summary breakdown that reads the /performance perAssetClass list
+# is untouched.
+_ASSET_CLASS_LABEL = {
+    "crypto": "₿ Crypto", "index": "📈 Index", "commodity": "🛢️ Commodity / Metals",
+    "bond": "🏦 Bonds", "equity": "🏛️ Equities", "fx": "💱 FX",
+    "futures": "📊 Futures", "unknown": "• Other",
+}
+
+# Client-side fallback roots — mirror src/web/api/_asset_class.py::_infer so a
+# row from a pre-field bot still classifies the same way the server would.
+_CRYPTO_SUFFIX = ("USDT", "USDC", "USDP")
+_FALLBACK_INDEX_ROOTS = {"ES", "NQ", "YM", "RTY", "MES", "MNQ", "MYM", "M2K"}
+_FALLBACK_COMMODITY_ROOTS = {
+    "GC", "SI", "HG", "PL", "PA", "CL", "NG", "MGC", "MHG",
+    "XAU", "XAG", "GLD", "SLV", "USO",
+}
+_FALLBACK_BOND_ROOTS = {
+    "TLT", "IEF", "AGG", "BND", "LQD", "HYG", "SHY", "TLH", "IEI", "SHV",
+    "BNDX", "TIP",
+}
+_FALLBACK_EQUITY_ROOTS = {"SPY", "QQQ", "IWM", "DIA", "VOO", "VTI"}
+
+
+def _symbol_asset_class(symbol: Any) -> str:
+    """Best-effort asset class from a bare symbol (fallback only)."""
+    s = str(symbol or "").strip().upper()
+    if not s:
+        return "unknown"
+    if s in _FALLBACK_COMMODITY_ROOTS:
+        return "commodity"
+    if s in _FALLBACK_BOND_ROOTS:
+        return "bond"
+    if s in _FALLBACK_INDEX_ROOTS:
+        return "index"
+    if s in _FALLBACK_EQUITY_ROOTS:
+        return "equity"
+    if s.endswith(_CRYPTO_SUFFIX):
+        return "crypto"
+    # 6-letter all-alpha pair convention (EURUSD, GBPJPY) — best-effort FX.
+    if len(s) == 6 and s.isalpha():
+        return "fx"
+    return "unknown"
+
+
+def _row_asset_class(d: dict) -> str:
+    """Asset class for a position/trade/order-package row.
+
+    Prefers the bot's authoritative ``assetClass`` field; falls back to the
+    client-side classifier (so a bot that predates the field still groups)."""
+    ac = str((d or {}).get("assetClass") or "").strip().lower()
+    if ac and ac != "unknown":
+        return ac
+    return _symbol_asset_class((d or {}).get("symbol"))
+
+
+# Organize-by dimension: display label → slug. "None" = one flat list.
+_GROUP_CHOICES: list[str] = ["None", "Strategy", "Account", "Asset class", "Symbol"]
+_GROUP_DIM: dict[str, str] = {
+    "None": "none", "Strategy": "strategy", "Account": "account",
+    "Asset class": "asset", "Symbol": "symbol",
+}
+# dim slug → the column header used for that dimension in a per-group table.
+_GROUP_DIM_COL: dict[str, str] = {
+    "strategy": "Strategy", "account": "Account", "asset": "Asset class",
+    "symbol": "Symbol",
+}
+
+
+def _group_dim_col(dim: str) -> str:
+    return _GROUP_DIM_COL.get(dim, "Group")
+
+
+def _row_group_key(row: dict, dim: str) -> str:
+    """The group a row belongs to for ``dim``. ``pattern``/``strategy`` both
+    resolve the strategy (positions use ``pattern``, order-packages ``strategy``)."""
+    if dim == "strategy":
+        return str(row.get("pattern") or row.get("strategy") or "—")
+    if dim == "account":
+        return str(row.get("account") or "—")
+    if dim == "asset":
+        return _row_asset_class(row)
+    if dim == "symbol":
+        return str(row.get("symbol") or "—")
+    return "All"
+
+
+def _group_label(key: str, dim: str) -> str:
+    """Human label for a group key (asset class gets an icon label)."""
+    if dim == "asset":
+        return _ASSET_CLASS_LABEL.get(key, _ASSET_CLASS_LABEL["unknown"])
+    return key
+
+
+def _group_rows(rows: list[dict], dim: str) -> list[tuple[str, list[dict]]]:
+    """Partition ``rows`` into ``[(group_key, rows), …]``.
+
+    Asset-class groups follow the canonical class order; every other dimension
+    is ordered biggest-group-first then alphabetically."""
+    groups: dict[str, list[dict]] = {}
+    for r in rows or []:
+        groups.setdefault(_row_group_key(r, dim), []).append(r)
+    if dim == "asset":
+        order = list(_ASSET_CLASS_LABEL.keys())
+
+        def _key(kv: tuple[str, list[dict]]) -> tuple[int, str]:
+            return (order.index(kv[0]) if kv[0] in order else len(order), kv[0])
+    else:
+        def _key(kv: tuple[str, list[dict]]) -> tuple[int, str]:
+            return (-len(kv[1]), str(kv[0]))
+
+    return sorted(groups.items(), key=_key)
+
+
+def _organize_controls(
+    key_prefix: str, rows: list[dict], *, account_dim: bool = True,
+) -> tuple[str, str | None]:
+    """Render the 'Organize by' + 'Focus on' control pair.
+
+    Returns ``(dim, focus)`` — ``dim`` ∈ {none,strategy,account,asset,symbol};
+    ``focus`` is ``None`` (show every group) or a single group key to isolate.
+    ``rows`` (already segment-filtered) populate the focus choices. Pass
+    ``account_dim=False`` where rows carry no account (e.g. signals)."""
+    choices = [c for c in _GROUP_CHOICES if account_dim or c != "Account"]
+    c1, c2 = st.columns(2)
+    with c1:
+        dim_label = _segmented_or_radio(
+            "Organize by", choices, index=0, key=f"{key_prefix}_groupby",
+            help="Split the trades below into sections by strategy, account, "
+                 "asset group, or symbol — each with its own performance "
+                 "summary. Then optionally focus on one group to isolate it.",
+        )
+        dim = _GROUP_DIM.get(dim_label, "none")
+    focus: str | None = None
+    with c2:
+        if dim == "none":
+            st.caption("Pick a dimension to organize into sections and isolate "
+                       "a single group.")
+        else:
+            keys = [k for k, _ in _group_rows(rows, dim)]
+            _apply_pending_widget(f"{key_prefix}_focus")
+            picked = st.selectbox(
+                f"Focus on {dim_label.lower()}", ["All", *keys],
+                key=f"{key_prefix}_focus",
+                format_func=lambda k: "All" if k == "All" else _group_label(k, dim),
+                help="Isolate a single group — its trades and its performance "
+                     "only. 'All' keeps every section.",
+            )
+            focus = None if picked == "All" else picked
+    return dim, focus
+
+
+def _apply_focus(rows: list[dict], dim: str, focus: str | None) -> list[dict]:
+    """Narrow ``rows`` to the focused group (no-op when focus is None)."""
+    if dim == "none" or focus is None:
+        return rows
+    return [r for r in rows if _row_group_key(r, dim) == focus]
+
+
+def _focus_symbols(
+    all_symbols: list[str], focus_positions: list[dict], dim: str, focus: str | None,
+) -> list[str]:
+    """The Overview chart symbols relevant to the focused group.
+
+    No focus → every active symbol (unchanged). With a focus, restrict to the
+    symbols carrying a matching open position (so the operator sees exactly the
+    isolated trades), plus — for the symbol/asset dimensions — any active
+    no-position symbol that still belongs to the group. Original order kept."""
+    if dim == "none" or focus is None:
+        return all_symbols
+    syms: list[str] = []
+    for p in focus_positions:
+        s = str(p.get("symbol") or "").strip().upper()
+        if s and s not in syms:
+            syms.append(s)
+    if dim == "symbol" and focus not in syms:
+        syms.append(focus)
+    elif dim == "asset":
+        for s in all_symbols:
+            if _symbol_asset_class(s) == focus and s not in syms:
+                syms.append(s)
+    ordered = [s for s in all_symbols if s in syms]
+    extra = [s for s in syms if s not in all_symbols]
+    return ordered + extra
+
+
+def _open_group_caption(rows: list[dict]) -> str:
+    """One-line open-exposure summary for a group of open positions."""
+    total, unk = _sum_upnl(rows)
+    known = len(rows) - unk
+    noun = "position" if len(rows) == 1 else "positions"
+    return f"{len(rows)} open {noun} · uPnL " + _upnl_metric(total, known, unk)
+
+
+def _closed_group_stats(rows: list[dict]) -> dict:
+    """Client-side win/loss/PnL aggregate over a group of closed-trade rows.
+
+    Null ``realizedPnl`` rows are counted in ``trades`` but excluded from the
+    win/loss/PnL math (never folded in as $0) — matching the API's nullability
+    contract."""
+    n = len(rows)
+    wins = losses = known = 0
+    pnl = 0.0
+    for r in rows:
+        v = r.get("realizedPnl")
+        if v is None:
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            continue
+        known += 1
+        pnl += v
+        if v > 0:
+            wins += 1
+        elif v < 0:
+            losses += 1
+    return {
+        "trades": n, "wins": wins, "losses": losses, "known": known,
+        "winRate": (wins / known * 100) if known else None,
+        "pnl": pnl if known else None,
+    }
+
+
+def _closed_group_caption(rows: list[dict]) -> str:
+    """One-line realised-performance summary for a group of closed trades."""
+    s = _closed_group_stats(rows)
+    return (f"{s['trades']} trades · {s['wins']}W/{s['losses']}L · "
+            f"win {fmt_pct(s['winRate'])} · P&L {fmt_usd(s['pnl'])}")
 
 
 def build_asset_class_bar(per_class: list | None, height: int = 220) -> go.Figure | None:
@@ -2620,7 +2871,21 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     # live PnL — not just real-money positions. The per-symbol summary line
     # below tags paper rows so they read clearly as non-real-money.
     positions, _ = _fetch("/api/bot/positions?include_paper=true")
+    positions = positions or []
     ov_symbols = _overview_chart_symbols(positions)
+
+    # Organize the live-trades monitor by strategy / account / asset group /
+    # symbol and isolate one group. Focus narrows BOTH the charts shown (to the
+    # symbols carrying the isolated trades) and the open-position rows under
+    # each chart. Driven by the live open positions, so the focus choices are
+    # exactly what's at risk right now.
+    st.markdown("**Live trades monitor**")
+    ov_dim, ov_focus = _organize_controls("ov_live_org", positions)
+    focus_positions = _apply_focus(positions, ov_dim, ov_focus)
+    if ov_focus is not None:
+        ov_symbols = _focus_symbols(ov_symbols, focus_positions, ov_dim, ov_focus)
+        st.caption(f"Focused on **{_group_label(ov_focus, ov_dim)}** · "
+                   + _open_group_caption(focus_positions))
 
     ov_interval = st.selectbox(
         "Interval", CHART_INTERVALS,
@@ -2670,7 +2935,9 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         st.caption("No active symbols — the bot isn't trading any instrument.")
 
     for ov_symbol in ov_symbols:
-        sym_positions = [p for p in (positions or []) if p.get("symbol") == ov_symbol]
+        # focus_positions == positions when no group is isolated, else just the
+        # isolated group's legs — so the rows under each chart honour the focus.
+        sym_positions = [p for p in focus_positions if p.get("symbol") == ov_symbol]
         df, candles_err = _fetch_candles(ov_symbol, ov_interval, limit=1000)
 
         # Header: symbol name + an "open" badge when it carries a live position;
@@ -2788,11 +3055,25 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         positions_all, _ = _fetch("/api/bot/positions?include_paper=true")
         positions_unfiltered = positions_all or []
         positions_all = _segment_filter_rows(positions_unfiltered, ov_segment)
+        # Honour the live-trades monitor's organize/focus selection here too, so
+        # isolating a group narrows this table to the same set.
+        positions_all = _apply_focus(positions_all, ov_dim, ov_focus)
         if positions_all:
-            pos_sorted = sorted(
-                positions_all,
-                key=lambda p: 0 if _row_account_class(p) == "real_money" else 1,
-            )
+            # When a group is isolated/organized, cluster by group; otherwise the
+            # historical real-first / paper-after order.
+            if ov_dim != "none":
+                _gorder = {k: i for i, (k, _v) in
+                           enumerate(_group_rows(positions_all, ov_dim))}
+                pos_sorted = sorted(
+                    positions_all,
+                    key=lambda p: (_gorder.get(_row_group_key(p, ov_dim), 99),
+                                   0 if _row_account_class(p) == "real_money" else 1),
+                )
+            else:
+                pos_sorted = sorted(
+                    positions_all,
+                    key=lambda p: 0 if _row_account_class(p) == "real_money" else 1,
+                )
             pdf = pd.DataFrame(pos_sorted)
             # Per-row uPnL straight from the API's multiplier-aware
             # unrealizedPnl (broker-truth or markprice_local; ict-trading-bot
@@ -2811,6 +3092,12 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             cmap = {"symbol": "Symbol", "side": "Side", "qty": "Qty",
                     "entryPrice": "Entry", "uPnL": "uPnL",
                     "pattern": "Strategy", "account": "Account", "Type": "Type"}
+            # Add a Group column when organized by asset class (the one grouping
+            # not already a column) so the cluster is legible.
+            if ov_dim == "asset":
+                pdf["Group"] = [_group_label(_row_asset_class(p), "asset")
+                                for p in pos_sorted]
+                cmap["Group"] = "Group"
             cols = [c for c in cmap if c in pdf.columns]
             st.dataframe(pdf[cols].rename(columns=cmap), hide_index=True,
                          use_container_width=True)
@@ -3166,6 +3453,12 @@ def page_accounts() -> None:
         "are read live from the bot; nothing here is hardcoded."
     )
 
+    # Time-window picker — drives each account's realised-PnL figure, the daily
+    # P&L chart, and the recent-trades log (same 24h/7d/30d/All axis as the rest
+    # of the app; default 30d). Balance + open positions are point-in-time.
+    acc_wlabel, acc_wslug = _window_control("acc_window", index=2)
+    acc_win_days = _WINDOW_DAYS[acc_wslug]
+
     cfg, cfg_err = _fetch("/api/bot/config")
     if cfg_err:
         st.warning(f"Config endpoint error: {cfg_err}")
@@ -3284,7 +3577,8 @@ def page_accounts() -> None:
                    "balance snapshot yet (excluded from the Real balance sum).")
     st.divider()
 
-    since_7d = (dt.datetime.utcnow() - dt.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    since_win = (dt.datetime.utcnow()
+                 - dt.timedelta(days=acc_win_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     for acc in accounts:
         aid       = acc.get("id", "?")
@@ -3316,24 +3610,24 @@ def page_accounts() -> None:
         unrealized, unrealized_unk = _sum_upnl(acc_positions)
         unrealized_known = len(acc_positions) - unrealized_unk
 
-        # 30-day realised-PnL history via the no-session, account-filtered
+        # Windowed realised-PnL history via the no-session, account-filtered
         # endpoint. Rows are `{date, pnl, trades}` — `pnl`, not `realizedPnl`
         # (renamed in S-063; the old key silently summed to zero).
         realized = None
-        trades_30d = 0
-        ph, _ = _fetch(f"/api/pnl/history?days=30&account_id={aid}")
+        trades_win = 0
+        ph, _ = _fetch(f"/api/pnl/history?days={acc_win_days}&account_id={aid}")
         ph = ph or []
         if ph:
             try:
                 realized = sum(float(r.get("pnl") or 0) for r in ph)
-                trades_30d = sum(int(r.get("trades") or 0) for r in ph)
+                trades_win = sum(int(r.get("trades") or 0) for r in ph)
             except (TypeError, ValueError):
                 realized = None
 
         dot = _row_dot("live" if is_live else "dry")
         label = (f"{dot}  **{aid}**  ·  {class_tag}  ·  "
                  f"{'LIVE' if is_live else 'DRY'}  ·  "
-                 f"30d {fmt_usd(realized)}  ·  {len(acc_positions)} open")
+                 f"{acc_wlabel} {fmt_usd(realized)}  ·  {len(acc_positions)} open")
         with st.expander(label):
             st.caption(
                 f"{'Paper-trading' if is_paper else 'Real-money'} account · "
@@ -3347,10 +3641,10 @@ def page_accounts() -> None:
                 else fmt_usd(bal_val) if bal_val is not None else "—"
             )
             m1.metric("Balance",        _bal_display)
-            m2.metric("Realized · 30d", fmt_usd(realized))
+            m2.metric(f"Realized · {acc_wlabel}", fmt_usd(realized))
             m3.metric("Unrealized",     _upnl_metric(unrealized, unrealized_known, unrealized_unk))
             m4.metric("Open trades",    len(acc_positions))
-            m5.metric("Trades · 30d",   trades_30d)
+            m5.metric(f"Trades · {acc_wlabel}", trades_win)
             if bal_read_failed:
                 st.caption("⚠️ Broker balance read failed — last snapshot "
                            "unavailable for this account (not $0).")
@@ -3363,16 +3657,16 @@ def page_accounts() -> None:
                 st.plotly_chart(fig, use_container_width=True,
                                 config={"displayModeBar": False})
             else:
-                st.caption("No realised P&L in the last 30 days.")
+                st.caption(f"No realised P&L in the {acc_wlabel.lower()}.")
 
-            st.markdown("**Recent trades · 7d**")
+            st.markdown(f"**Recent trades · {acc_wlabel}**")
             trades, terr = _fetch(
-                f"/api/bot/trades/closed?limit=100&account_id={aid}&since={since_7d}"
+                f"/api/bot/trades/closed?limit=100&account_id={aid}&since={since_win}"
             )
             if terr:
                 st.warning(terr)
             elif not trades:
-                st.caption("No closed trades in the last 7 days.")
+                st.caption(f"No closed trades in the {acc_wlabel.lower()}.")
             else:
                 tdf = _format_closed_trades_df(pd.DataFrame(trades))
                 col_map = {
@@ -3468,16 +3762,29 @@ def page_positions() -> None:
                 noun="open positions",
             )
         else:
-            # One detail card per open position. uPnL comes straight from the
-            # API's multiplier-aware unrealizedPnl (broker-truth or
-            # markprice_local) — no client-side mark-price fetch/recompute, so
-            # the old concurrent per-symbol candle pull (only used to feed the
-            # multiplier-blind fallback) is gone (BL-20260616-DASH-UPNL-MULTIPLIER).
-            for p in rows:
-                _render_trade_card(
-                    p, is_open=True, op_map=op_map, signals=signals,
-                    key_prefix="postab_",
-                )
+            # Organize by strategy / account / asset group / symbol + isolate a
+            # single group, each section captioned with its own open exposure.
+            # uPnL comes straight from the API's multiplier-aware unrealizedPnl
+            # (broker-truth or markprice_local) — no client-side recompute
+            # (BL-20260616-DASH-UPNL-MULTIPLIER).
+            dim, focus = _organize_controls("pos_org", rows)
+            rows = _apply_focus(rows, dim, focus)
+            if dim == "none":
+                st.caption(_open_group_caption(rows))
+                for p in rows:
+                    _render_trade_card(
+                        p, is_open=True, op_map=op_map, signals=signals,
+                        key_prefix="postab_",
+                    )
+            else:
+                for gkey, grows in _group_rows(rows, dim):
+                    st.markdown(f"### {_group_label(gkey, dim)}")
+                    st.caption(_open_group_caption(grows))
+                    for p in grows:
+                        _render_trade_card(
+                            p, is_open=True, op_map=op_map, signals=signals,
+                            key_prefix="postab_",
+                        )
 
 
 def page_trades() -> None:
@@ -3515,10 +3822,41 @@ def page_trades() -> None:
             window_label=wlabel,
         )
     else:
+        # Organize by strategy / account / asset group / symbol + isolate a
+        # single group. The single clickable dataframe is kept (so click-a-row →
+        # full card still works) — grouping clusters the rows + adds a per-group
+        # performance summary table above; focus narrows to one group.
+        dim, focus = _organize_controls("trades_org", closed)
+        closed = _apply_focus(closed, dim, focus)
+        if not closed:
+            st.caption(f"No trades in the focused group for the {wlabel} window.")
+            return
+        if dim != "none":
+            grouped = _group_rows(closed, dim)
+            # Per-group realised-performance summary (this is the "show me the
+            # performance for QQQ / metals / this account" ask).
+            summ = pd.DataFrame([
+                {
+                    _group_dim_col(dim): _group_label(gkey, dim),
+                    "Trades": s["trades"], "W": s["wins"], "L": s["losses"],
+                    "Win rate": fmt_pct(s["winRate"]), "P&L": fmt_usd(s["pnl"]),
+                }
+                for gkey, grows in grouped
+                for s in (_closed_group_stats(grows),)
+            ])
+            st.markdown(f"**Performance by {dim if dim != 'asset' else 'asset class'}"
+                        f" · {wlabel}**")
+            st.dataframe(summ, hide_index=True, use_container_width=True)
+            # Re-order `closed` so rows cluster by group (keeps the 1:1 index
+            # mapping between the dataframe and `closed` for click-to-card).
+            closed = [r for _gkey, grows in grouped for r in grows]
         # _format_closed_trades_df preserves row order, so the dataframe's
         # selection index maps 1:1 back to `closed` → click a row for its card.
         cdf = _format_closed_trades_df(pd.DataFrame(closed))
+        if dim != "none":
+            cdf["__group"] = [_group_label(_row_group_key(r, dim), dim) for r in closed]
         col_map = {
+            "__group": "Group",
             "closedAt": "Closed", "openedAt": "Opened", "account": "Account",
             "symbol": "Symbol", "side": "Side", "pattern": "Strategy",
             "qty": "Qty", "entryPrice": "Entry", "exitPrice": "Exit",
@@ -3570,6 +3908,8 @@ def page_trades() -> None:
 
 def page_signals() -> None:
     st.header("Signals")
+    st.caption("Recent ICT detections. Organize by strategy, asset group, or "
+               "symbol and isolate one group.")
     rows, err = _fetch("/api/bot/signals")
     if err:
         st.warning(err)
@@ -3577,7 +3917,17 @@ def page_signals() -> None:
     if not rows:
         st.caption("No recent signals.")
         return
-    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    # Signals are pre-account (no account dimension); organize by strategy /
+    # asset group / symbol + isolate one group.
+    dim, focus = _organize_controls("sig_org", rows, account_dim=False)
+    rows = _apply_focus(rows, dim, focus)
+    if dim == "none":
+        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    else:
+        for gkey, grows in _group_rows(rows, dim):
+            st.markdown(f"**{_group_label(gkey, dim)}** · {len(grows)} signal(s)")
+            st.dataframe(pd.DataFrame(grows), hide_index=True,
+                         use_container_width=True)
 
 
 # ── Order Packages ─────────────────────────────────────────────────────────────────
@@ -4036,10 +4386,15 @@ def page_order_packages() -> None:
         "decision grade. The decision level, not the fill level."
     )
 
-    segment = _segment_picker("op_segment")
+    # Segment + time-window bar (same 24h/7d/30d/All axis as the rest of the
+    # app; default 30d). The window scopes the decision history via `since=`.
+    segment, op_wlabel, op_wslug = _control_bar(
+        "op_segment", "op_window", win_index=2)
+    op_since = (dt.datetime.utcnow()
+                - dt.timedelta(days=_WINDOW_DAYS[op_wslug])).strftime("%Y-%m-%dT%H:%M:%SZ")
     payload, err = _fetch(
         "/api/bot/order-packages?" + urlencode({
-            "limit": ANALYTICS_MAX_ROWS, "include_paper": "true",
+            "limit": ANALYTICS_MAX_ROWS, "include_paper": "true", "since": op_since,
         })
     )
     if err:
@@ -4095,6 +4450,9 @@ def page_order_packages() -> None:
             "Model scores": score_map.get(str(p.get("linkedTradeId")), "—"),
             "Claude": _claude_cell(p.get("claudeScore")),
         })
+    st.caption(f"{len(packages)} package(s) · {op_wlabel} window"
+               + (f" · capped at {ANALYTICS_MAX_ROWS}"
+                  if len(packages) >= ANALYTICS_MAX_ROWS else ""))
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
     if not (payload or {}).get("claude_log_present"):
         st.caption(
