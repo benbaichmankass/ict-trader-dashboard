@@ -6838,6 +6838,21 @@ def main() -> None:
     # land on this run.
     _consume_report_deeplink()
 
+    # Always land on Overview for a fresh (re)load. A new browser session starts
+    # with an empty session_state, so this fires ONCE per load and never fights
+    # in-session navigation (the flag persists across in-session reruns). We
+    # queue it through the same path `_goto` uses — applied right before the nav
+    # radio is created (`_apply_pending_widget`) — so it overrides the value
+    # Streamlit restores for the keyed radio on reload (which was landing the
+    # app on whatever section was last viewed, e.g. Performance). A ``?report=``
+    # deeplink queues Reports first and takes precedence.
+    if not st.session_state.get("_booted"):
+        st.session_state["_booted"] = True
+        _pend = st.session_state.get("_pending_widgets") or {}
+        if "nav_section" not in _pend:
+            _queue_widget("nav_section", "Overview")
+            st.session_state.pop("expanded_pages", None)
+
     # Render the sidebar first — it owns the "Live data" toggle that decides
     # whether we auto-poll. When Live data is OFF we skip the auto-refresh
     # entirely, so the app only hits the bot when you load or navigate, rather
