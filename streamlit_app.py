@@ -164,8 +164,22 @@ st.html("""
   [data-testid="stExpander"] { border-color: var(--ict-border); border-radius: 8px; }
   hr { margin: 0.8rem 0; border-color: #16203a; }
   .main .block-container { padding-top: 1.1rem; max-width: 1500px; }
+  /* Segmented controls (segment / window / Organize-by) — keep the button row
+     on ONE line; never wrap to a second row (scroll horizontally if truly too
+     narrow). The mobile rule below also tightens padding + font so the five
+     Organize-by options fit a phone width without scrolling. */
+  [data-testid="stSegmentedControl"] [role="radiogroup"],
+  [data-testid="stSegmentedControl"] > div {
+      flex-wrap: nowrap !important;
+      overflow-x: auto !important;
+  }
+  [data-testid="stSegmentedControl"] button { white-space: nowrap !important; }
   @media (max-width: 640px) {
       [data-testid="column"] { min-width: 100% !important; }
+      [data-testid="stSegmentedControl"] button {
+          padding-left: 0.45rem !important; padding-right: 0.45rem !important;
+          font-size: 0.78rem !important;
+      }
   }
 </style>
 """)
@@ -2185,10 +2199,10 @@ def _row_asset_class(d: dict) -> str:
 # Organize-by dimension: display label → slug. "Recent" = no grouping, one flat
 # list sorted by the relevant time (open time for live trades, close time for
 # closed trades) newest-first — the default.
-_GROUP_CHOICES: list[str] = ["Recent", "Strategy", "Account", "Asset class", "Symbol"]
+_GROUP_CHOICES: list[str] = ["Recent", "Strategy", "Account", "Asset", "Symbol"]
 _GROUP_DIM: dict[str, str] = {
     "Recent": "none", "Strategy": "strategy", "Account": "account",
-    "Asset class": "asset", "Symbol": "symbol",
+    "Asset": "asset", "Symbol": "symbol",
 }
 # dim slug → the column header used for that dimension in a per-group table.
 _GROUP_DIM_COL: dict[str, str] = {
@@ -2258,8 +2272,7 @@ def _organize_controls(
     # "Recent" view is a single control (one row on a phone).
     c1, c2 = st.columns(2)
     with c1:
-        _apply_pending_widget(f"{key_prefix}_groupby")
-        dim_label = st.selectbox(
+        dim_label = _segmented_or_radio(
             "Organize by", choices, index=0, key=f"{key_prefix}_groupby",
             help="Default 'Recent' = one list newest-first (by open time for "
                  "live trades, close time for closed trades). Pick a dimension "
