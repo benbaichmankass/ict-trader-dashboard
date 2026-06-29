@@ -177,13 +177,14 @@ layer (no per-page bespoke logic):
   `_asset_class._infer` roots) is the fallback in `_row_asset_class`, so the
   dashboard still buckets correctly against a bot that predates the field —
   graceful degradation, never a crash.
-- **Organize / focus** — `_organize_controls(key, rows)` renders a compact
-  *Organize by* dropdown (Recent / Strategy / Account / Asset class / Symbol) +
-  a *Focus on* selectbox that only appears once a real dimension is picked (so
-  the default is one row on mobile). The default **Recent** keeps one flat list
-  newest-first by the row's relevant time — **open** time for live trades,
-  **close** time for closed trades (`_row_time_value` / `_sort_recent`), applied
-  ungrouped and within each group. Helpers: `_row_group_key` / `_group_rows` /
+- **Organize / focus** — `_organize_controls(key, rows)` renders an *Organize
+  by* segmented-button bar (Recent / Strategy / Account / Asset / Symbol) + a
+  *Focus on* selectbox that only appears once a real dimension is picked. The
+  button bar is kept to ONE line on mobile via the global segmented-control CSS
+  (nowrap + tightened padding/font under 640px) plus the short "Asset" label.
+  The default **Recent** keeps one flat list newest-first by the row's relevant
+  time — **open** time for live trades, **close** time for closed trades
+  (`_row_time_value` / `_sort_recent`), applied ungrouped and within each group. Helpers: `_row_group_key` / `_group_rows` /
   `_group_label` / `_apply_focus` / `_focus_symbols`; per-group performance via
   `_open_group_caption` (open uPnL) + `_closed_group_stats` / `_closed_group_caption`
   (closed trades/win-rate/PnL). Wired into **Overview** (the live-trades monitor
