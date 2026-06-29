@@ -6856,29 +6856,44 @@ def _render_section_landing(section: str) -> None:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    # Honor a ``?report=<id>`` deep link (the Telegram system-report ping) BEFORE
-    # the sidebar/nav widgets are instantiated, so the queued nav_section/window
-    # land on this run.
+    # Auto-poll runs through a frontend timer (streamlit-autorefresh) so nav
+    # clicks take effect immediately instead of waiting out a blocking sleep. It
+    # ALSO gives us a reliable "fresh browser (re)load" signal: that frontend
+    # component REMOUNTS on a true document load, so its counter resets to 0 —
+    # even when Streamlit resumes the Python session_state. A 0 that follows a
+    # non-0 (or the very first run) is therefore a fresh-load pulse, distinct
+    # from the periodic ticks (1, 2, 3, …) and from interaction reruns (which
+    # keep the last count). We read it BEFORE the sidebar so the nav radio can be
+    # reset on this same run. `live` uses the last-known toggle value (the toggle
+    # itself is rendered inside render_sidebar).
+    live = bool(st.session_state.get("live_data", _DEFAULT_LIVE))
+    poll_count = (st_autorefresh(interval=POLL_INTERVAL_S * 1000, key="poll")
+                  if (live and _AUTOREFRESH_AVAILABLE) else None)
+    _poll_prev = st.session_state.get("_poll_prev")
+    st.session_state["_poll_prev"] = poll_count
+    _seen = st.session_state.get("_session_seen")
+    st.session_state["_session_seen"] = True
+    fresh_load = (
+        (poll_count == 0 and _poll_prev != 0)   # autorefresh on: remount pulse
+        or (poll_count is None and not _seen)    # autorefresh off: first run only
+    )
+
+    # A fresh (re)load always opens on Overview. We rotate the nav radio's
+    # per-session key nonce (`_nav_key`) so the radio has NO browser-cached value
+    # to restore and falls back to its Overview default — this is what makes a
+    # refresh land on Overview instead of reopening the last-viewed section
+    # (pre-setting session_state did NOT work: Streamlit restored the cached
+    # radio value over it). Skipped when a ?report= deeplink targets a section,
+    # so the Telegram report link still opens Reports.
+    if fresh_load and not st.query_params.get("report"):
+        st.session_state["_nav_nonce"] = uuid.uuid4().hex[:8]
+
+    # Honor a ?report=<id> deep link BEFORE the nav widgets render, so its queued
+    # section lands on this run (uses the just-rotated nonce when fresh).
     _consume_report_deeplink()
 
-    # A fresh (re)load always opens on Overview: the section-nav radio is keyed
-    # per-session (`_nav_key`), so a new browser session has no cached value to
-    # restore and the radio falls back to its Overview default. (The earlier
-    # approach of pre-setting session_state did NOT work — Streamlit restored the
-    # browser-cached radio value over it on reload.) A ``?report=`` deeplink
-    # queues its target before the radio renders and still takes precedence.
-
-    # Render the sidebar first — it owns the "Live data" toggle that decides
-    # whether we auto-poll. When Live data is OFF we skip the auto-refresh
-    # entirely, so the app only hits the bot when you load or navigate, rather
-    # than polling it as a second always-on client.
+    # Render the sidebar — it owns the "Live data" toggle and the section nav.
     section = render_sidebar()
-    live = bool(st.session_state.get("live_data", _DEFAULT_LIVE))
-
-    # Non-blocking poll via a frontend timer (streamlit-autorefresh) so nav
-    # clicks take effect immediately instead of waiting out a blocking sleep.
-    if live and _AUTOREFRESH_AVAILABLE:
-        st_autorefresh(interval=POLL_INTERVAL_S * 1000, key="poll")
 
     stats, stats_err = _fetch("/api/bot/stats")
 
