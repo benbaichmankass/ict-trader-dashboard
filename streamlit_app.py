@@ -2182,10 +2182,12 @@ def _row_asset_class(d: dict) -> str:
     return _symbol_asset_class((d or {}).get("symbol"))
 
 
-# Organize-by dimension: display label → slug. "None" = one flat list.
-_GROUP_CHOICES: list[str] = ["None", "Strategy", "Account", "Asset class", "Symbol"]
+# Organize-by dimension: display label → slug. "Recent" = no grouping, one flat
+# list sorted by the relevant time (open time for live trades, close time for
+# closed trades) newest-first — the default.
+_GROUP_CHOICES: list[str] = ["Recent", "Strategy", "Account", "Asset class", "Symbol"]
 _GROUP_DIM: dict[str, str] = {
-    "None": "none", "Strategy": "strategy", "Account": "account",
+    "Recent": "none", "Strategy": "strategy", "Account": "account",
     "Asset class": "asset", "Symbol": "symbol",
 }
 # dim slug → the column header used for that dimension in a per-group table.
@@ -2250,21 +2252,23 @@ def _organize_controls(
     ``rows`` (already segment-filtered) populate the focus choices. Pass
     ``account_dim=False`` where rows carry no account (e.g. signals)."""
     choices = [c for c in _GROUP_CHOICES if account_dim or c != "Account"]
+    # Compact two-up bar: a single-line "Organize by" dropdown (was a 5-button
+    # segmented control that wrapped to two rows on mobile) beside a "Focus on"
+    # dropdown that only appears once a real dimension is picked — so the default
+    # "Recent" view is a single control (one row on a phone).
     c1, c2 = st.columns(2)
     with c1:
-        dim_label = _segmented_or_radio(
+        _apply_pending_widget(f"{key_prefix}_groupby")
+        dim_label = st.selectbox(
             "Organize by", choices, index=0, key=f"{key_prefix}_groupby",
-            help="Split the trades below into sections by strategy, account, "
-                 "asset group, or symbol — each with its own performance "
-                 "summary. Then optionally focus on one group to isolate it.",
+            help="Default 'Recent' = one list newest-first (by open time for "
+                 "live trades, close time for closed trades). Pick a dimension "
+                 "to split into per-group sections + isolate one group.",
         )
         dim = _GROUP_DIM.get(dim_label, "none")
     focus: str | None = None
-    with c2:
-        if dim == "none":
-            st.caption("Pick a dimension to organize into sections and isolate "
-                       "a single group.")
-        else:
+    if dim != "none":
+        with c2:
             keys = [k for k, _ in _group_rows(rows, dim)]
             _apply_pending_widget(f"{key_prefix}_focus")
             picked = st.selectbox(
@@ -2283,6 +2287,26 @@ def _apply_focus(rows: list[dict], dim: str, focus: str | None) -> list[dict]:
     if dim == "none" or focus is None:
         return rows
     return [r for r in rows if _row_group_key(r, dim) == focus]
+
+
+def _row_time_value(row: dict, kind: str) -> dt.datetime:
+    """The timestamp a row sorts on. ``open`` → opened time, ``closed`` →
+    closed time (opened fallback), anything else → a generic detection time.
+    Unparseable / missing sorts oldest (``datetime.min``)."""
+    if kind == "closed":
+        d = _parse_trade_ts(row.get("closedAt") or row.get("openedAt"))
+    elif kind == "open":
+        d = _parse_trade_ts(row.get("openedAt"))
+    else:
+        d = _parse_trade_ts(
+            row.get("ts") or row.get("timestamp") or row.get("time"))
+    return d or dt.datetime.min
+
+
+def _sort_recent(rows: list[dict], kind: str) -> list[dict]:
+    """Newest-first by the row's relevant time (open/close), for the default
+    'Recent' view + ordering within each group."""
+    return sorted(rows, key=lambda r: _row_time_value(r, kind), reverse=True)
 
 
 def _focus_symbols(
@@ -2937,7 +2961,9 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     for ov_symbol in ov_symbols:
         # focus_positions == positions when no group is isolated, else just the
         # isolated group's legs — so the rows under each chart honour the focus.
-        sym_positions = [p for p in focus_positions if p.get("symbol") == ov_symbol]
+        # Newest-open first.
+        sym_positions = _sort_recent(
+            [p for p in focus_positions if p.get("symbol") == ov_symbol], "open")
         df, candles_err = _fetch_candles(ov_symbol, ov_interval, limit=1000)
 
         # Header: symbol name + an "open" badge when it carries a live position;
@@ -3059,20 +3085,15 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         # isolating a group narrows this table to the same set.
         positions_all = _apply_focus(positions_all, ov_dim, ov_focus)
         if positions_all:
-            # When a group is isolated/organized, cluster by group; otherwise the
-            # historical real-first / paper-after order.
+            # Default: newest-open first. When organized, cluster by group while
+            # keeping newest-open order within each group (stable sort).
+            pos_sorted = _sort_recent(positions_all, "open")
             if ov_dim != "none":
                 _gorder = {k: i for i, (k, _v) in
                            enumerate(_group_rows(positions_all, ov_dim))}
                 pos_sorted = sorted(
-                    positions_all,
-                    key=lambda p: (_gorder.get(_row_group_key(p, ov_dim), 99),
-                                   0 if _row_account_class(p) == "real_money" else 1),
-                )
-            else:
-                pos_sorted = sorted(
-                    positions_all,
-                    key=lambda p: 0 if _row_account_class(p) == "real_money" else 1,
+                    pos_sorted,
+                    key=lambda p: _gorder.get(_row_group_key(p, ov_dim), 99),
                 )
             pdf = pd.DataFrame(pos_sorted)
             # Per-row uPnL straight from the API's multiplier-aware
@@ -3770,6 +3791,7 @@ def page_positions() -> None:
             dim, focus = _organize_controls("pos_org", rows)
             rows = _apply_focus(rows, dim, focus)
             if dim == "none":
+                rows = _sort_recent(rows, "open")  # newest open first
                 st.caption(_open_group_caption(rows))
                 for p in rows:
                     _render_trade_card(
@@ -3780,7 +3802,7 @@ def page_positions() -> None:
                 for gkey, grows in _group_rows(rows, dim):
                     st.markdown(f"### {_group_label(gkey, dim)}")
                     st.caption(_open_group_caption(grows))
-                    for p in grows:
+                    for p in _sort_recent(grows, "open"):
                         _render_trade_card(
                             p, is_open=True, op_map=op_map, signals=signals,
                             key_prefix="postab_",
@@ -3831,7 +3853,9 @@ def page_trades() -> None:
         if not closed:
             st.caption(f"No trades in the focused group for the {wlabel} window.")
             return
-        if dim != "none":
+        if dim == "none":
+            closed = _sort_recent(closed, "closed")  # newest close first
+        else:
             grouped = _group_rows(closed, dim)
             # Per-group realised-performance summary (this is the "show me the
             # performance for QQQ / metals / this account" ask).
@@ -3848,8 +3872,10 @@ def page_trades() -> None:
                         f" · {wlabel}**")
             st.dataframe(summ, hide_index=True, use_container_width=True)
             # Re-order `closed` so rows cluster by group (keeps the 1:1 index
-            # mapping between the dataframe and `closed` for click-to-card).
-            closed = [r for _gkey, grows in grouped for r in grows]
+            # mapping between the dataframe and `closed` for click-to-card);
+            # newest close first within each group.
+            closed = [r for _gkey, grows in grouped
+                      for r in _sort_recent(grows, "closed")]
         # _format_closed_trades_df preserves row order, so the dataframe's
         # selection index maps 1:1 back to `closed` → click a row for its card.
         cdf = _format_closed_trades_df(pd.DataFrame(closed))
@@ -3922,12 +3948,13 @@ def page_signals() -> None:
     dim, focus = _organize_controls("sig_org", rows, account_dim=False)
     rows = _apply_focus(rows, dim, focus)
     if dim == "none":
-        st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        st.dataframe(pd.DataFrame(_sort_recent(rows, "signal")),
+                     hide_index=True, use_container_width=True)
     else:
         for gkey, grows in _group_rows(rows, dim):
             st.markdown(f"**{_group_label(gkey, dim)}** · {len(grows)} signal(s)")
-            st.dataframe(pd.DataFrame(grows), hide_index=True,
-                         use_container_width=True)
+            st.dataframe(pd.DataFrame(_sort_recent(grows, "signal")),
+                         hide_index=True, use_container_width=True)
 
 
 # ── Order Packages ─────────────────────────────────────────────────────────────────
