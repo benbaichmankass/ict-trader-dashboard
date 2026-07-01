@@ -4091,6 +4091,21 @@ def page_positions() -> None:
                         )
 
 
+def _closed_trade_picker(closed: list[dict], key: str, label: str) -> int | None:
+    """Selectbox fallback/companion for opening a closed trade's full card —
+    a guaranteed-discoverable alternative to the dataframe's tiny per-row
+    selection checkbox (BL-20260701-TRADECARD-CLICK)."""
+    return st.selectbox(
+        label, [None, *range(len(closed))],
+        format_func=lambda i: "—" if i is None else (
+            f"{closed[i].get('symbol')} "
+            f"{str(closed[i].get('side', '')).upper()} · "
+            f"{closed[i].get('closedAt') or ''}"
+        ),
+        key=key,
+    )
+
+
 def page_trades() -> None:
     """Closed-trade HISTORY — the window selector + clickable rows → detail
     card. Split from Positions (open) 2026-06-20 to mirror the Android app."""
@@ -4174,9 +4189,16 @@ def page_trades() -> None:
         disp = cdf[cols].rename(columns=col_map) if cols else cdf
         sel_idx: int | None = None
         if _df_row_selection_supported():
+            # Clicking a data cell in an `st.dataframe` only gives that cell
+            # keyboard focus — it does NOT select the row. Only the tiny
+            # auto-added checkbox in the leftmost column fires `on_select`,
+            # which is easy to miss (especially on mobile), so the caption
+            # calls it out explicitly and a selectbox is always offered too
+            # as a foolproof alternative (BL-20260701-TRADECARD-CLICK).
             st.caption(f"{len(closed)} closed trade(s) · {wlabel} window"
                        + (f" · capped at {ANALYTICS_MAX_ROWS}" if len(closed) >= ANALYTICS_MAX_ROWS else "")
-                       + " · click a row for the full trade card")
+                       + " · check the box next to a row (or pick below) for "
+                         "the full trade card")
             event = st.dataframe(
                 disp, hide_index=True, use_container_width=True,
                 on_select="rerun", selection_mode="single-row", key="pos_closed_df",
@@ -4187,6 +4209,8 @@ def page_trades() -> None:
                 rows_sel = []
             if rows_sel:
                 sel_idx = rows_sel[0]
+            else:
+                sel_idx = _closed_trade_picker(closed, "pos_closed_pick", "…or open full card for")
         else:
             # Older Streamlit without dataframe row-selection — render the
             # table plus a selectbox so the full card is still reachable.
@@ -4194,16 +4218,7 @@ def page_trades() -> None:
                        + (f" · capped at {ANALYTICS_MAX_ROWS}" if len(closed) >= ANALYTICS_MAX_ROWS else "")
                        + " · pick a trade below for the full card")
             st.dataframe(disp, hide_index=True, use_container_width=True)
-            pick = st.selectbox(
-                "Open full card for…", [None, *range(len(closed))],
-                format_func=lambda i: "—" if i is None else (
-                    f"{closed[i].get('symbol')} "
-                    f"{str(closed[i].get('side', '')).upper()} · "
-                    f"{closed[i].get('closedAt') or ''}"
-                ),
-                key="pos_closed_pick",
-            )
-            sel_idx = pick
+            sel_idx = _closed_trade_picker(closed, "pos_closed_pick", "Open full card for…")
         if sel_idx is not None and 0 <= sel_idx < len(closed):
             st.markdown("#### Selected trade")
             _render_trade_card(
