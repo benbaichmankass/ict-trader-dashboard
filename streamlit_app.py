@@ -850,6 +850,10 @@ def _lc_position_markers(
     for p in positions or []:
         if p.get("symbol") and p.get("symbol") != symbol:
             continue
+        # A working (placed, unfilled) order has no entry fill — skip its ENTRY
+        # marker; it renders only as a dashed LIMIT price line (see _lc_price_lines).
+        if p.get("_working"):
+            continue
         ts = pd.to_datetime(p.get("openedAt"), errors="coerce", utc=True)
         if pd.isna(ts):
             continue
@@ -897,6 +901,28 @@ def _lc_price_lines(
         entry = p.get("entryPrice")
         sl    = p.get("stopLoss")
         tp    = p.get("takeProfit")
+        if p.get("_working"):
+            # Working (placed, unfilled) order — a dashed AMBER limit line + its
+            # would-be SL/TP, visually distinct from a live position (there's no
+            # position yet). Labelled "limit" so it never reads as an entry.
+            _wc = "#f5a623"
+            if entry is not None:
+                lines.append({
+                    "price": float(entry), "color": _wc, "lineWidth": 1,
+                    "lineStyle": 2, "axisLabelVisible": True,
+                    "title": f"{side or 'LIMIT'} limit (working)",
+                })
+            if sl is not None:
+                lines.append({
+                    "price": float(sl), "color": _wc, "lineWidth": 1,
+                    "lineStyle": 3, "axisLabelVisible": True, "title": "SL (working)",
+                })
+            if tp is not None:
+                lines.append({
+                    "price": float(tp), "color": _wc, "lineWidth": 1,
+                    "lineStyle": 3, "axisLabelVisible": True, "title": "TP (working)",
+                })
+            continue
         if entry is not None:
             lines.append({
                 "price": float(entry), "color": _TV_ENTRY, "lineWidth": 2,
@@ -1407,23 +1433,29 @@ def _prop_mark(symbol: str) -> float | None:
         return None
 
 
-def _prop_open_positions() -> list[dict]:
-    """Live prop trades as position-like rows, with a mark-price uPnL estimate.
+def _prop_rows_by_status(status: str) -> list[dict]:
+    """Prop tickets at lifecycle ``status`` shaped into position-like rows.
 
-    A live prop trade = an outbound ticket at lifecycle status ``filled``
-    (``/api/bot/prop/tickets?status=filled``). Returns ``[]`` on any error (prop
-    endpoints not deployed yet, or no open prop trade) so the Overview degrades
-    to exactly its prior behaviour when there's nothing to show."""
-    positions: list[dict] = []
+    Returns ``[]`` on any error (prop endpoints not deployed yet, or none at
+    that status) so callers degrade to exactly their prior behaviour."""
+    rows: list[dict] = []
     for acct in _prop_accounts():
         payload, err = _fetch(
-            f"/api/bot/prop/tickets?account_id={acct}&status=filled&limit=200")
+            f"/api/bot/prop/tickets?account_id={acct}&status={status}&limit=200")
         if err or not isinstance(payload, dict):
             continue
         for t in payload.get("tickets") or []:
-            if str(t.get("status")) != "filled" or not t.get("symbol"):
+            if str(t.get("status")) != status or not t.get("symbol"):
                 continue
-            positions.append(_prop_ticket_to_position(t, acct))
+            rows.append(_prop_ticket_to_position(t, acct))
+    return rows
+
+
+def _prop_open_positions() -> list[dict]:
+    """Live (FILLED) prop trades as position-like rows, with a mark-price uPnL
+    estimate. A live prop trade = a ticket at lifecycle status ``filled`` (the
+    limit tripped / market filled — a real open position)."""
+    positions = _prop_rows_by_status("filled")
     # One mark per distinct symbol, applied to every leg on it.
     marks: dict[str, float | None] = {}
     for p in positions:
@@ -1432,6 +1464,20 @@ def _prop_open_positions() -> list[dict]:
             marks[sym] = _prop_mark(sym)
         _apply_prop_upnl(p, marks[sym])
     return positions
+
+
+def _prop_working_orders() -> list[dict]:
+    """WORKING (PLACED) prop orders — a limit/pending order placed on the terminal
+    but NOT yet filled. These hold **no position and no P&L**, so they're kept
+    apart from the live-trades P&L entirely: each row is tagged ``_working`` and
+    carries no uPnL. Rendered as a separate "Working orders (awaiting fill)"
+    section + a dashed LIMIT/SL/TP overlay on the symbol's chart."""
+    rows = _prop_rows_by_status("placed")
+    for r in rows:
+        r["_working"] = True
+        r["unrealizedPnl"] = None
+        r["unrealizedPnlSource"] = None
+    return rows
 
 
 # ── Overview analytics (trade-performance visualizations) ───────────────────────
@@ -3073,10 +3119,16 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     # the prop endpoints aren't deployed or there's no open prop trade.
     prop_positions = _prop_open_positions()
     positions = positions + prop_positions
+    # Working PROP orders — a limit/pending order PLACED on the terminal but NOT
+    # filled yet. These hold no position and no P&L, so they are kept OUT of
+    # `positions` (never in a P&L sum); they render in their own "Working orders"
+    # section + a dashed LIMIT line on the chart. Empty → no change.
+    working_orders = _prop_working_orders()
     ov_symbols = _overview_chart_symbols(positions)
     # A prop symbol the bot isn't otherwise config-trading (so _discover_symbols
-    # misses it) still needs a chart — float any such open-prop symbol to the top.
-    for _pp in prop_positions:
+    # misses it) still needs a chart — float any such open-prop / working-order
+    # symbol to the top.
+    for _pp in prop_positions + working_orders:
         _ps = str(_pp.get("symbol") or "").upper()
         if _ps and _ps not in ov_symbols:
             ov_symbols.insert(0, _ps)
@@ -3089,6 +3141,7 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     st.markdown("**Live trades monitor**")
     ov_dim, ov_focus = _organize_controls("ov_live_org", positions)
     focus_positions = _apply_focus(positions, ov_dim, ov_focus)
+    focus_working = _apply_focus(working_orders, ov_dim, ov_focus)
     if ov_focus is not None:
         ov_symbols = _focus_symbols(ov_symbols, focus_positions, ov_dim, ov_focus)
         st.caption(f"Focused on **{_group_label(ov_focus, ov_dim)}** · "
@@ -3163,11 +3216,15 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         # Newest-open first.
         sym_positions = _sort_recent(
             [p for p in focus_positions if p.get("symbol") == ov_symbol], "open")
+        # Working (placed) orders on this symbol — chart overlay only (never a
+        # P&L leg); listed in the Working-orders section below.
+        sym_working = [w for w in focus_working if w.get("symbol") == ov_symbol]
         df, candles_err = _fetch_candles(ov_symbol, ov_interval, limit=1000)
 
-        # Header: symbol name + an "open" badge when it carries a live position;
-        # when open, the net live PnL + a per-position summary line.
-        badge = " · 🟢 open" if sym_positions else ""
+        # Header: symbol name + an "open" badge when it carries a live position,
+        # or a "working" badge when it only carries a placed (unfilled) order.
+        badge = (" · 🟢 open" if sym_positions
+                 else " · 🟠 working" if sym_working else "")
         st.markdown(f"#### {ov_symbol}{badge}")
         if sym_positions:
             # sym_positions carries real-money, paper AND prop legs (the fetch
@@ -3227,13 +3284,33 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         else:
             # All overlays sent to the component; its on-canvas checkboxes
             # toggle them. Overlays are filtered to this symbol inside the embed.
+            # Working orders ride the same positions overlay (dashed LIMIT line,
+            # no ENTRY marker) but are NOT in the P&L metrics above.
             render_tv_chart(df, sig_data, trade_data, ov_symbol,
-                            positions=sym_positions)
+                            positions=sym_positions + sym_working)
             st.caption(
                 f"{ov_symbol} · {ov_interval} · candles from the bot's exchange "
                 f"feed (yfinance fallback) · overlay toggles + fullscreen on the "
                 f"chart · auto-refreshes every {POLL_INTERVAL_S}s"
             )
+
+    # ── Working orders (placed — awaiting fill) ────────────────────────────────
+    # Prop limit/pending orders placed on the terminal that haven't tripped yet:
+    # no position, no P&L. Kept strictly apart from the live-trades P&L above —
+    # they appear here (and as a dashed amber LIMIT line on the chart) so the
+    # operator can see what's working without it masquerading as an open trade.
+    if focus_working:
+        st.markdown("**🟠 Working orders (placed — awaiting fill)**")
+        st.caption(
+            "Limit / pending prop orders placed on the terminal that haven't "
+            "filled yet — **no position and no P&L** until the limit trips. Each "
+            "shows as a dashed amber LIMIT line on its chart above; when it "
+            "fills it moves up into the live-trades monitor."
+        )
+        for _i, _w in enumerate(_sort_recent(focus_working, "open")):
+            _render_working_order_card(
+                _w, expander_label=_working_row_label(_w),
+                key_prefix=f"ovwo_{_i}_")
 
     st.divider()
 
@@ -4617,6 +4694,61 @@ def _render_trade_card(
         _raw_key = f"rawpkg_{key_prefix}{tid or id(trade)}_{'o' if is_open else 'c'}"
         if st.checkbox("Raw order package", key=_raw_key):
             st.json(op or {"note": "no linked order package"})
+
+
+def _working_row_label(w: dict) -> str:
+    """Expander-row label for a working (placed, unfilled) prop order — a
+    clickable one-liner. No uPnL (there's no position yet); the amber dot + the
+    'awaiting fill' tail read clearly as a working order, not a live trade."""
+    side = str(w.get("side", "")).upper()
+    qty = w.get("qty", "?")
+    entry = w.get("entryPrice", "?")
+    strat = w.get("pattern") or "?"
+    acct = w.get("account") or "?"
+    dur = _fmt_duration(w.get("openedAt"))
+    dur_s = f" · ⏱️ {dur}" if dur else ""
+    return (f"🟠 {side} {qty} @ {entry} (limit) · {strat} · {acct} · "
+            f"placed{dur_s} · awaiting fill")
+
+
+def _render_working_order_card(
+    w: dict, *, expander_label: str, key_prefix: str = "",
+) -> None:
+    """Render one WORKING (placed, unfilled) prop order as a clickable row.
+
+    Deliberately NOT :func:`_render_trade_card` — a working order has no
+    position and no P&L, so it shows the limit/SL/TP geometry + the ticket
+    message, but never a uPnL metric or "live for X" framing (which would imply
+    an open trade). It's the placed side of the ``emitted → placed → filled``
+    lifecycle; when it fills it appears in the live-trades monitor instead."""
+    sym = w.get("symbol", "?")
+    side_raw = str(w.get("side", "")).lower()
+    if side_raw in ("buy", "long"):
+        side_lbl = "LONG"
+    elif side_raw in ("sell", "short"):
+        side_lbl = "SHORT"
+    else:
+        side_lbl = side_raw.upper() or "—"
+    with st.expander(expander_label, expanded=False):
+        st.markdown(f"### 🟠 {sym} · {side_lbl} · working order")
+        st.caption(
+            f"strategy **{w.get('pattern') or '?'}** · account "
+            f"**{w.get('account') or '?'}** · 🟠 **placed** — limit/pending order "
+            "on the terminal, **not filled yet** (no position, no P&L)"
+        )
+        lv = st.columns(4)
+        lv[0].metric("Limit / entry", fmt_num(w.get("entryPrice")))
+        lv[1].metric("Stop loss", fmt_num(w.get("stopLoss")))
+        lv[2].metric("Take profit", fmt_num(w.get("takeProfit")))
+        lv[3].metric("Qty", fmt_num(w.get("qty")))
+        placed_dur = _fmt_duration(w.get("openedAt"))
+        st.caption(
+            f"placed {w.get('openedAt') or '—'} · ⏱️ waiting **{placed_dur or '—'}** "
+            "for the limit to trip · reported live once it fills"
+        )
+        msg = (w.get("_prop_ticket") or {}).get("message")
+        if msg and st.checkbox("Show ticket message", key=f"womsg_{key_prefix}"):
+            st.code(msg)
 
 
 def page_order_packages() -> None:
@@ -6684,7 +6816,11 @@ def page_prop() -> None:
         )
 
     # ── Open prop trades — cards at the very top, each with the trade message ──
+    # A live prop trade = a ticket at status ``filled`` (limit tripped / market
+    # fill — a real open position). ``placed`` orders (limit on the terminal, not
+    # yet filled) are a SEPARATE section below: no position, no P&L.
     open_trades = [t for t in all_tickets if str(t.get("status")) == "filled"]
+    working_tickets = [t for t in all_tickets if str(t.get("status")) == "placed"]
     if open_trades:
         st.subheader(f"Open prop trades ({len(open_trades)})")
         for t in open_trades:
@@ -6704,6 +6840,30 @@ def page_prop() -> None:
                     else:
                         st.caption("No message text stored for this ticket "
                                    "(pre-dates message capture).")
+        st.divider()
+
+    # ── Working orders (placed — awaiting fill) — no position, no P&L ──
+    if working_tickets:
+        st.subheader(f"🟠 Working orders — placed, awaiting fill ({len(working_tickets)})")
+        st.caption("Limit / pending orders placed on the terminal that haven't "
+                   "filled yet. **No position and no P&L** until the limit trips "
+                   "— report the fill (`open`/`filled`) to move it to a live trade.")
+        for t in working_tickets:
+            sym = t.get("symbol") or "?"
+            direction = str(t.get("direction") or "").upper()
+            with st.container(border=True):
+                st.markdown(f"### 🟠 {sym} {direction}  ·  {t.get('strategy') or '—'}  "
+                            "·  _working_")
+                m = st.columns(4)
+                m[0].metric("Limit / entry",
+                            t.get("entry") if t.get("entry") is not None else "—")
+                m[1].metric("SL", t.get("sl") if t.get("sl") is not None else "—")
+                m[2].metric("TP", t.get("tp") if t.get("tp") is not None else "—")
+                m[3].metric("Qty", t.get("qty") if t.get("qty") is not None else "—")
+                with st.expander("📩 Trade message sent"):
+                    msg = t.get("message")
+                    st.code(msg) if msg else st.caption(
+                        "No message text stored for this ticket.")
         st.divider()
 
     # ── Rule-distance panel (distance to the account-killer limits) ──
