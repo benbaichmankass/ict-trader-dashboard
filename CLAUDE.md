@@ -138,9 +138,10 @@ CLAUDE.md              — this file
 docs/                  — ad-hoc design notes
 ```
 
-## Information architecture — 6 sections (redesign 2026-06-22)
+## Information architecture — 7 sections (redesign 2026-06-22; **Roadmap** added 2026-07-01)
 
-The sidebar collapsed from ~19 flat tabs to **6 sections**, each a **landing of
+The sidebar collapsed from ~19 flat tabs to **7 sections** (six card-landings
+plus the special-cased **Overview** and **Roadmap** views), each a **landing of
 summary cards** that drill into the existing detail page (principle: overview
 first, details one click away — `SECTIONS` / `PAGE_DESC` / `_section_for` +
 `_render_section_landing` + the `nav_section`/`nav_detail` state in
@@ -157,6 +158,7 @@ detail directly.
 | **Accounts** | Accounts · Prop |
 | **Activity** | Positions · Trades · Order Packages · Signals |
 | **Admin** | Data Explorer · Logs · Health |
+| **Roadmap** | the product-roadmap progress visualization — milestones → sprints → work-session notes. No card grid — it *is* the view (special-cased like Overview; `page_roadmap` in `main()`). |
 
 Section-landing cards currently show a title + one-line blurb (`PAGE_DESC`) +
 an "Open" button; enriching each card with a live summary metric is the
@@ -230,6 +232,7 @@ Nested expanders are illegal in Streamlit, so the in-row "Show all" + config use
 | Health | `/api/bot/health/services`, `/api/bot/health/latest` |
 | Reports | `/api/bot/reports` (index) + `/api/bot/reports/{id}` (one report's HTML) — **a log of links to the consolidated `/system-report` executive reports** (the bot-side master skill that runs health + performance + ML together per window). A window filter (All/since-last/daily/weekly/monthly), a newest-first table (generated/window/roll-up grade/headline), and an inline viewer that embeds the selected report's self-contained responsive HTML via `components.html` (plus a **Download HTML** button — the report repo is private, so a download/inline render is the human-usable path, not a GitHub link). **Deep link:** a `?report=<id>` query param opens this page with that report pre-selected and rendered (`_consume_report_deeplink` in `main()` + the pre-select in `page_reports`) — this is the link the bot's Telegram system-report ping points at, so tapping the ping lands directly on the report. **Read-only** — the dashboard never generates a report; it renders what the bot committed under `comms/reports/`. |
 | Logs | `/api/bot/logs` |
+| Roadmap | `/api/bot/roadmap` (index) + `/api/bot/roadmap/sprint/{id}` (one log) — **product-roadmap progress view** parsed bot-side from `ROADMAP.md` + `docs/sprint-logs/`. A progress roll-up (milestones done/active/planned + a completion bar + total work-session count), a **milestone list** (`st.expander` per milestone: normalized status badge 🟢done/🟡active/📋planned + the full status detail markdown), and a **drill into sprints** — each milestone's mapped work-session logs (+ an "Other sessions" bucket for one-off/thematic sprints + a global "Jump to any work session" search) open into that session's parsed notes/summaries (`page_roadmap` → `_sprint_picker` → `_render_sprint_detail`, which renders the log's `##` sections inline + a raw-markdown toggle). Sprint→milestone mapping is the bot's (explicit `docs/sprint-logs/<id>.md` links in the milestone cell + the Historical Sprint Ledger's `M-mapping` + a filename-prefix fallback). **Read-only.** A top-level section (`SECTIONS["Roadmap"]=[]`, rendered directly like Overview). |
 
 **Candles: bot endpoint first, Yahoo Finance fallback.** `_fetch_candles`
 calls the bot's **`/api/bot/candles?symbol=&interval=&limit=`** route first
