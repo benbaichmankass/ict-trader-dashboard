@@ -6878,6 +6878,85 @@ def _sprint_picker(sprints: list[dict], key: str, label: str) -> None:
             _render_sprint_detail(sid, key_prefix=key)
 
 
+def _render_sprint_list(rows: list[dict], key_prefix: str) -> None:
+    """Render `rows` as a clickable table (Date · Milestone · Session ·
+    Objective); selecting a row opens that session's notes below. Falls back to
+    a table + selectbox on older Streamlit without dataframe row-selection."""
+    if not rows:
+        st.caption("No sessions match these filters.")
+        return
+    df = pd.DataFrame(
+        [
+            {
+                "Date": s.get("dateEnd") or "—",
+                "Milestone": s.get("milestone") or "—",
+                "Session": s["id"],
+                "Objective": (s.get("objective") or "—")[:90],
+            }
+            for s in rows
+        ]
+    )
+    picked: str | None = None
+    if _df_row_selection_supported():
+        event = st.dataframe(
+            df, hide_index=True, use_container_width=True,
+            on_select="rerun", selection_mode="single-row", key=f"{key_prefix}_df",
+        )
+        try:
+            sel = event.selection.rows  # type: ignore[union-attr]
+        except AttributeError:
+            sel = []
+        if sel:
+            picked = rows[sel[0]]["id"]
+    else:
+        st.dataframe(df, hide_index=True, use_container_width=True)
+        label_by = {f"{s.get('dateEnd') or '—'} · {s['id']}": s["id"] for s in rows}
+        choice = st.selectbox("Open a session", ["—", *label_by.keys()], key=f"{key_prefix}_pick")
+        picked = label_by.get(choice)
+    if picked:
+        with st.container(border=True):
+            st.markdown(f"### {picked}")
+            _render_sprint_detail(picked, key_prefix=key_prefix)
+
+
+def _all_sessions_browser(sprints: list[dict], ms_order: list[str]) -> None:
+    """A flat list of every work session with organize-by + filter controls."""
+    c1, c2 = st.columns([1.2, 1])
+    with c1:
+        organize = st.radio(
+            "Organize by", ["Recent", "Milestone", "A–Z"],
+            horizontal=True, key="rm_all_org",
+        )
+    with c2:
+        has_unmapped = any(not s.get("milestone") for s in sprints)
+        opts = ["All", *ms_order, *(["Unmapped"] if has_unmapped else [])]
+        focus = st.selectbox("Filter by milestone", opts, key="rm_all_filter")
+    q = st.text_input(
+        "Search", key="rm_all_q", placeholder="session id or objective…",
+    ).strip().lower()
+
+    rows = list(sprints)
+    if focus == "Unmapped":
+        rows = [s for s in rows if not s.get("milestone")]
+    elif focus != "All":
+        rows = [s for s in rows if s.get("milestone") == focus]
+    if q:
+        rows = [s for s in rows
+                if q in s["id"].lower() or q in (s.get("objective") or "").lower()]
+
+    if organize == "Recent":
+        rows.sort(key=lambda s: (s.get("dateEnd") or "", s["id"]), reverse=True)
+    elif organize == "A–Z":
+        rows.sort(key=lambda s: s["id"].lower())
+    else:  # Milestone — roadmap order, then newest-first within each
+        order = {m: i for i, m in enumerate(ms_order)}
+        rows.sort(key=lambda s: (order.get(s.get("milestone"), 999),
+                                 "" if s.get("dateEnd") is None else s["dateEnd"]),
+                  reverse=False)
+    st.caption(f"{len(rows)} of {len(sprints)} sessions")
+    _render_sprint_list(rows, key_prefix="rm_all")
+
+
 def page_roadmap() -> None:
     st.header("🗺️ Roadmap")
     data, err = _fetch("/api/bot/roadmap")
@@ -6888,8 +6967,11 @@ def page_roadmap() -> None:
         st.info("The roadmap isn't available yet (the bot returned no ROADMAP.md).")
         return
 
-    if data.get("lastUpdated"):
-        st.caption(f"ROADMAP.md last updated: {data['lastUpdated']}")
+    lu = data.get("lastUpdated")
+    hl = data.get("lastUpdatedHeadline")
+    if lu or hl:
+        st.caption("Roadmap last updated: "
+                   + " — ".join(str(x) for x in (lu, hl) if x))
 
     # ── Progress roll-up ──────────────────────────────────────────────────
     summ = data.get("summary", {})
@@ -6915,43 +6997,44 @@ def page_roadmap() -> None:
 
     st.divider()
 
-    # ── Quick jump: open any session log across the whole history ──────────
-    with st.expander("🔎 Jump to any work session", expanded=False):
-        _sprint_picker(sprints, key="rm_jump", label="Search all sessions (newest first)")
+    milestones = data.get("milestones", [])
+    ms_order = [m["id"] for m in milestones]
+    tab_ms, tab_all = st.tabs(["Milestones", "All sessions"])
 
     # ── Milestones → sprints ──────────────────────────────────────────────
-    st.subheader("Milestones")
-    for m in data.get("milestones", []):
-        emoji, colour = _ms_style(m.get("status", "unknown"))
-        focus = (m.get("focus") or "").replace("*", "").strip()
-        focus = (focus[:70] + "…") if len(focus) > 70 else focus
-        n = m.get("sprintCount", 0)
-        label = f"{emoji} **{m['id']}** · {focus}"
-        if n:
-            label += f"  ·  {n} session{'s' if n != 1 else ''}"
-        with st.expander(label, expanded=False):
-            st.markdown(
-                f"<span style='color:{colour};font-weight:600'>"
-                f"{m.get('statusLabel') or m.get('status', '')}</span>"
-                + (f" · <span style='color:#6b7488'>{m.get('type', '')}</span>"
-                   if m.get('type') else ""),
-                unsafe_allow_html=True,
-            )
-            detail = (m.get("statusDetail") or "").strip()
-            if detail:
-                st.markdown(detail)
-            st.divider()
-            _sprint_picker(by_ms.get(m["id"], []), key=f"rm_ms_{m['id']}",
-                           label=f"Work sessions under {m['id']}")
+    with tab_ms:
+        for m in milestones:
+            emoji, colour = _ms_style(m.get("status", "unknown"))
+            focus = (m.get("focus") or "").replace("*", "").strip()
+            focus = (focus[:70] + "…") if len(focus) > 70 else focus
+            n = m.get("sprintCount", 0)
+            label = f"{emoji} **{m['id']}** · {focus}"
+            if n:
+                label += f"  ·  {n} session{'s' if n != 1 else ''}"
+            with st.expander(label, expanded=False):
+                st.markdown(
+                    f"<span style='color:{colour};font-weight:600'>"
+                    f"{m.get('statusLabel') or m.get('status', '')}</span>"
+                    + (f" · <span style='color:#6b7488'>{m.get('type', '')}</span>"
+                       if m.get('type') else ""),
+                    unsafe_allow_html=True,
+                )
+                detail = (m.get("statusDetail") or "").strip()
+                if detail:
+                    st.markdown(detail)
+                st.divider()
+                _sprint_picker(by_ms.get(m["id"], []), key=f"rm_ms_{m['id']}",
+                               label=f"Work sessions under {m['id']}")
+        unmapped = [s for s in sprints if not s.get("milestone")]
+        if unmapped:
+            with st.expander(f"⚪ Other sessions — not tied to a milestone ({len(unmapped)})",
+                             expanded=False):
+                _sprint_picker(unmapped, key="rm_unmapped",
+                               label="Work sessions (newest first)")
 
-    # ── One-off / thematic sessions not tied to a numbered milestone ───────
-    unmapped = [s for s in sprints if not s.get("milestone")]
-    if unmapped:
-        st.subheader("Other sessions")
-        st.caption("One-off / thematic work sessions not tied to a numbered milestone.")
-        with st.expander(f"⚪ Unmapped sessions ({len(unmapped)})", expanded=False):
-            _sprint_picker(unmapped, key="rm_unmapped",
-                           label="Work sessions (newest first)")
+    # ── Flat, filterable/organizable list of every work session ───────────
+    with tab_all:
+        _all_sessions_browser(sprints, ms_order)
 
 
 # ── Detail-page dispatch (sub-page key → render fn) — reused as the detail
