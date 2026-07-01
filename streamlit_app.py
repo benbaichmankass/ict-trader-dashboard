@@ -1303,6 +1303,137 @@ def _upnl_caption(n_unknown: int) -> str | None:
             "unmeasured uPnL (excluded from the sum)")
 
 
+# ── Live prop trades (manual-bridge, no broker feed) ────────────────────────────
+#
+# A prop account (e.g. Breakout) has no broker API — the bot only *emits* a
+# ticket and learns the fill/close from an operator report-back (see the Prop
+# tab). So a LIVE prop trade is an OUTBOUND ticket whose lifecycle status reads
+# ``filled`` (``emitted → filled → closed``). We shape those tickets into
+# position-like rows (``accountClass="prop"``) so the SAME live-trades monitor
+# machinery — per-symbol charts with entry/SL/TP lines, the detail card, the
+# organize/focus layer — renders them next to real/paper legs. Prop is a THIRD
+# funding class and is **never** blended into a real-money or paper P&L sum: the
+# monitor keeps a separate "Prop PnL" metric for it (mirroring the exec-summary
+# and header-band split that already exist elsewhere in this file).
+#
+# Because there is no broker feed, prop uPnL can't be broker-truth — it's a
+# dashboard **mark-price estimate** (last candle close vs the ticket entry ×
+# qty × side), tagged with its own ``unrealizedPnlSource`` so the card labels it
+# honestly. The estimate assumes a 1:1 contract value (correct for the crypto/FX
+# symbols the prop account trades; a futures multiplier ≠ 1 would need the bot's
+# ``contract_value_usd``, which the dashboard doesn't have — noted in the UI).
+_PROP_UPNL_SOURCE = "prop_estimate"
+
+
+def _prop_accounts() -> list[str]:
+    """Prop-firm account ids from ``/api/bot/config`` (``account_class == 'prop'``).
+
+    Falls back to the canonical ``breakout_1`` when config is unavailable so the
+    monitor still finds the live prop account on a bot that predates the field."""
+    cfg, _ = _fetch("/api/bot/config")
+    ids: list[str] = []
+    if isinstance(cfg, dict):
+        for a in cfg.get("accounts") or []:
+            if (isinstance(a, dict)
+                    and str(a.get("account_class") or "").lower() == "prop"
+                    and a.get("id")):
+                ids.append(str(a["id"]))
+    return ids or ["breakout_1"]
+
+
+def _prop_ticket_to_position(t: dict, account_id: str) -> dict:
+    """Shape one live prop ticket into a ``/api/bot/positions``-style row.
+
+    Entry / SL / TP / qty are the LAST values the bot recorded on the ticket —
+    static unless the monitor updates them, which the report-back loop reflects
+    (the ticket is re-emitted / advanced), so this is always the current setup.
+    ``_prop_ticket`` is kept so the card can surface the exact ticket message
+    (the assistant's decision output) as the trade's reasoning."""
+    direction = str(t.get("direction") or "").lower()
+    side = ("buy" if direction in ("long", "buy")
+            else "sell" if direction in ("short", "sell") else direction)
+    return {
+        "id": t.get("ticket_id") or t.get("order_package_id"),
+        "account": account_id,
+        "accountClass": "prop",
+        "isDemo": False,
+        "symbol": str(t.get("symbol") or "").upper(),
+        "side": side,
+        "qty": t.get("qty"),
+        "entryPrice": t.get("entry"),
+        "stopLoss": t.get("sl"),
+        "takeProfit": t.get("tp"),
+        "pattern": t.get("strategy"),
+        "openedAt": t.get("signal_time") or t.get("created_at"),
+        # uPnL is filled in from the mark price below (no broker feed).
+        "unrealizedPnl": None,
+        "unrealizedPnlSource": None,
+        "_prop_ticket": t,
+    }
+
+
+def _apply_prop_upnl(p: dict, mark: float | None) -> None:
+    """Fill a prop row's mark-price uPnL estimate in place.
+
+    ``(mark − entry) × qty × side``. Marked ``unavailable`` (→ card shows "—",
+    excluded from every sum) when the mark/entry/qty isn't known — never a fake
+    $0. Source ``prop_estimate`` distinguishes it from broker/markprice_local."""
+    entry, qty = p.get("entryPrice"), p.get("qty")
+    if mark is None or entry is None or qty is None:
+        p["unrealizedPnl"] = None
+        p["unrealizedPnlSource"] = "unavailable"
+        return
+    try:
+        sign = 1.0 if str(p.get("side") or "").lower() in ("buy", "long") else -1.0
+        p["unrealizedPnl"] = (float(mark) - float(entry)) * float(qty) * sign
+        p["unrealizedPnlSource"] = _PROP_UPNL_SOURCE
+    except (TypeError, ValueError):
+        p["unrealizedPnl"] = None
+        p["unrealizedPnlSource"] = "unavailable"
+
+
+def _prop_mark(symbol: str) -> float | None:
+    """Last candle close for *symbol* — the mark for the prop uPnL estimate.
+
+    Uses a fixed 15m interval (independent of the chart's interval selector) so
+    it doesn't re-fetch when the operator changes the chart timeframe; the last
+    close is ~identical across intervals anyway."""
+    df, _ = _fetch_candles(symbol, "15m", limit=2)
+    if df is None or df.empty:
+        return None
+    try:
+        return float(df["close"].iloc[-1])
+    except (KeyError, IndexError, ValueError, TypeError):
+        return None
+
+
+def _prop_open_positions() -> list[dict]:
+    """Live prop trades as position-like rows, with a mark-price uPnL estimate.
+
+    A live prop trade = an outbound ticket at lifecycle status ``filled``
+    (``/api/bot/prop/tickets?status=filled``). Returns ``[]`` on any error (prop
+    endpoints not deployed yet, or no open prop trade) so the Overview degrades
+    to exactly its prior behaviour when there's nothing to show."""
+    positions: list[dict] = []
+    for acct in _prop_accounts():
+        payload, err = _fetch(
+            f"/api/bot/prop/tickets?account_id={acct}&status=filled&limit=200")
+        if err or not isinstance(payload, dict):
+            continue
+        for t in payload.get("tickets") or []:
+            if str(t.get("status")) != "filled" or not t.get("symbol"):
+                continue
+            positions.append(_prop_ticket_to_position(t, acct))
+    # One mark per distinct symbol, applied to every leg on it.
+    marks: dict[str, float | None] = {}
+    for p in positions:
+        sym = p.get("symbol")
+        if sym not in marks:
+            marks[sym] = _prop_mark(sym)
+        _apply_prop_upnl(p, marks[sym])
+    return positions
+
+
 # ── Overview analytics (trade-performance visualizations) ───────────────────────
 #
 # Five widgets, all driven by ONE fetch of /api/bot/trades/closed (the endpoint
@@ -2933,7 +3064,22 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     # below tags paper rows so they read clearly as non-real-money.
     positions, _ = _fetch("/api/bot/positions?include_paper=true")
     positions = positions or []
+    # Live PROP trades (Breakout manual-bridge) ride the SAME monitor. Prop has
+    # no broker feed, so these come from the outbound 'filled' tickets shaped
+    # into position-like rows with a mark-price uPnL estimate (accountClass=
+    # 'prop'). Merged in here so they flow through organize/focus, the chart
+    # symbol set, and the per-symbol cards — but kept a SEPARATE P&L bucket
+    # below (never blended into the real/paper sums). Empty (→ no change) when
+    # the prop endpoints aren't deployed or there's no open prop trade.
+    prop_positions = _prop_open_positions()
+    positions = positions + prop_positions
     ov_symbols = _overview_chart_symbols(positions)
+    # A prop symbol the bot isn't otherwise config-trading (so _discover_symbols
+    # misses it) still needs a chart — float any such open-prop symbol to the top.
+    for _pp in prop_positions:
+        _ps = str(_pp.get("symbol") or "").upper()
+        if _ps and _ps not in ov_symbols:
+            ov_symbols.insert(0, _ps)
 
     # Organize the live-trades monitor by strategy / account / asset group /
     # symbol and isolate one group. Focus narrows BOTH the charts shown (to the
@@ -2969,6 +3115,20 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     _ov_op_payload, _ = _fetch(
         "/api/bot/order-packages?" + urlencode({"limit": 50, "include_paper": "true"}))
     ov_op_map_top = _order_package_map(_ov_op_payload)
+    # Prop trades aren't in order_packages the same way (no linked live trade),
+    # so synthesize a minimal package per prop row keyed by its id — the card's
+    # "Decision & reasoning" then surfaces the exact ticket message (the
+    # assistant's decision output: entry/SL/TP + logic) instead of "no package".
+    for _pp in prop_positions:
+        _pid = str(_pp["id"]) if _pp.get("id") is not None else None
+        _tk = _pp.get("_prop_ticket") or {}
+        if _pid and _pid not in ov_op_map_top:
+            ov_op_map_top[_pid] = {
+                "status": _tk.get("status") or "filled",
+                "signalLogic": _tk.get("message"),
+                "meta": {},
+                "confidence": None,
+            }
 
     def _pos_row_label(p: dict) -> str:
         # Expander-row label for one open position: a clickable one-liner that
@@ -2984,7 +3144,9 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         entry = p.get("entryPrice", "?")
         strat = p.get("pattern") or "?"
         acct = p.get("account") or "?"
-        tag = " · 🧪 paper" if _row_account_class(p) == "paper" else ""
+        _cls = _row_account_class(p)
+        tag = (" · 🧪 paper" if _cls == "paper"
+               else " · 🏦 prop" if _cls == "prop" else "")
         upnl, known = _open_upnl(p)
         pnl_s = fmt_usd(upnl) if known else "—"
         dur = _fmt_duration(p.get("openedAt"))
@@ -3008,37 +3170,43 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
         badge = " · 🟢 open" if sym_positions else ""
         st.markdown(f"#### {ov_symbol}{badge}")
         if sym_positions:
-            # sym_positions carries BOTH real-money and paper legs (the fetch
-            # uses include_paper=true). NEVER blend them: split by account class
-            # so the primary "Live PnL" metric is real-money only, and paper
-            # rides as a separate labeled metric when any paper leg exists.
+            # sym_positions carries real-money, paper AND prop legs (the fetch
+            # uses include_paper=true; prop is merged in above). NEVER blend the
+            # three funding classes: the primary "Live PnL" metric is real-money
+            # only; paper and prop each ride as their own labeled metric when a
+            # leg of that class exists. Prop uPnL is a mark-price ESTIMATE.
             real_legs = [p for p in sym_positions if _is_real_money(p)]
             paper_legs = [p for p in sym_positions
                           if _row_account_class(p) == "paper"]
-            real_pnl, real_unk = _sum_upnl(real_legs)
-            paper_pnl, paper_unk = _sum_upnl(paper_legs)
-            real_known = len(real_legs) - real_unk
+            prop_legs = [p for p in sym_positions
+                         if _row_account_class(p) == "prop"]
+            # Metric columns: real always shown; paper/prop only when present.
+            _specs = [("Live PnL", real_legs)]
             if paper_legs:
-                pc1, pc1b, pc2 = st.columns([1, 1, 2])
-            else:
-                pc1, pc2 = st.columns([1, 3])
-                pc1b = None
-            if real_legs:
-                pc1.metric(f"Live PnL · {ov_symbol}",
-                           _upnl_metric(real_pnl, real_known, real_unk),
-                           delta=round(real_pnl, 2) if real_known else None)
-            else:
-                pc1.metric(f"Live PnL · {ov_symbol}", "—")
-            if pc1b is not None:
-                paper_known = len(paper_legs) - paper_unk
-                pc1b.metric(f"🧪 Paper PnL · {ov_symbol}",
-                            _upnl_metric(paper_pnl, paper_known, paper_unk),
-                            delta=round(paper_pnl, 2) if paper_known else None)
-            pc2.caption(
+                _specs.append(("🧪 Paper PnL", paper_legs))
+            if prop_legs:
+                _specs.append(("🏦 Prop PnL", prop_legs))
+            _cols = st.columns([1] * len(_specs) + [max(1, 4 - len(_specs))])
+            _tot_unk = 0
+            for _ci, (_lbl, _legs) in enumerate(_specs):
+                _pnl, _unk = _sum_upnl(_legs)
+                _tot_unk += _unk
+                if _legs:
+                    _cols[_ci].metric(
+                        f"{_lbl} · {ov_symbol}",
+                        _upnl_metric(_pnl, len(_legs) - _unk, _unk),
+                        delta=round(_pnl, 2) if (len(_legs) - _unk) else None)
+                else:
+                    _cols[_ci].metric(f"{_lbl} · {ov_symbol}", "—")
+            _cols[-1].caption(
                 f"{len(sym_positions)} open "
                 f"{'leg' if len(sym_positions) == 1 else 'legs'} — "
                 "tap a trade below to expand its full card.")
-            _unk_cap = _upnl_caption(real_unk + paper_unk)
+            if prop_legs:
+                st.caption("🏦 Prop P&L is a dashboard mark-price estimate "
+                           "(no broker feed) — tracked separately, never blended "
+                           "into real-money or paper totals.")
+            _unk_cap = _upnl_caption(_tot_unk)
             if _unk_cap:
                 st.caption("⚠️ " + _unk_cap)
 
@@ -4282,7 +4450,9 @@ def _render_trade_card(
             if expander_label is not None else st.container(border=True))
     with card:
         # ── Header: symbol + side, PnL on the right ────────────────────
-        demo = " · 🧪 paper" if _row_account_class(trade) == "paper" else ""
+        _acct_cls = _row_account_class(trade)
+        demo = (" · 🧪 paper" if _acct_cls == "paper"
+                else " · 🏦 prop" if _acct_cls == "prop" else "")
         h1, h2 = st.columns([3, 1])
         h1.markdown(f"### {side_dot} {sym} · {side_lbl}")
         if is_open:
@@ -4299,6 +4469,8 @@ def _render_trade_card(
             _src_lbl = {
                 "broker": "🛰️ broker truth",
                 "markprice_local": "📐 mark-price (local compute)",
+                _PROP_UPNL_SOURCE: "📐 dashboard mark-price estimate "
+                                   "(prop — no broker feed; assumes 1:1 contract value)",
                 "unavailable": "⚠️ unavailable (broker read failed, no mark price)",
             }.get(_src)
             if _src_lbl:
@@ -4338,10 +4510,15 @@ def _render_trade_card(
         if is_open:
             # Live trade: how long it has been open (now − openedAt).
             live_dur = _fmt_duration(trade.get("openedAt"))
+            # Prop has no broker feed — its levels are the LAST values the bot
+            # recorded on the ticket (updated via the report-back loop), so word
+            # the SL/TP provenance accordingly.
+            _lvl_note = ("SL/TP from the latest ticket (updates on report-back)"
+                         if _acct_cls == "prop"
+                         else "SL/TP set at entry (not trailed or modified post-open)")
             st.caption(
                 f"opened {trade.get('openedAt') or '—'} · "
-                f"⏱️ live for **{live_dur or '—'}** · SL/TP set at entry "
-                "(not trailed or modified post-open)"
+                f"⏱️ live for **{live_dur or '—'}** · {_lvl_note}"
             )
         else:
             # Closed trade: how long it ran (closedAt − openedAt).
