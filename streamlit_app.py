@@ -443,6 +443,7 @@ SECTIONS: dict[str, list[str]] = {
     "Accounts": ["Accounts", "Prop"],
     "Activity": ["Positions", "Trades", "Order Packages", "Signals"],
     "Admin": ["Data Explorer", "Logs", "Health"],
+    "Roadmap": [],  # special-cased: renders page_roadmap directly (like Overview)
 }
 SECTION_NAMES = list(SECTIONS.keys())
 
@@ -6798,6 +6799,161 @@ def page_logs() -> None:
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True, height=600)
 
 
+# ── Roadmap ────────────────────────────────────────────────────────────────
+# Progress visualization over ROADMAP.md → milestones → sprints, drilling into
+# the notes/summaries of each work-session log. Backed by the bot's read-only
+# /api/bot/roadmap[/sprint/{id}] endpoints (file-backed from ROADMAP.md +
+# docs/sprint-logs/, Tier-1). Roadmap is a top-level section rendered directly
+# (like Overview) rather than a card stack.
+
+# Milestone status token → (emoji, colour) for the progress badges.
+_MS_STATUS_STYLE: dict[str, tuple[str, str]] = {
+    "done":        ("✅", _TV_GREEN),
+    "in_progress": ("🔄", "#f5a623"),
+    "next":        ("🔜", "#4a90e2"),
+    "reopened":    ("⚠️", "#f5a623"),
+    "planned":     ("📋", "#6b7488"),
+    "blocked":     ("⛔", _TV_RED),
+    "unknown":     ("⚪", "#6b7488"),
+}
+
+
+def _ms_style(token: str) -> tuple[str, str]:
+    return _MS_STATUS_STYLE.get(token, _MS_STATUS_STYLE["unknown"])
+
+
+def _render_sprint_detail(sid: str, key_prefix: str) -> None:
+    """Fetch + render one sprint log's parsed sections (the work-session notes).
+
+    Rendered inline (no nested st.expander — that's illegal in Streamlit), so
+    the section bodies go out as markdown under bold sub-headers, with the raw
+    markdown behind a checkbox toggle. `key_prefix` namespaces the toggle so the
+    same sprint opened from two pickers (Jump + its milestone) can't collide."""
+    detail, err = _fetch(f"/api/bot/roadmap/sprint/{sid}")
+    if err:
+        st.warning(err)
+        return
+    if not detail or not detail.get("present"):
+        st.caption("No log found for this session.")
+        return
+    meta_bits = []
+    if detail.get("milestone"):
+        meta_bits.append(f"milestone **{detail['milestone']}**")
+    span = " → ".join(x for x in (detail.get("dateStart"), detail.get("dateEnd")) if x)
+    if span:
+        meta_bits.append(span)
+    if meta_bits:
+        st.caption(" · ".join(meta_bits))
+    if detail.get("objective"):
+        st.markdown(f"**Objective** — {detail['objective']}")
+    for sec in detail.get("sections", []):
+        heading = sec.get("heading", "").strip()
+        body = (sec.get("body") or "").strip()
+        if not heading and not body:
+            continue
+        st.markdown(f"**{heading}**")
+        if body:
+            st.markdown(body)
+    if st.checkbox("Show raw markdown", key=f"rm_raw_{key_prefix}_{sid}"):
+        st.code(detail.get("markdown", ""), language="markdown")
+
+
+def _sprint_picker(sprints: list[dict], key: str, label: str) -> None:
+    """A selectbox over `sprints` (newest-first) that renders the picked log
+    inline below. `sprints` are index rows carrying id/title/dateEnd/objective."""
+    if not sprints:
+        st.caption("No work-session logs mapped here yet.")
+        return
+    opts = ["— open a session log —"]
+    id_by_label: dict[str, str] = {}
+    for s in sprints:
+        lbl = f"{s.get('dateEnd') or '—'} · {s['id']}"
+        opts.append(lbl)
+        id_by_label[lbl] = s["id"]
+    choice = st.selectbox(label, opts, key=key)
+    sid = id_by_label.get(choice)
+    if sid:
+        with st.container(border=True):
+            st.markdown(f"### {sid}")
+            _render_sprint_detail(sid, key_prefix=key)
+
+
+def page_roadmap() -> None:
+    st.header("🗺️ Roadmap")
+    data, err = _fetch("/api/bot/roadmap")
+    if err:
+        st.warning(err)
+        return
+    if not data or not data.get("present"):
+        st.info("The roadmap isn't available yet (the bot returned no ROADMAP.md).")
+        return
+
+    if data.get("lastUpdated"):
+        st.caption(f"ROADMAP.md last updated: {data['lastUpdated']}")
+
+    # ── Progress roll-up ──────────────────────────────────────────────────
+    summ = data.get("summary", {})
+    total = summ.get("total", 0) or 0
+    done = summ.get("done", 0) or 0
+    active = summ.get("active", 0) or 0
+    pending = summ.get("pending", 0) or 0
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Milestones", total)
+    c2.metric("✅ Done", done)
+    c3.metric("🔄 Active", active)
+    c4.metric("📋 Planned", pending)
+    if total:
+        st.progress(done / total, text=f"{done}/{total} milestones complete "
+                                        f"({done / total * 100:.0f}%)")
+    st.caption(f"{data.get('sprintCount', 0)} work-session logs on record.")
+
+    sprints = data.get("sprints", [])
+    by_ms: dict[str, list[dict]] = {}
+    for s in sprints:
+        if s.get("milestone"):
+            by_ms.setdefault(s["milestone"], []).append(s)
+
+    st.divider()
+
+    # ── Quick jump: open any session log across the whole history ──────────
+    with st.expander("🔎 Jump to any work session", expanded=False):
+        _sprint_picker(sprints, key="rm_jump", label="Search all sessions (newest first)")
+
+    # ── Milestones → sprints ──────────────────────────────────────────────
+    st.subheader("Milestones")
+    for m in data.get("milestones", []):
+        emoji, colour = _ms_style(m.get("status", "unknown"))
+        focus = (m.get("focus") or "").replace("*", "").strip()
+        focus = (focus[:70] + "…") if len(focus) > 70 else focus
+        n = m.get("sprintCount", 0)
+        label = f"{emoji} **{m['id']}** · {focus}"
+        if n:
+            label += f"  ·  {n} session{'s' if n != 1 else ''}"
+        with st.expander(label, expanded=False):
+            st.markdown(
+                f"<span style='color:{colour};font-weight:600'>"
+                f"{m.get('statusLabel') or m.get('status', '')}</span>"
+                + (f" · <span style='color:#6b7488'>{m.get('type', '')}</span>"
+                   if m.get('type') else ""),
+                unsafe_allow_html=True,
+            )
+            detail = (m.get("statusDetail") or "").strip()
+            if detail:
+                st.markdown(detail)
+            st.divider()
+            _sprint_picker(by_ms.get(m["id"], []), key=f"rm_ms_{m['id']}",
+                           label=f"Work sessions under {m['id']}")
+
+    # ── One-off / thematic sessions not tied to a numbered milestone ───────
+    unmapped = [s for s in sprints if not s.get("milestone")]
+    if unmapped:
+        st.subheader("Other sessions")
+        st.caption("One-off / thematic work sessions not tied to a numbered milestone.")
+        with st.expander(f"⚪ Unmapped sessions ({len(unmapped)})", expanded=False):
+            _sprint_picker(unmapped, key="rm_unmapped",
+                           label="Work sessions (newest first)")
+
+
 # ── Detail-page dispatch (sub-page key → render fn) — reused as the detail
 # views behind the section landings. Overview is special (needs stats), handled
 # in main().
@@ -6900,6 +7056,9 @@ def main() -> None:
     if section == "Overview":
         # Overview is the exec glance + live monitor (no card stack).
         page_overview(stats, stats_err)
+    elif section == "Roadmap":
+        # Roadmap is a full-page progress visualization (no card stack).
+        page_roadmap()
     else:
         # Section landing: stacked cards that expand/collapse in place.
         _render_section_landing(section)
