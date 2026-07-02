@@ -439,7 +439,7 @@ def fmt_num(x: float | None) -> str:
 SECTIONS: dict[str, list[str]] = {
     "Overview": [],  # special-cased: renders page_overview directly
     "Performance": ["Performance", "Insights", "Reports"],
-    "Strategies & Models": ["Strategies", "Models", "Exit Ladder", "Backtesting", "Promotion", "News"],
+    "Strategies & Models": ["Strategies", "Models", "GPU Spend", "Exit Ladder", "Backtesting", "Promotion", "News"],
     "Accounts": ["Accounts", "Prop"],
     "Activity": ["Positions", "Trades", "Order Packages", "Signals"],
     "Admin": ["Data Explorer", "Logs", "Health"],
@@ -454,6 +454,7 @@ PAGE_DESC: dict[str, str] = {
     "Reports": "Consolidated /system-report executive reports (health + trading + ML).",
     "Strategies": "Live-runtime per-strategy status, routing, P&L curve, review packet.",
     "Models": "ML fleet — per-model stage, training metric, drift.",
+    "GPU Spend": "M19 Tier-1 spot-GPU training cost — per-session + monthly total vs the $10 cap.",
     "Exit Ladder": "ExitPlan laddered-vs-single-target soak (observe-only).",
     "Backtesting": "Trainer-VM sweeps + on-demand /test runs.",
     "Promotion": "Shadow-model promotion-readiness tracker.",
@@ -7389,6 +7390,88 @@ def page_roadmap() -> None:
         _all_sessions_browser(sprints, ms_order)
 
 
+def page_gpu_spend() -> None:
+    """M19 Tier-1 spot-GPU burst spend — per-training-session cost + monthly total vs cap.
+
+    Read-only view of the bot's `/api/bot/gpu/spend` (committed
+    `comms/gpu_spend_ledger.json`). Shows the running month vs the $10 cap, then a
+    per-session table (each training run's cost) + a by-month rollup.
+    """
+    st.subheader("🖥️ GPU training spend")
+    st.caption(
+        "M19 Tier-1 spot-GPU burst tier — every training session's cost, tracked "
+        "against the monthly cap. Free CPU work (corpus/Tier-0) never appears here."
+    )
+
+    def _f(v: Any) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    data, err = _fetch("/api/bot/gpu/spend")
+    if err:
+        st.warning(f"Could not load GPU spend: {err}")
+        return
+    if not data or not data.get("present"):
+        st.info("GPU spend tracking not available yet.")
+        return
+
+    budget = data.get("budget_usd_per_month")
+    cur = data.get("current_month_usd")
+    runs = data.get("runs") or []
+    month = data.get("current_month") or "—"
+    provider = data.get("provider") or "—"
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(f"This month ({month})", _money(cur))
+    c2.metric("Monthly cap", _money(budget))
+    c3.metric("Remaining", _money(data.get("budget_remaining_usd")))
+    c4.metric("Sessions this month", data.get("current_month_runs", 0))
+
+    if budget:
+        pct = min(1.0, max(0.0, _f(cur) / _f(budget))) if _f(budget) else 0.0
+        st.progress(pct, text=f"{_money(cur)} / {_money(budget)} ({pct*100:.0f}%)")
+    if data.get("over_budget"):
+        st.error("🔴 Over the monthly GPU budget — the burst workflow's gate will refuse new runs.")
+
+    st.caption(
+        f"Provider: **{provider}** · lifetime spend: **{_money(data.get('lifetime_usd'))}** "
+        f"over {data.get('run_count', 0)} session(s)."
+    )
+
+    st.markdown("#### Training sessions")
+    if not runs:
+        st.info(
+            "No GPU training sessions billed yet. Each burst run appends its cost here "
+            "(the first is the ~1-GPU-hr T1.1 deep-head bake-off once the provider key is set)."
+        )
+    else:
+        rows = [
+            {
+                "Ended": (r.get("ended_at") or r.get("started_at") or "—"),
+                "Experiment": r.get("experiment") or "—",
+                "GPU": r.get("gpu_type") or "—",
+                "GPU-hrs": r.get("gpu_hours") if r.get("gpu_hours") is not None else "—",
+                "$/hr": _money(r.get("rate_usd_per_hour")),
+                "Cost": _money(r.get("cost_usd")),
+                "Month cumul.": _money(r.get("cumulative_month_usd")),
+                "Status": r.get("status") or "—",
+            }
+            for r in runs
+        ]
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    by_month = data.get("by_month") or []
+    if by_month:
+        st.markdown("#### By month")
+        mrows = [
+            {"Month": m.get("month"), "Spend": _money(m.get("usd")), "Sessions": m.get("runs")}
+            for m in by_month
+        ]
+        st.dataframe(pd.DataFrame(mrows), use_container_width=True, hide_index=True)
+
+
 # ── Detail-page dispatch (sub-page key → render fn) — reused as the detail
 # views behind the section landings. Overview is special (needs stats), handled
 # in main().
@@ -7399,6 +7482,7 @@ def _detail_dispatch() -> dict:
         "Reports":       page_reports,
         "Strategies":    page_strategies,
         "Models":        page_models,
+        "GPU Spend":     page_gpu_spend,
         "Exit Ladder":   page_exit_ladder,
         "Backtesting":   page_backtesting,
         "Promotion":     page_promotion,
