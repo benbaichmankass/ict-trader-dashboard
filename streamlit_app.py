@@ -545,8 +545,13 @@ def _consume_report_deeplink() -> None:
     Reports card with that report rendered (the user can then Download
     the HTML from there). Runs ONCE per session per id (guarded by
     ``_deeplink_consumed``) so it deep-links on first load but never
-    fights the user's later navigation. The query param is left in the
-    URL so a refresh / shared link still works."""
+    fights the user's later navigation. The query param is then STRIPPED
+    from the URL (a plain refresh right after the tap still shows the
+    report — Streamlit resumes the same session, and `_deeplink_consumed`
+    already short-circuits a re-navigation within it) so a later, separate
+    reload of the page (new session) lands on Overview per the normal
+    fresh-load default instead of reopening this report forever (the param
+    otherwise never goes away on its own — this was BL-20260702-REPORT-STICKY)."""
     try:
         rid = st.query_params.get("report")
     except Exception:
@@ -562,6 +567,10 @@ def _consume_report_deeplink() -> None:
     _queue_widget(_nav_key(), _section_for("Reports"))
     _queue_widget("reports_window", "All")
     st.session_state.setdefault("expanded_pages", set()).add("Reports")
+    try:
+        del st.query_params["report"]
+    except Exception:
+        pass
 
 
 def _status_dot(color: str) -> str:
