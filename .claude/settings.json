@@ -1,0 +1,6 @@
+{
+  "env": {
+    "_comment": "Default DIAG_BASE_URL for the web-session direct diag path (bot repo scripts/ops/diag_fetch.sh). Mirrors ict-trading-bot/.claude/settings.json so MULTI-REPO sessions (rooted above the bot repo, e.g. dashboard+bot+android) also resolve the live Ampere trader 141.145.193.91 (ict-bot-arm) instead of a stale cloud-env value pointing at the terminated x86 micro 158.178.210.252 (retired 2026-06-16). DIAG_READ_TOKEN stays a secret env var (never committed); the direct path also needs the cloud environment at Full network access - at the default Trusted level egress to the VM is firewalled and the GitHub-issue relay is the only channel regardless of this value.",
+    "DIAG_BASE_URL": "http://141.145.193.91:8001"
+  }
+}
