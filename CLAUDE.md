@@ -69,6 +69,38 @@ flag in the app instead, or land it in a small reversible PR and verify live.
 default the "Live data" toggle OFF. That env var is no longer read — the toggle
 defaults ON everywhere now.)
 
+## Refresh model — fragment partial reruns (adopted 2026-07-05)
+
+Data refresh is **fragment-scoped**, not page-scoped. The old model — a global
+`streamlit-autorefresh` full-script rerun every 10s — remounted the entire page
+each cycle, resetting scroll/reading position (the operator's core UX
+complaint). Now:
+
+- **`_live_fragment(render, every=…)`** wraps a region in `st.fragment`:
+  `every` set → in-place partial rerun on that cadence (page around it never
+  re-renders); `every=None` → no auto-refresh but interactions inside rerun
+  only that fragment. Falls back to a plain call if `st.fragment` is missing.
+- **Live regions:** the whole Overview view (10s, stats fetched inside the
+  fragment), the sidebar status dot + clock (30s), and the detail pages listed
+  in **`_PAGE_REFRESH_S`** (Positions/Signals 10s; Accounts/Health/Logs 30s).
+- **Everything else is static by design** — reading surfaces (Reports,
+  Insights, Roadmap, Trades, Performance, …) never refresh under the reader,
+  and **Prop stays static** because it carries the report-back form (an
+  auto-rerun mid-typing can drop input). They update on navigation, the
+  sidebar **↻ Refresh now** button (clears `_fetch_cached`), or the heartbeat.
+- **`streamlit-autorefresh` is kept but demoted** to a `HEARTBEAT_S` (300s)
+  safety-net full rerun; it still provides the fresh-browser-load pulse that
+  resets nav to Overview in `main()`. On Streamlit < 1.37 it reverts to being
+  the 10s full-page poller (graceful degradation).
+- **Stale-data fallback:** `_fetch` serves the last good payload for up to
+  `STALE_OK_S` (120s) on a transient upstream error instead of flashing an
+  empty section + warning for one poll cycle; a sustained outage still shows
+  the real error banner. Last-good store lives behind `st.cache_resource`
+  (module globals don't survive reruns).
+
+When adding a page: put it in `_PAGE_REFRESH_S` **only** if it renders live
+state worth auto-updating, and never auto-refresh a page containing a form.
+
 ## Architecture
 
 ```
