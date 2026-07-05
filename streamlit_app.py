@@ -38,6 +38,18 @@ TIMEOUT_S = 10.0
 POLL_INTERVAL_S = 10
 DEFAULT_LIMIT = 50
 
+# Fragment-based refresh (2026-07-05). Live regions re-render IN PLACE via
+# `st.fragment(run_every=…)` partial reruns — the rest of the page (scroll
+# position, whatever you're reading) stays put. The old model — a global
+# streamlit-autorefresh full-script rerun every POLL_INTERVAL_S — remounted the
+# entire page (charts included) every 10s, which reset your reading position
+# mid-scroll. The autorefresh component is KEPT but demoted to a slow heartbeat:
+# it still provides the fresh-browser-load pulse main() uses to reset nav to
+# Overview, plus a safety-net full refresh for long-idle tabs.
+HEARTBEAT_S = 300           # slow full-page safety refresh + fresh-load detector
+STALE_OK_S = 120            # serve last-good payload this long on transient fetch errors
+_FRAGMENT_OK = hasattr(st, "fragment")  # graceful degradation on old Streamlit
+
 # Config lookup: Streamlit Cloud surfaces Secrets via st.secrets (not
 # os.environ), so read both (e.g. DASHBOARD_API_TOKEN for the prop POST).
 def _cfg(key: str, default: str = "") -> str:
@@ -188,8 +200,19 @@ st.html("""
 
 # ── Data fetching ──────────────────────────────────────────────────────────────
 
+@st.cache_resource(show_spinner=False)
+def _last_good_store() -> dict:
+    """Process-wide last-good payload per path.
+
+    Module globals don't survive Streamlit's per-rerun script re-execution, so
+    the stale-fallback store lives behind cache_resource (persists across
+    reruns AND sessions — fine: the upstream data is the same for every
+    viewer). Values are ``(payload, fetched_at_epoch)``."""
+    return {}
+
+
 @st.cache_data(ttl=POLL_INTERVAL_S, show_spinner=False)
-def _fetch(path: str) -> tuple[Any, str | None]:
+def _fetch_cached(path: str) -> tuple[Any, str | None]:
     url = f"{BOT_API}{path}"
     try:
         r = requests.get(url, timeout=TIMEOUT_S)
@@ -203,6 +226,69 @@ def _fetch(path: str) -> tuple[Any, str | None]:
         return None, f"Network error on {path}: {e}"
     except ValueError as e:
         return None, f"Bad JSON from {path}: {e}"
+
+
+def _fetch(path: str) -> tuple[Any, str | None]:
+    """Cached GET with a short stale-data fallback.
+
+    On a TRANSIENT upstream failure (timeout / blip mid-refresh) serve the
+    last good payload for up to STALE_OK_S instead of flashing an empty
+    section + warning banner for one poll cycle — that flash was most of the
+    "not everything is showing up" perception. A sustained outage (> STALE_OK_S)
+    still surfaces the real error banner."""
+    data, err = _fetch_cached(path)
+    store = _last_good_store()
+    if err is None:
+        store[path] = (data, time.time())
+        return data, None
+    stale = store.get(path)
+    if stale is not None:
+        payload, fetched_at = stale
+        if time.time() - fetched_at <= STALE_OK_S:
+            return payload, None
+    return None, err
+
+
+def _live_fragment(render, *, every: float | None = None) -> None:
+    """Run ``render()`` inside a PARTIAL-RERUN fragment.
+
+    ``every`` set (and the Live-data toggle on) → the fragment re-renders
+    itself on that cadence WITHOUT re-running the rest of the script — the
+    sidebar, the section chrome, and every other open card stay untouched, so
+    scroll position and reading flow survive a data refresh. ``every=None`` →
+    no auto-refresh, but interactions INSIDE the region (selectboxes, window
+    pickers, …) still rerun only this fragment, which makes heavy pages feel
+    snappier. Falls back to a plain call on Streamlit < 1.37 (no fragments).
+
+    NOTE: ``st.rerun()`` inside a fragment defaults to app scope, so `_goto`
+    navigation jumps from within a fragment still work unchanged."""
+    if not _FRAGMENT_OK:
+        render()
+        return
+    live = bool(st.session_state.get("live_data", _DEFAULT_LIVE))
+    run_every = every if (every and live) else None
+
+    @st.fragment(run_every=run_every)
+    def _region(_render=render):
+        _render()
+
+    _region()
+
+
+# Per-page auto-refresh cadence (seconds) for the detail pages. Pages absent
+# here don't auto-refresh at all — they update on navigation / interaction /
+# the sidebar Refresh button / the slow HEARTBEAT_S safety rerun. Reading
+# surfaces (Reports, Insights, Roadmap, …) are deliberately static so a
+# refresh can never yank the page out from under you; Prop is static because
+# it carries the report-back FORM (an auto-rerun mid-typing can drop
+# in-progress input).
+_PAGE_REFRESH_S: dict[str, float] = {
+    "Positions": POLL_INTERVAL_S,
+    "Signals":   POLL_INTERVAL_S,
+    "Accounts":  30,
+    "Health":    30,
+    "Logs":      30,
+}
 
 
 def _post(path: str, json_data: dict) -> tuple[Any, str | None]:
@@ -681,23 +767,28 @@ def render_sidebar() -> str:
         )
         st.divider()
 
-        stats, err = _fetch("/api/bot/stats")
-        if err:
-            st.markdown(
-                _status_dot("#888") + "**Bot unreachable**",
-                unsafe_allow_html=True,
-            )
-        elif stats:
-            status = stats.get("status", "unknown")
-            color = {"running": _TV_GREEN, "paused": "#f5a623",
-                     "stopped": _TV_RED}.get(status, "#6b7488")
-            st.markdown(
-                _status_dot(color)
-                + f"**{status.upper()}** · {stats.get('datasource', '?')}",
-                unsafe_allow_html=True,
-            )
+        def _status_block() -> None:
+            stats, err = _fetch("/api/bot/stats")
+            if err:
+                st.markdown(
+                    _status_dot("#888") + "**Bot unreachable**",
+                    unsafe_allow_html=True,
+                )
+            elif stats:
+                status = stats.get("status", "unknown")
+                color = {"running": _TV_GREEN, "paused": "#f5a623",
+                         "stopped": _TV_RED}.get(status, "#6b7488")
+                st.markdown(
+                    _status_dot(color)
+                    + f"**{status.upper()}** · {stats.get('datasource', '?')}",
+                    unsafe_allow_html=True,
+                )
+            st.caption(f"{dt.datetime.utcnow().strftime('%H:%M:%S')} UTC")
 
-        st.caption(f"{dt.datetime.utcnow().strftime('%H:%M:%S')} UTC")
+        # Own fragment so the status dot + clock stay live without the page
+        # around them re-rendering (calling a fragment inside the sidebar
+        # context renders it there).
+        _live_fragment(_status_block, every=30)
         st.divider()
 
         # Keyed section nav so other pages can jump programmatically via `_goto`
@@ -716,23 +807,26 @@ def render_sidebar() -> str:
             key=nav_key,
         )
         st.divider()
-        # Live data: ON auto-polls the bot every POLL_INTERVAL_S (default). OFF
-        # stops the auto-refresh so the app only hits the bot when you
-        # load/navigate.
+        # Live data: ON keeps the live regions (Overview monitor, Positions,
+        # Signals, …) updating IN PLACE on their own cadence — the page around
+        # them never reloads. OFF stops all auto-refresh so the app only hits
+        # the bot when you load/navigate.
         live = st.toggle(
             "Live data", value=_DEFAULT_LIVE, key="live_data",
-            help=f"On: auto-refresh every {POLL_INTERVAL_S}s. Off: fetch only "
-                 "when you load or navigate (use 'Refresh now').",
+            help=f"On: live regions update in place (every {POLL_INTERVAL_S}s "
+                 "where it matters) without reloading the page. Off: fetch "
+                 "only when you load or navigate (use 'Refresh now').",
         )
         if live:
-            st.caption(f"\U0001f7e2 Live · auto-refresh {POLL_INTERVAL_S}s")
+            st.caption(f"\U0001f7e2 Live · in-place updates ({POLL_INTERVAL_S}s)")
         else:
             st.caption("⏸ Paused — not polling the bot")
-            st.button("Refresh now", use_container_width=True, key="refresh_now")
+        if st.button("↻ Refresh now", use_container_width=True, key="refresh_now"):
+            _fetch_cached.clear()
         # Deploy marker — bump on each release so a stale Streamlit Cloud
         # instance is obvious at a glance. If this date is old, the app
         # needs a reboot/redeploy.
-        st.caption("build 2026-06-28 · sectioned nav (overview→detail)")
+        st.caption("build 2026-07-05 · fragment refresh (no page reloads)")
 
     return section  # type: ignore[return-value]
 
@@ -6956,7 +7050,7 @@ def page_prop() -> None:
                     st.error(err)
                 else:
                     st.success(f"Reported: {res}")
-                    _fetch.clear()
+                    _fetch_cached.clear()
 
     with st.expander("Submit an account-status snapshot (drives rule-distance)"):
         with st.form("prop_status_form", clear_on_submit=False):
@@ -6984,7 +7078,7 @@ def page_prop() -> None:
                         st.error(err)
                     else:
                         st.success("Account status recorded.")
-                        _fetch.clear()
+                        _fetch_cached.clear()
 
     with st.expander("Advanced — raw JSON report"):
         st.caption(
@@ -7002,7 +7096,7 @@ def page_prop() -> None:
                 res, err = _post("/api/bot/prop/report", parsed)
                 st.error(err) if err else st.success(f"Reported: {res}")
                 if not err:
-                    _fetch.clear()
+                    _fetch_cached.clear()
 
     # ── Un-acted tickets (P3 drift) ──
     recon, recon_err = _fetch(f"/api/bot/prop/reconcile?account_id={account_id}")
@@ -7534,24 +7628,36 @@ def _render_section_landing(section: str) -> None:
                     st.rerun()
             if is_open:
                 st.divider()
-                dispatch.get(pg, lambda: st.caption("—"))()
+                # Each open card renders inside its own fragment: live pages
+                # (per _PAGE_REFRESH_S) update in place on their cadence;
+                # static pages get interaction-scoped reruns only. Either way
+                # the rest of the page — other open cards included — never
+                # re-renders underneath you.
+                _live_fragment(
+                    dispatch.get(pg, lambda: st.caption("—")),
+                    every=_PAGE_REFRESH_S.get(pg),
+                )
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    # Auto-poll runs through a frontend timer (streamlit-autorefresh) so nav
-    # clicks take effect immediately instead of waiting out a blocking sleep. It
-    # ALSO gives us a reliable "fresh browser (re)load" signal: that frontend
-    # component REMOUNTS on a true document load, so its counter resets to 0 —
-    # even when Streamlit resumes the Python session_state. A 0 that follows a
-    # non-0 (or the very first run) is therefore a fresh-load pulse, distinct
-    # from the periodic ticks (1, 2, 3, …) and from interaction reruns (which
-    # keep the last count). We read it BEFORE the sidebar so the nav radio can be
-    # reset on this same run. `live` uses the last-known toggle value (the toggle
-    # itself is rendered inside render_sidebar).
+    # Data refresh is fragment-scoped (see _live_fragment): live regions
+    # re-render in place on their own cadence and the page never reloads
+    # around you. The streamlit-autorefresh component is kept for two jobs
+    # only: (1) the "fresh browser (re)load" signal — it REMOUNTS on a true
+    # document load, so its counter resets to 0 even when Streamlit resumes
+    # the Python session_state; a 0 that follows a non-0 (or the very first
+    # run) is a fresh-load pulse, distinct from periodic ticks and from
+    # interaction reruns — and (2) a slow HEARTBEAT_S safety-net full rerun so
+    # a long-idle tab can't drift stale. On old Streamlit without fragments it
+    # falls back to being the primary POLL_INTERVAL_S full-page poller. We
+    # read it BEFORE the sidebar so the nav radio can be reset on this same
+    # run. `live` uses the last-known toggle value (the toggle itself is
+    # rendered inside render_sidebar).
     live = bool(st.session_state.get("live_data", _DEFAULT_LIVE))
-    poll_count = (st_autorefresh(interval=POLL_INTERVAL_S * 1000, key="poll")
+    _hb_s = HEARTBEAT_S if _FRAGMENT_OK else POLL_INTERVAL_S
+    poll_count = (st_autorefresh(interval=_hb_s * 1000, key="poll")
                   if (live and _AUTOREFRESH_AVAILABLE) else None)
     _poll_prev = st.session_state.get("_poll_prev")
     st.session_state["_poll_prev"] = poll_count
@@ -7579,19 +7685,27 @@ def main() -> None:
     # Render the sidebar — it owns the "Live data" toggle and the section nav.
     section = render_sidebar()
 
-    stats, stats_err = _fetch("/api/bot/stats")
-
     if section == "Overview":
-        # Overview is the exec glance + live monitor (no card stack).
-        page_overview(stats, stats_err)
+        # Overview is the exec glance + live monitor (no card stack). The
+        # whole view is one live fragment: it refreshes in place every
+        # POLL_INTERVAL_S (stats fetched INSIDE so each cycle is fresh)
+        # without remounting the sidebar/nav around it.
+        def _overview_region() -> None:
+            stats, stats_err = _fetch("/api/bot/stats")
+            page_overview(stats, stats_err)
+
+        _live_fragment(_overview_region, every=POLL_INTERVAL_S)
     elif section == "Roadmap":
-        # Roadmap is a full-page progress visualization (no card stack).
-        page_roadmap()
+        # Roadmap is a full-page progress visualization (no card stack) and a
+        # READING surface — no auto-refresh, interaction-scoped reruns only.
+        _live_fragment(page_roadmap)
     else:
         # Section landing: stacked cards that expand/collapse in place.
         _render_section_landing(section)
 
-    if live and not _AUTOREFRESH_AVAILABLE:
+    # Legacy fallback: no fragments AND no autorefresh component — blocking
+    # sleep+rerun is the only way to poll at all.
+    if live and not _AUTOREFRESH_AVAILABLE and not _FRAGMENT_OK:
         time.sleep(POLL_INTERVAL_S)
         st.rerun()
 
