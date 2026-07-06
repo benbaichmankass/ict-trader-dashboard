@@ -1612,11 +1612,27 @@ def _style_plotly(fig: go.Figure, height: int) -> go.Figure:
 
 
 def _parse_trade_ts(value: Any) -> dt.datetime | None:
-    """Parse an ISO-8601 trade timestamp into a tz-naive UTC datetime."""
+    """Parse a trade timestamp into a tz-naive UTC datetime.
+
+    Handles BOTH an ISO-8601 string AND a bare **epoch number** — the
+    reconciler-filled close path writes ``closed_at`` as a raw epoch-ms string
+    that ``fromisoformat`` can't read, which silently dropped every
+    reconciler-closed trade from the analytics frame (empty calendar / counts).
+    A 10-digit value is epoch-seconds, longer is epoch-millis.
+    """
     if not value:
         return None
+    s = str(value).strip()
+    # Bare epoch number (all digits) → epoch seconds/millis.
+    if s.isdigit():
+        try:
+            n = int(s)
+            ms = n if n >= 100_000_000_000 else n * 1000  # < 1e11 ⇒ seconds
+            return dt.datetime.fromtimestamp(ms / 1000, dt.timezone.utc).replace(tzinfo=None)
+        except (ValueError, OverflowError, OSError):
+            return None
     try:
-        d = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        d = dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
     if d.tzinfo is not None:
@@ -1695,7 +1711,7 @@ def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
     """
     import math
 
-    cols = ["strategy", "pnl", "ts", "outcome", "accountClass", "isDemo"]
+    cols = ["strategy", "pnl", "pnl_pct", "ts", "outcome", "accountClass", "isDemo"]
     records = []
     for t in trades or []:
         ts = _parse_trade_ts(t.get("closedAt") or t.get("openedAt"))
@@ -1709,6 +1725,12 @@ def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
                 pnl = float(raw)
             except (TypeError, ValueError):
                 pnl = math.nan
+        # Summed per-trade return % (realizedPnlPct) — powers the calendar's
+        # per-day / monthly "%" figure (0.0 when the bot didn't record it).
+        try:
+            pnl_pct = float(t.get("realizedPnlPct") or 0.0)
+        except (TypeError, ValueError):
+            pnl_pct = 0.0
         if math.isnan(pnl):
             outcome = "unknown"
         elif pnl > 0:
@@ -1720,6 +1742,7 @@ def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
         records.append({
             "strategy": t.get("pattern") or "unknown",
             "pnl": pnl,
+            "pnl_pct": pnl_pct,
             "ts": ts,
             "outcome": outcome,
             "accountClass": _row_account_class(t),
@@ -2133,6 +2156,17 @@ def _month_pnl(df: pd.DataFrame, year: int, month: int) -> dict[int, float]:
     return {int(k): float(v) for k, v in daily.items()}
 
 
+def _month_pnl_pct(df: pd.DataFrame, year: int, month: int) -> dict[int, float]:
+    """Summed per-trade return % per calendar day (0 when unrecorded)."""
+    if df.empty or "pnl_pct" not in df.columns:
+        return {}
+    m = df[(df["ts"].dt.year == year) & (df["ts"].dt.month == month)]
+    if m.empty:
+        return {}
+    daily = m.groupby(m["ts"].dt.day)["pnl_pct"].sum()
+    return {int(k): float(v) for k, v in daily.items()}
+
+
 def _daily_winloss(df: pd.DataFrame, days: int) -> pd.DataFrame:
     """Per-calendar-day win/loss counts over the last *days* days (gaps filled)."""
     cols = ["date", "wins", "losses"]
@@ -2158,6 +2192,7 @@ def build_pnl_calendar(df: pd.DataFrame, year: int, month: int) -> go.Figure:
     """Month grid heat-map: green = profit, red = loss, dark = near-zero / no trades."""
     weeks = calendar.monthcalendar(year, month)   # Monday-first; 0 = padding day
     pnl = _month_pnl(df, year, month)
+    pct = _month_pnl_pct(df, year, month)         # summed return % per day
     z, text, hover = [], [], []
     for week in weeks:
         zr, tr, hr = [], [], []
@@ -2173,8 +2208,13 @@ def build_pnl_calendar(df: pd.DataFrame, year: int, month: int) -> go.Figure:
                 tr.append(f"<b>{day}</b>")
                 hr.append(f"{year}-{month:02d}-{day:02d} · no trades")
             else:
-                tr.append(f"<b>{day}</b><br>{p:+,.0f}")
-                hr.append(f"{year}-{month:02d}-{day:02d} · P&L {p:+,.2f}")
+                pc = pct.get(day)
+                cell = f"<b>{day}</b><br>{p:+,.0f}"
+                if pc is not None:
+                    cell += f"<br>{pc:+.1f}%"
+                tr.append(cell)
+                hr.append(f"{year}-{month:02d}-{day:02d} · P&L {p:+,.2f}"
+                          + (f" · {pc:+.1f}%" if pc is not None else ""))
         z.append(zr)
         text.append(tr)
         hover.append(hr)
@@ -2301,6 +2341,81 @@ def _analytics_frame(include_paper: bool = False) -> tuple[pd.DataFrame, int, st
         return pd.DataFrame(columns=["strategy", "pnl", "ts", "outcome", "accountClass", "isDemo"]), 0, err
     trades = trades or []
     return _closed_trades_frame(trades), len(trades), None
+
+
+@st.cache_data(ttl=POLL_INTERVAL_S, show_spinner=False)
+def _prop_closed_frame() -> pd.DataFrame:
+    """Closed prop-journal fills → the same frame shape as `_closed_trades_frame`
+    (strategy/pnl/pnl_pct/ts/outcome/accountClass/isDemo), for the PROP funding
+    class on the P&L calendar. Prop lives in a separate store (`/api/bot/prop/fills`),
+    never `/trades/closed`; keyed by `reported_at`."""
+    cols = ["strategy", "pnl", "pnl_pct", "ts", "outcome", "accountClass", "isDemo"]
+    data, err = _fetch("/api/bot/prop/fills?limit=400")
+    fills = (data or {}).get("fills") or [] if not err else []
+    records = []
+    for f in fills:
+        if str(f.get("status") or "").lower() != "closed":
+            continue
+        raw = f.get("pnl")
+        if raw is None:
+            continue
+        try:
+            pnl = float(raw)
+        except (TypeError, ValueError):
+            continue
+        ts = _parse_trade_ts(f.get("reported_at"))
+        if ts is None:
+            continue
+        try:
+            pct = float(f.get("pnl_percent") or 0.0)
+        except (TypeError, ValueError):
+            pct = 0.0
+        records.append({
+            "strategy": "prop", "pnl": pnl, "pnl_pct": pct, "ts": ts,
+            "outcome": "win" if pnl > 0 else "loss" if pnl < 0 else "breakeven",
+            "accountClass": "prop", "isDemo": False,
+        })
+    return pd.DataFrame.from_records(records)[cols] if records else pd.DataFrame(columns=cols)
+
+
+def _render_overview_calendar() -> None:
+    """The P&L calendar on the Overview — mirrors the Android Overview widget:
+    its OWN Real / Paper / Prop toggle + a month picker + day $+% cells + a
+    monthly total. Full history, NOT scoped to the page window. Reuses
+    `build_pnl_calendar`; prop days come from the prop-fills frame."""
+    st.markdown("**📅 P&L calendar**")
+    cls = _segmented_or_radio(
+        "Funding", ["Real money", "Paper", "Prop"], index=0, key="ov_cal_class",
+    )
+    if cls == "Prop":
+        cal_df = _prop_closed_frame()
+    else:
+        frame, _, ferr = _analytics_frame(include_paper=True)
+        cal_df = frame if ferr else _segment_filter_frame(
+            frame, "real" if cls == "Real money" else "paper")
+    c1, c2 = st.columns([2, 3])
+    with c1:
+        months = _recent_months(6)
+        ym = st.selectbox(
+            "Month", months, key="ov_cal_month",
+            format_func=lambda v: f"{calendar.month_name[v[1]]} {v[0]}",
+        )
+    with c2:
+        mp = _month_pnl(cal_df, ym[0], ym[1])
+        mpc = _month_pnl_pct(cal_df, ym[0], ym[1])
+        if mp:
+            st.markdown(
+                f"**{calendar.month_name[ym[1]]} {ym[0]} total**  \n"
+                f"{fmt_usd(sum(mp.values()))} · {sum(mpc.values()):+.1f}%"
+            )
+        else:
+            st.caption(f"No closed {cls.lower()} trades this month.")
+    st.plotly_chart(
+        build_pnl_calendar(cal_df, ym[0], ym[1]),
+        use_container_width=True, config={"displayModeBar": False},
+    )
+    st.caption("Daily realised P&L ($ + summed return %) · green profit / red "
+               "loss · full history, pick the month above.")
 
 
 def render_trade_analytics() -> None:
@@ -3121,6 +3236,12 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     # performance for the chosen segment + window. Real / paper / prop kept
     # strictly separate; "All" is the explicit, All-labeled merge.
     _render_exec_summary(s, ov_segment, ov_win_label, ov_window)
+
+    # P&L calendar — under the exec summary, matching the Android Overview
+    # (own Real/Paper/Prop toggle + month picker + day $+% + monthly total,
+    # full history, NOT scoped to the page window).
+    _render_overview_calendar()
+    st.divider()
 
     # M13 S1: surface the latest analyst summary at the top of the page.
     # Silent no-op when /api/bot/insights/* isn't deployed yet OR the
