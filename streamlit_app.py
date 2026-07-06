@@ -7261,13 +7261,39 @@ def page_reports() -> None:
 
 def page_logs() -> None:
     st.header("Logs")
-    rows, err = _fetch("/api/bot/logs")
+    st.caption(
+        "Merged pipeline audit + operator outcomes (WARN/ERROR/CRITICAL), newest "
+        "first. Filter by window + level (both applied server-side)."
+    )
+    # Window + level filters (parity with the Android Logs screen) — the bot's
+    # /api/bot/logs accepts since= + level= (CSV ∈ {info,warn,error,trade}).
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        win = _segmented_or_radio(
+            "Window", ["1h", "6h", "24h", "7d"], index=2, key="logs_window",
+            help="How far back to pull log rows.",
+        )
+    with c2:
+        all_levels = ["trade", "info", "warn", "error"]
+        levels = st.multiselect(
+            "Levels", all_levels, default=all_levels, key="logs_levels",
+            help="Filter by log level (server-side). Empty = all.",
+        )
+    hours = {"1h": 1, "6h": 6, "24h": 24, "7d": 168}.get(win, 24)
+    since = (dt.datetime.utcnow() - dt.timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    q = f"/api/bot/logs?limit=1000&since={since}"
+    # Only narrow when a strict subset is chosen (empty or full = no level filter).
+    if levels and len(levels) < len(all_levels):
+        q += "&level=" + ",".join(levels)
+
+    rows, err = _fetch(q)
     if err:
         st.warning(err)
         return
     if not rows:
-        st.caption("No log entries.")
+        st.caption("No log entries for this window / level filter.")
         return
+    st.caption(f"{len(rows)} entries · last {win}")
     st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True, height=600)
 
 
