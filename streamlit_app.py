@@ -2735,6 +2735,70 @@ def _exec_perf_window(window: str) -> dict:
     return d
 
 
+def _readiness_counts(strategies: list) -> dict:
+    """Promotion-readiness roll-up for the exec summary + the Promotion page.
+
+    Two fleets, mirroring the Android Readiness screen so the apps agree:
+      - **Models** — shadow-stage soak from ``/api/bot/shadow/stats``, graded by
+        the shared ``_promotion_verdict``: ``ok`` → *ready to evaluate*,
+        ``warn`` → *soaking* (maturing toward the ≥7d & ≥200-pred standard).
+      - **Strategies** — the M7 review verdict per strategy
+        (``/api/bot/strategies/{name}/review`` → ``proposed_action``), bucketed
+        into promote / tune / hold / demote_shadow / kill. Only strategies WITH
+        a packet are counted. Best-effort — a failed fetch just contributes 0.
+    """
+    stats_env, serr = _fetch("/api/bot/shadow/stats")
+    rows = (stats_env or {}).get("records") or [] if not serr else []
+    ready = soaking = 0
+    for r in rows:
+        _, sev, _facts = _promotion_verdict(r)
+        if sev == "ok":
+            ready += 1
+        elif sev == "warn":
+            soaking += 1
+
+    buckets = {"promote": 0, "tune": 0, "hold": 0, "demote_shadow": 0, "kill": 0}
+    reviewed = 0
+    for strat in strategies or []:
+        name = strat.get("name")
+        if not name:
+            continue
+        rev, rerr = _fetch(f"/api/bot/strategies/{quote(str(name))}/review")
+        if rerr or not (rev or {}).get("present"):
+            continue
+        packet = (rev or {}).get("packet")
+        if not packet:
+            continue
+        action = str(packet.get("proposed_action") or "hold").lower()
+        if action == "demote":
+            action = "demote_shadow"
+        buckets[action] = buckets.get(action, 0) + 1
+        reviewed += 1
+    return {"ready": ready, "soaking": soaking, "reviewed": reviewed, **buckets}
+
+
+def _render_readiness_block(strategies: list) -> None:
+    """The compact promotion-readiness metric row for the exec summary."""
+    st.markdown("**Promotion readiness**")
+    rc = _readiness_counts(strategies)
+    if rc["ready"] + rc["soaking"] + rc["reviewed"] == 0:
+        st.caption("No soaking models or strategy-review packets yet.")
+        return
+    rr = st.columns(4)
+    rr[0].metric("Models soaking", rc["soaking"])
+    rr[1].metric("Models ready", rc["ready"])
+    rr[2].metric("Strat. promote", rc["promote"])
+    rr[3].metric("Needs attn.", rc["demote_shadow"] + rc["kill"])
+    extra = []
+    if rc["tune"]:
+        extra.append(f"{rc['tune']} tune")
+    if rc["hold"]:
+        extra.append(f"{rc['hold']} hold")
+    if extra:
+        st.caption("Strategies: " + " · ".join(extra)
+                   + " · full drill-down on the Promotion page")
+
+
 def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str) -> None:
     """The executive ("CEO") summary band — a compact, scannable system-health
     + business-performance header at the very top of the Overview page.
@@ -2951,6 +3015,10 @@ def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str)
                     last_train = tsv
         st.caption(f"Last training: {last_train or '—'}"
                    + ("" if rows_reg else " · registry unavailable"))
+
+    # ── Promotion readiness (models soaking/ready + strategy M7 verdicts) ─────
+    with st.container():
+        _render_readiness_block(strategies)
 
     st.divider()
 
