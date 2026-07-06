@@ -424,8 +424,17 @@ def _fetch_candles(
     yet, or MES without an IB feed)."""
     bot_df = _fetch_candles_bot(symbol, interval, limit)
     if bot_df is not None and not bot_df.empty:
+        bot_df.attrs["candle_source"] = "bot"
         return bot_df, None
-    return _fetch_candles_yf(symbol, interval, limit)
+    # Bot feed unavailable → Yahoo Finance backup. Tag the frame so the chart
+    # can surface a visible "backup data" badge instead of masking the degraded
+    # pipeline silently. `.copy()` so we tag the returned frame, not the
+    # st.cache_data-held object.
+    yf_df, yf_err = _fetch_candles_yf(symbol, interval, limit)
+    if yf_df is not None and not yf_df.empty:
+        yf_df = yf_df.copy()
+        yf_df.attrs["candle_source"] = "yfinance"
+    return yf_df, yf_err
 
 
 def _fetch_candles_bot(
@@ -1322,6 +1331,14 @@ def render_tv_chart(
     if not candle_data:
         st.caption("No candle data.")
         return
+    # Backup-data indicator: when the bot's candle feed was unavailable and the
+    # chart is drawn from the Yahoo Finance fallback, say so loudly instead of
+    # passing off delayed/approximate backup data as the live bot feed.
+    if df is not None and getattr(df, "attrs", {}).get("candle_source") == "yfinance":
+        st.warning(
+            "⚠️ Backup feed — Yahoo Finance. The bot's candle pipeline was "
+            "unavailable, so these prices are delayed/approximate."
+        )
     payload = {
         "candles": candle_data,
         "volume": _lc_volume_data(df),
