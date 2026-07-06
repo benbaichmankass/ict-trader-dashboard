@@ -3266,6 +3266,26 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
                         f"{total30} signals/30d. Reductive sizing factor (−1…+1), "
                         "not a y/n veto."
                     )
+                # Clickable ticker of the top source articles the layer read
+                # (top_items; highest-|score| first, dedup'd). Skips silently on
+                # a bot predating the field.
+                _hl: dict[str, dict] = {}
+                for r in recs:
+                    for it in (r.get("top_items") or []):
+                        h = str(it.get("headline") or "").strip()
+                        if not h:
+                            continue
+                        key = str(it.get("url") or "").strip() or h
+                        sc = abs(float(it.get("score") or 0.0))
+                        if key not in _hl or sc > _hl[key]["_abs"]:
+                            _hl[key] = {"headline": h, "url": it.get("url") or "", "_abs": sc}
+                if _hl:
+                    for it in sorted(_hl.values(), key=lambda x: x["_abs"], reverse=True)[:4]:
+                        _lbl = it["headline"][:80]
+                        if it["url"]:
+                            st.caption(f"🔗 [{_lbl}]({it['url']})")
+                        else:
+                            st.caption(f"• {_lbl}")
             if st.button("Open News →", key="ov_card_news",
                          use_container_width=True):
                 _goto("News")
@@ -6873,11 +6893,40 @@ def page_news() -> None:
                 "not real neutral reads. Avg sentiment is taken over the **scored** rows only."
             )
 
+    # Clickable ticker of the actual source articles the layer read (top_items,
+    # added bot-side 2026-07-06). Dedup by url, highest |score| first, linked to
+    # the story. Absent on a bot predating the field → this block just skips.
+    _headlines: dict[str, dict] = {}
+    for r in records:
+        for it in (r.get("top_items") or []):
+            h = str(it.get("headline") or "").strip()
+            if not h:
+                continue
+            key = str(it.get("url") or "").strip() or h
+            # Keep the highest-|score| instance of each article.
+            prev = _headlines.get(key)
+            sc = abs(float(it.get("score") or 0.0))
+            if prev is None or sc > prev["_abs"]:
+                _headlines[key] = {"headline": h, "url": it.get("url") or "",
+                                   "score": it.get("score"), "_abs": sc}
+    if _headlines:
+        top = sorted(_headlines.values(), key=lambda x: x["_abs"], reverse=True)[:15]
+        with st.expander(f"📰 Headlines read ({len(_headlines)})", expanded=True):
+            for it in top:
+                url = it["url"]
+                label = it["headline"]
+                if url:
+                    st.markdown(f"🔗 [{label}]({url})")
+                else:
+                    st.markdown(f"• {label}")
+
     # Friendly column order when present; tolerate missing keys across row kinds.
+    # `top_items` is a list column (rendered as the clickable block above), so
+    # keep it out of the flat table.
     preferred = ["ts", "symbol", "side", "strategy", "decision", "adjustment",
                  "veto", "event_risk", "factor", "action", "query", "reason"]
     cols = [c for c in preferred if c in df.columns]
-    cols += [c for c in df.columns if c not in cols]
+    cols += [c for c in df.columns if c not in cols and c != "top_items"]
     st.dataframe(df[cols], hide_index=True, use_container_width=True, height=560)
 
 
