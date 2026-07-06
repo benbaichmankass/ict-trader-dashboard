@@ -2735,6 +2735,70 @@ def _exec_perf_window(window: str) -> dict:
     return d
 
 
+def _readiness_counts(strategies: list) -> dict:
+    """Promotion-readiness roll-up for the exec summary + the Promotion page.
+
+    Two fleets, mirroring the Android Readiness screen so the apps agree:
+      - **Models** — shadow-stage soak from ``/api/bot/shadow/stats``, graded by
+        the shared ``_promotion_verdict``: ``ok`` → *ready to evaluate*,
+        ``warn`` → *soaking* (maturing toward the ≥7d & ≥200-pred standard).
+      - **Strategies** — the M7 review verdict per strategy
+        (``/api/bot/strategies/{name}/review`` → ``proposed_action``), bucketed
+        into promote / tune / hold / demote_shadow / kill. Only strategies WITH
+        a packet are counted. Best-effort — a failed fetch just contributes 0.
+    """
+    stats_env, serr = _fetch("/api/bot/shadow/stats")
+    rows = (stats_env or {}).get("records") or [] if not serr else []
+    ready = soaking = 0
+    for r in rows:
+        _, sev, _facts = _promotion_verdict(r)
+        if sev == "ok":
+            ready += 1
+        elif sev == "warn":
+            soaking += 1
+
+    buckets = {"promote": 0, "tune": 0, "hold": 0, "demote_shadow": 0, "kill": 0}
+    reviewed = 0
+    for strat in strategies or []:
+        name = strat.get("name")
+        if not name:
+            continue
+        rev, rerr = _fetch(f"/api/bot/strategies/{quote(str(name))}/review")
+        if rerr or not (rev or {}).get("present"):
+            continue
+        packet = (rev or {}).get("packet")
+        if not packet:
+            continue
+        action = str(packet.get("proposed_action") or "hold").lower()
+        if action == "demote":
+            action = "demote_shadow"
+        buckets[action] = buckets.get(action, 0) + 1
+        reviewed += 1
+    return {"ready": ready, "soaking": soaking, "reviewed": reviewed, **buckets}
+
+
+def _render_readiness_block(strategies: list) -> None:
+    """The compact promotion-readiness metric row for the exec summary."""
+    st.markdown("**Promotion readiness**")
+    rc = _readiness_counts(strategies)
+    if rc["ready"] + rc["soaking"] + rc["reviewed"] == 0:
+        st.caption("No soaking models or strategy-review packets yet.")
+        return
+    rr = st.columns(4)
+    rr[0].metric("Models soaking", rc["soaking"])
+    rr[1].metric("Models ready", rc["ready"])
+    rr[2].metric("Strat. promote", rc["promote"])
+    rr[3].metric("Needs attn.", rc["demote_shadow"] + rc["kill"])
+    extra = []
+    if rc["tune"]:
+        extra.append(f"{rc['tune']} tune")
+    if rc["hold"]:
+        extra.append(f"{rc['hold']} hold")
+    if extra:
+        st.caption("Strategies: " + " · ".join(extra)
+                   + " · full drill-down on the Promotion page")
+
+
 def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str) -> None:
     """The executive ("CEO") summary band — a compact, scannable system-health
     + business-performance header at the very top of the Overview page.
@@ -2951,6 +3015,10 @@ def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str)
                     last_train = tsv
         st.caption(f"Last training: {last_train or '—'}"
                    + ("" if rows_reg else " · registry unavailable"))
+
+    # ── Promotion readiness (models soaking/ready + strategy M7 verdicts) ─────
+    with st.container():
+        _render_readiness_block(strategies)
 
     st.divider()
 
@@ -3198,6 +3266,26 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
                         f"{total30} signals/30d. Reductive sizing factor (−1…+1), "
                         "not a y/n veto."
                     )
+                # Clickable ticker of the top source articles the layer read
+                # (top_items; highest-|score| first, dedup'd). Skips silently on
+                # a bot predating the field.
+                _hl: dict[str, dict] = {}
+                for r in recs:
+                    for it in (r.get("top_items") or []):
+                        h = str(it.get("headline") or "").strip()
+                        if not h:
+                            continue
+                        key = str(it.get("url") or "").strip() or h
+                        sc = abs(float(it.get("score") or 0.0))
+                        if key not in _hl or sc > _hl[key]["_abs"]:
+                            _hl[key] = {"headline": h, "url": it.get("url") or "", "_abs": sc}
+                if _hl:
+                    for it in sorted(_hl.values(), key=lambda x: x["_abs"], reverse=True)[:4]:
+                        _lbl = it["headline"][:80]
+                        if it["url"]:
+                            st.caption(f"🔗 [{_lbl}]({it['url']})")
+                        else:
+                            st.caption(f"• {_lbl}")
             if st.button("Open News →", key="ov_card_news",
                          use_container_width=True):
                 _goto("News")
@@ -6805,11 +6893,40 @@ def page_news() -> None:
                 "not real neutral reads. Avg sentiment is taken over the **scored** rows only."
             )
 
+    # Clickable ticker of the actual source articles the layer read (top_items,
+    # added bot-side 2026-07-06). Dedup by url, highest |score| first, linked to
+    # the story. Absent on a bot predating the field → this block just skips.
+    _headlines: dict[str, dict] = {}
+    for r in records:
+        for it in (r.get("top_items") or []):
+            h = str(it.get("headline") or "").strip()
+            if not h:
+                continue
+            key = str(it.get("url") or "").strip() or h
+            # Keep the highest-|score| instance of each article.
+            prev = _headlines.get(key)
+            sc = abs(float(it.get("score") or 0.0))
+            if prev is None or sc > prev["_abs"]:
+                _headlines[key] = {"headline": h, "url": it.get("url") or "",
+                                   "score": it.get("score"), "_abs": sc}
+    if _headlines:
+        top = sorted(_headlines.values(), key=lambda x: x["_abs"], reverse=True)[:15]
+        with st.expander(f"📰 Headlines read ({len(_headlines)})", expanded=True):
+            for it in top:
+                url = it["url"]
+                label = it["headline"]
+                if url:
+                    st.markdown(f"🔗 [{label}]({url})")
+                else:
+                    st.markdown(f"• {label}")
+
     # Friendly column order when present; tolerate missing keys across row kinds.
+    # `top_items` is a list column (rendered as the clickable block above), so
+    # keep it out of the flat table.
     preferred = ["ts", "symbol", "side", "strategy", "decision", "adjustment",
                  "veto", "event_risk", "factor", "action", "query", "reason"]
     cols = [c for c in preferred if c in df.columns]
-    cols += [c for c in df.columns if c not in cols]
+    cols += [c for c in df.columns if c not in cols and c != "top_items"]
     st.dataframe(df[cols], hide_index=True, use_container_width=True, height=560)
 
 
