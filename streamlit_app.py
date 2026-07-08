@@ -3232,8 +3232,49 @@ def _sentiment_tag(avg: float | None) -> str:
     return f"⚪ {avg:+.3f}"  # near-neutral but non-zero: show the real tilt
 
 
+def _render_notification_banner(*, alerts_only: bool = False) -> None:
+    """Render the system-notification banner from ``/api/bot/notifications``.
+
+    Can't-miss conditions the operator wants surfaced at the top of the app
+    (NOT routine pings): trainer_down / account_down (severity ``alert``) and a
+    recently-opened-trades info line (``trade_open``). Best-effort — a missing
+    endpoint (older bot) or any fetch error renders nothing (graceful
+    degradation, never a page crash).
+
+    ``alerts_only`` → render only ``severity == "alert"`` banners (used on the
+    non-Overview sections so the trainer/account-down alerts stay visible
+    everywhere without repeating the info-level trade-open line off Overview).
+    """
+    payload, err = _fetch("/api/bot/notifications")
+    if err or not isinstance(payload, dict):
+        return
+    banners = payload.get("banners") or []
+    if not isinstance(banners, list):
+        return
+    for b in banners:
+        if not isinstance(b, dict):
+            continue
+        sev = b.get("severity")
+        if alerts_only and sev != "alert":
+            continue
+        msg = b.get("message") or ""
+        detail = b.get("detail")
+        body = f"**{msg}**"
+        if detail:
+            body += f"\n\n{detail}"
+        if sev == "alert":
+            st.error("🔴 " + body)
+        elif sev == "warning":
+            st.warning("🟠 " + body)
+        else:
+            st.info(body)
+
+
 def page_overview(stats: dict | None, stats_err: str | None) -> None:
     st.header("Overview")
+    # Can't-miss system conditions (trainer down / broker account down /
+    # recently-opened trades) — full banner at the very top of Overview.
+    _render_notification_banner()
     if stats_err:
         st.warning(f"Stats endpoint error: {stats_err}")
     s  = stats or {}
@@ -7995,9 +8036,14 @@ def main() -> None:
     elif section == "Roadmap":
         # Roadmap is a full-page progress visualization (no card stack) and a
         # READING surface — no auto-refresh, interaction-scoped reruns only.
+        # Alert-severity banners (trainer/account down) stay visible here too.
+        _render_notification_banner(alerts_only=True)
         _live_fragment(page_roadmap)
     else:
-        # Section landing: stacked cards that expand/collapse in place.
+        # Section landing: stacked cards that expand/collapse in place. Show
+        # can't-miss ALERTS (trainer/account down) on every section — the full
+        # banner (incl. the info trade-open line) lives on Overview.
+        _render_notification_banner(alerts_only=True)
         _render_section_landing(section)
 
     # Legacy fallback: no fragments AND no autorefresh component — blocking
