@@ -3666,14 +3666,14 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     if not ov_symbols:
         st.caption("No active symbols — the bot isn't trading any instrument.")
     else:
-        # Android-parity layout: swipe/scroll through the live-trade charts
-        # SIDEWAYS via one TAB per active symbol (the tab bar scrolls
-        # horizontally), each tab showing that symbol's chart with its trade
-        # tickets UNDERNEATH. Symbols with an open position / working order
-        # float to the front (ov_symbols is already so ordered) and carry a
-        # 🟢 / 🟠 badge on the tab. (Same st.tabs-per-symbol pattern the
-        # Performance page uses, so the chart embeds resize correctly on tab
-        # switch.)
+        # Symbol PICKER instead of st.tabs (2026-07-09): Streamlit tab PANELS
+        # drop every element rendered AFTER the tabs block on narrow mobile
+        # viewports — so the fleets / report / news / snapshot below the monitor
+        # rendered on desktop but were BLANK on phones. A segmented-control /
+        # radio picker keeps the swipe-through, one-chart-at-a-time feel WITHOUT
+        # the tab-panel layout bug. Symbols with an open position / working order
+        # float to the front (ov_symbols is already so ordered) + carry a 🟢/🟠
+        # badge in the picker.
         _open_syms = {p.get("symbol") for p in focus_positions}
         _working_syms = {w.get("symbol") for w in focus_working}
 
@@ -3684,87 +3684,93 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
                 return f"{s} 🟠"
             return s
 
-        for _tab, ov_symbol in zip(st.tabs([_ov_tab_label(s) for s in ov_symbols]),
-                                   ov_symbols):
-            with _tab:
-                # focus_positions == positions when no group is isolated, else
-                # just the isolated group's legs. Newest-open first.
-                sym_positions = _sort_recent(
-                    [p for p in focus_positions if p.get("symbol") == ov_symbol],
-                    "open")
-                # Working (placed) orders on this symbol — chart overlay only
-                # (never a P&L leg); listed in the Working-orders section below.
-                sym_working = [w for w in focus_working
-                               if w.get("symbol") == ov_symbol]
-                df, candles_err = _fetch_candles(ov_symbol, ov_interval, limit=1000)
+        def _render_symbol_panel(ov_symbol: str) -> None:
+            # focus_positions == positions when no group is isolated, else
+            # just the isolated group's legs. Newest-open first.
+            sym_positions = _sort_recent(
+                [p for p in focus_positions if p.get("symbol") == ov_symbol],
+                "open")
+            # Working (placed) orders on this symbol — chart overlay only
+            # (never a P&L leg); listed in the Working-orders section below.
+            sym_working = [w for w in focus_working
+                           if w.get("symbol") == ov_symbol]
+            df, candles_err = _fetch_candles(ov_symbol, ov_interval, limit=1000)
 
-                # Chart FIRST (Android parity: chart on top, tickets under).
-                # Working orders ride the same positions overlay (dashed LIMIT
-                # line, no ENTRY marker) but are NOT in the P&L metrics below.
-                if candles_err:
-                    st.warning(f"{ov_symbol}: candles unavailable: {candles_err}")
-                elif df is None or df.empty:
-                    st.caption(f"{ov_symbol}: no candle data.")
-                else:
-                    render_tv_chart(df, sig_data, trade_data, ov_symbol,
-                                    positions=sym_positions + sym_working)
-                    st.caption(
-                        f"{ov_symbol} · {ov_interval} · candles from the bot's "
-                        f"exchange feed (yfinance fallback) · overlay toggles + "
-                        f"fullscreen on the chart · auto-refreshes every "
-                        f"{POLL_INTERVAL_S}s"
+            # Chart FIRST (chart on top, tickets under). Working orders ride the
+            # same positions overlay (dashed LIMIT line, no ENTRY marker) but
+            # are NOT in the P&L metrics below.
+            if candles_err:
+                st.warning(f"{ov_symbol}: candles unavailable: {candles_err}")
+            elif df is None or df.empty:
+                st.caption(f"{ov_symbol}: no candle data.")
+            else:
+                render_tv_chart(df, sig_data, trade_data, ov_symbol,
+                                positions=sym_positions + sym_working)
+                st.caption(
+                    f"{ov_symbol} · {ov_interval} · candles from the bot's "
+                    f"exchange feed (yfinance fallback) · overlay toggles + "
+                    f"fullscreen on the chart · auto-refreshes every "
+                    f"{POLL_INTERVAL_S}s"
+                )
+
+            # Tickets UNDER the chart: per-class PnL metrics + the expandable
+            # trade cards for this symbol's open legs. NEVER blend the three
+            # funding classes — real-money is the primary "Live PnL";
+            # paper/prop each ride as their own labeled metric.
+            if sym_positions:
+                real_legs = [p for p in sym_positions if _is_real_money(p)]
+                paper_legs = [p for p in sym_positions
+                              if _row_account_class(p) == "paper"]
+                prop_legs = [p for p in sym_positions
+                             if _row_account_class(p) == "prop"]
+                _specs = [("Live PnL", real_legs)]
+                if paper_legs:
+                    _specs.append(("🧪 Paper PnL", paper_legs))
+                if prop_legs:
+                    _specs.append(("🏦 Prop PnL", prop_legs))
+                _cols = st.columns([1] * len(_specs) + [max(1, 4 - len(_specs))])
+                _tot_unk = 0
+                for _ci, (_lbl, _legs) in enumerate(_specs):
+                    _pnl, _unk = _sum_upnl(_legs)
+                    _tot_unk += _unk
+                    if _legs:
+                        _cols[_ci].metric(
+                            f"{_lbl} · {ov_symbol}",
+                            _upnl_metric(_pnl, len(_legs) - _unk, _unk),
+                            delta=round(_pnl, 2) if (len(_legs) - _unk) else None)
+                    else:
+                        _cols[_ci].metric(f"{_lbl} · {ov_symbol}", "—")
+                _cols[-1].caption(
+                    f"{len(sym_positions)} open "
+                    f"{'leg' if len(sym_positions) == 1 else 'legs'} — "
+                    "tap a trade below to expand its full card.")
+                if prop_legs:
+                    st.caption("🏦 Prop P&L is a dashboard mark-price estimate "
+                               "(no broker feed) — tracked separately, never "
+                               "blended into real-money or paper totals.")
+                _unk_cap = _upnl_caption(_tot_unk)
+                if _unk_cap:
+                    st.caption("⚠️ " + _unk_cap)
+
+                # Clickable rows — one expander per open position; expands in
+                # place to the SAME full detail card the Positions tab renders.
+                for _i, _p in enumerate(sym_positions):
+                    _render_trade_card(
+                        _p, is_open=True, op_map=ov_op_map_top,
+                        signals=sig_data,
+                        expander_label=_pos_row_label(_p),
+                        key_prefix=f"ovsym_{ov_symbol}_{_i}_",
                     )
+            else:
+                st.caption("No open position on this symbol — chart only.")
 
-                # Tickets UNDER the chart: per-class PnL metrics + the
-                # expandable trade cards for this symbol's open legs. NEVER
-                # blend the three funding classes — real-money is the primary
-                # "Live PnL"; paper/prop each ride as their own labeled metric.
-                if sym_positions:
-                    real_legs = [p for p in sym_positions if _is_real_money(p)]
-                    paper_legs = [p for p in sym_positions
-                                  if _row_account_class(p) == "paper"]
-                    prop_legs = [p for p in sym_positions
-                                 if _row_account_class(p) == "prop"]
-                    _specs = [("Live PnL", real_legs)]
-                    if paper_legs:
-                        _specs.append(("🧪 Paper PnL", paper_legs))
-                    if prop_legs:
-                        _specs.append(("🏦 Prop PnL", prop_legs))
-                    _cols = st.columns([1] * len(_specs) + [max(1, 4 - len(_specs))])
-                    _tot_unk = 0
-                    for _ci, (_lbl, _legs) in enumerate(_specs):
-                        _pnl, _unk = _sum_upnl(_legs)
-                        _tot_unk += _unk
-                        if _legs:
-                            _cols[_ci].metric(
-                                f"{_lbl} · {ov_symbol}",
-                                _upnl_metric(_pnl, len(_legs) - _unk, _unk),
-                                delta=round(_pnl, 2) if (len(_legs) - _unk) else None)
-                        else:
-                            _cols[_ci].metric(f"{_lbl} · {ov_symbol}", "—")
-                    _cols[-1].caption(
-                        f"{len(sym_positions)} open "
-                        f"{'leg' if len(sym_positions) == 1 else 'legs'} — "
-                        "tap a trade below to expand its full card.")
-                    if prop_legs:
-                        st.caption("🏦 Prop P&L is a dashboard mark-price estimate "
-                                   "(no broker feed) — tracked separately, never "
-                                   "blended into real-money or paper totals.")
-                    _unk_cap = _upnl_caption(_tot_unk)
-                    if _unk_cap:
-                        st.caption("⚠️ " + _unk_cap)
-
-                    # Clickable rows — one expander per open position; expands in
-                    # place to the SAME full detail card the Positions tab renders.
-                    for _i, _p in enumerate(sym_positions):
-                        _render_trade_card(
-                            _p, is_open=True, op_map=ov_op_map_top,
-                            signals=sig_data,
-                            expander_label=_pos_row_label(_p),
-                            key_prefix=f"ovsym_{ov_symbol}_{_i}_",
-                        )
-                else:
-                    st.caption("No open position on this symbol — chart only.")
+        _labels = [_ov_tab_label(s) for s in ov_symbols]
+        _picked = _segmented_or_radio(
+            "Symbol", _labels, index=0, key="ov_monitor_sym",
+            help="Pick a symbol to chart. (Replaces the old tab bar, which hid "
+                 "everything below the monitor on mobile.)")
+        _idx = _labels.index(_picked) if _picked in _labels else 0
+        _render_symbol_panel(ov_symbols[_idx])
 
     # ── Working orders (placed — awaiting fill) ────────────────────────────────
     # Prop limit/pending orders placed on the terminal that haven't tripped yet:
