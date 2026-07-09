@@ -2927,16 +2927,25 @@ def build_asset_class_symbol_bar(rows: list[dict], height: int = 220) -> go.Figu
 def _closed_rows_for_window(segment: str, window: str) -> list[dict]:
     """Closed-trade rows for the segment (real/paper/all) + window, for the
     per-symbol asset-class breakdown. ``all``/``paper`` include paper rows;
-    the result is then segment-filtered client-side."""
+    the result is segment-filtered, then windowed by **CLOSE time** client-side.
+
+    Deliberately does NOT pass ``since=`` to the endpoint: the endpoint's
+    ``since`` filters on the trade's OPEN time, so a trade held for days (opened
+    before the window but closed inside it) is dropped — which is why "$5.07 P&L
+    · 7d" in the exec summary (a close-time SQL aggregate) showed an empty
+    asset-class breakdown. We fetch recent closed trades (newest-first) and keep
+    those whose close time falls in the window, matching the exec basis."""
     include_paper = "true" if segment in ("paper", "all") else "false"
-    params: dict[str, Any] = {"limit": 500, "include_paper": include_paper}
+    rows, _ = _fetch("/api/bot/trades/closed?"
+                     + urlencode({"limit": 500, "include_paper": include_paper}))
+    rows = _segment_filter_rows(rows or [], segment)
     if window != "all":
-        since = (dt.datetime.utcnow()
-                 - dt.timedelta(days=_WINDOW_DAYS.get(window, 1))
-                 ).strftime("%Y-%m-%dT%H:%M:%SZ")
-        params["since"] = since
-    rows, _ = _fetch("/api/bot/trades/closed?" + urlencode(params))
-    return _segment_filter_rows(rows or [], segment)
+        cutoff = dt.datetime.utcnow() - dt.timedelta(days=_WINDOW_DAYS.get(window, 1))
+        rows = [
+            r for r in rows
+            if (_parse_trade_ts(r.get("closedAt") or r.get("openedAt")) or dt.datetime.min) >= cutoff
+        ]
+    return rows
 
 
 def _render_asset_class_symbol_breakdown(
@@ -3206,19 +3215,15 @@ def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str)
             )
 
 
-def _render_overview_fleets(stats: dict, segment: str, win_label: str,
-                            window: str) -> None:
+def _render_overview_fleets(stats: dict) -> None:
     """The fleet-health + promotion-readiness block — moved BELOW the live-trades
-    monitor (operator ask 2026-07-09). Strategy fleet + ML fleet counts +
-    best/worst strategy + promotion readiness, plus the per-symbol asset-class
-    P&L breakdown for the page's segment + window."""
+    monitor (operator ask 2026-07-09): strategy fleet + ML fleet counts +
+    best/worst strategy + promotion readiness. (The per-symbol asset-class P&L
+    breakdown stays ABOVE the monitor with the exec cards — operator ask, it was
+    never part of the 'move below' set.)"""
     strat_payload, _ = _fetch("/api/bot/strategies")
     strat_payload = strat_payload if isinstance(strat_payload, dict) else {}
     strategies = strat_payload.get("strategies") or []
-    seg_name = {"real": "real money", "paper": "paper", "all": "all (real + paper)"}[segment]
-
-    # ── Asset-class P&L breakdown, stacked by symbol (item 3) ──────────────
-    _render_asset_class_symbol_breakdown(segment, win_label, window, seg_note=seg_name)
 
     # ── Strategy fleet + ML fleet health ───────────────────────────────────
     wall = _exec_perf_window("all")
@@ -3534,6 +3539,20 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     _render_exec_summary(s, ov_segment, ov_win_label, ov_window)
     # Segment word reused by the snapshot section below.
     seg_word = {"real": "real", "paper": "paper", "all": "all"}[ov_segment]
+    _seg_name = {"real": "real money", "paper": "paper",
+                 "all": "all (real + paper)"}[ov_segment]
+    st.divider()
+
+    # ── P&L by asset class · by symbol (item 3) — stays with the exec cards,
+    # ABOVE the monitor (it was the exec-summary asset bar; never part of the
+    # 'move below the monitor' set).
+    _render_asset_class_symbol_breakdown(ov_segment, ov_win_label, ov_window,
+                                         seg_note=_seg_name)
+    st.divider()
+
+    # P&L calendar — own Real/Paper/Prop toggle + month nav + monthly total,
+    # full closed-trade history (NOT windowed). Kept above the monitor.
+    _render_overview_calendar()
     st.divider()
 
     # ── Live charts (top of page) ──────────────────────────────────────────────
@@ -3767,12 +3786,11 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
 
     st.divider()
 
-    # ── Below the live-trades monitor (moved here 2026-07-09, operator ask):
-    # the per-symbol asset-class P&L breakdown + strategy/ML fleets + promotion
-    # readiness, then the analyst read, latest system report + news glance, and
-    # the P&L calendar. These used to sit above the monitor; the top of the page
-    # is now just the six exec cards.
-    _render_overview_fleets(s, ov_segment, ov_win_label, ov_window)
+    # ── Below the live-trades monitor (operator ask 2026-07-09): strategy fleet
+    # + promotion readiness + the latest analyst read + the latest-system-report
+    # and news glance cards. (Asset-class breakdown + calendar stay ABOVE the
+    # monitor; only these five items were asked to move below.)
+    _render_overview_fleets(s)
     st.divider()
 
     # M13 S1: the latest AI-analyst summary (silent no-op until the generator
@@ -3781,11 +3799,6 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
 
     # Cross-links + latest-report + news-sentiment glance cards.
     _render_overview_glance()
-    st.divider()
-
-    # P&L calendar — own Real/Paper/Prop toggle + month picker + day $+%
-    # + monthly total, full history (NOT scoped to the page window).
-    _render_overview_calendar()
     st.divider()
 
     # ââ Snapshot (below the chart) ââââââââââââââââââââââââââââââââââââââââââââââ
