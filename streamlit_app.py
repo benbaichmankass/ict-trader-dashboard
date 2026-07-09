@@ -117,6 +117,13 @@ _TV_ENTRY  = "#3d7aed"
 _TV_FVG    = "#9c6ade"   # fair-value-gap zone band
 _TV_SWEEP  = "#e0a030"   # liquidity-sweep level
 
+# Categorical palette for per-symbol stacked charts (P&L-by-asset-class → per
+# symbol). Distinct, reasonably colour-blind-tolerant hues; cycles if exhausted.
+_CATEGORICAL = [
+    "#4c9be8", "#26a69a", "#f5a623", "#ef5350", "#ab47bc", "#66bb6a",
+    "#ffca28", "#26c6da", "#ec407a", "#8d6e63", "#7e57c2", "#9ccc65",
+]
+
 # Lightweight Charts overview chart tuning — change these to adjust look/feel
 _LC_HEIGHT = 520           # chart height in pixels
 _LC_GRID_H = "rgba(42,54,74,0.6)"   # horizontal grid lines
@@ -537,8 +544,8 @@ SECTIONS: dict[str, list[str]] = {
     "Strategies & Models": ["Strategies", "Models", "GPU Spend", "Exit Ladder", "Backtesting", "Promotion", "News"],
     "Accounts": ["Accounts", "Prop"],
     "Activity": ["Positions", "Trades", "Order Packages", "Signals"],
-    "Admin": ["Data Explorer", "Logs", "Health"],
     "Roadmap": [],  # special-cased: renders page_roadmap directly (like Overview)
+    "Admin": ["Data Explorer", "Logs", "Health"],
 }
 SECTION_NAMES = list(SECTIONS.keys())
 
@@ -2858,6 +2865,119 @@ def build_asset_class_bar(per_class: list | None, height: int = 220) -> go.Figur
     return _style_plotly(fig, height)
 
 
+def _asset_symbol_pnl(rows: list[dict]) -> dict[str, dict[str, float]]:
+    """Aggregate realized P&L per (asset class → symbol) from closed-trade rows.
+
+    Null ``realizedPnl`` rows are skipped (never summed as 0) — matching the
+    API nullability contract."""
+    agg: dict[str, dict[str, float]] = {}
+    for r in rows or []:
+        v = r.get("realizedPnl")
+        if v is None:
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            continue
+        cls = _row_asset_class(r)
+        sym = str(r.get("symbol") or "—").upper()
+        agg.setdefault(cls, {}).setdefault(sym, 0.0)
+        agg[cls][sym] += v
+    return agg
+
+
+def build_asset_class_symbol_bar(rows: list[dict], height: int = 220) -> go.Figure | None:
+    """Horizontal P&L-by-asset-class bar **stacked by symbol** (operator ask
+    2026-07-09): each asset-class bar is subdivided into its constituent symbols,
+    one coloured portion each. ``barmode='relative'`` so a losing symbol extends
+    left of zero and a winning one right — the net bar length still reads as the
+    class total. Returns None when no closed-trade P&L resolves, so the caller
+    can fall back to a caption. Legend = the symbols."""
+    agg = _asset_symbol_pnl(rows)
+    if not agg:
+        return None
+    classes = sorted(agg.keys(), key=_asset_class_order)
+    class_labels = [_ASSET_CLASS_ICON.get(c, f"• {c}") for c in classes]
+    # Symbols ordered by total |P&L| so the biggest movers get the stable
+    # leading palette colours.
+    sym_abs: dict[str, float] = {}
+    for d in agg.values():
+        for s, v in d.items():
+            sym_abs[s] = sym_abs.get(s, 0.0) + abs(v)
+    symbols = sorted(sym_abs, key=lambda s: sym_abs[s], reverse=True)
+    fig = go.Figure()
+    for i, sym in enumerate(symbols):
+        xs = [agg.get(c, {}).get(sym, 0.0) for c in classes]
+        if not any(xs):
+            continue
+        fig.add_bar(
+            y=class_labels, x=xs, orientation="h", name=sym,
+            marker_color=_CATEGORICAL[i % len(_CATEGORICAL)],
+            hovertemplate=f"{sym} · %{{y}}: $%{{x:,.2f}}<extra></extra>",
+        )
+    fig.update_layout(barmode="relative",
+                      legend=dict(orientation="h", yanchor="top", y=-0.2,
+                                  xanchor="left", x=0))
+    fig.update_xaxes(showgrid=True, gridcolor=_LC_GRID_H, fixedrange=True,
+                     zeroline=True, zerolinecolor="#2a3a5a")
+    fig.update_yaxes(showgrid=False, fixedrange=True)
+    return _style_plotly(fig, height)
+
+
+def _closed_rows_for_window(segment: str, window: str) -> list[dict]:
+    """Closed-trade rows for the segment (real/paper/all) + window, for the
+    per-symbol asset-class breakdown. ``all``/``paper`` include paper rows;
+    the result is then segment-filtered client-side."""
+    include_paper = "true" if segment in ("paper", "all") else "false"
+    params: dict[str, Any] = {"limit": 500, "include_paper": include_paper}
+    if window != "all":
+        since = (dt.datetime.utcnow()
+                 - dt.timedelta(days=_WINDOW_DAYS.get(window, 1))
+                 ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        params["since"] = since
+    rows, _ = _fetch("/api/bot/trades/closed?" + urlencode(params))
+    return _segment_filter_rows(rows or [], segment)
+
+
+def _render_asset_class_symbol_breakdown(
+    segment: str, win_label: str, window: str, *, seg_note: str,
+) -> None:
+    """P&L-by-asset-class bar stacked by symbol + a compact per-class caption.
+    Shared by the Overview (below the monitor) and the Performance page."""
+    st.markdown(f"**P&L by asset class · by symbol · {win_label} ({seg_note})**")
+    rows = _closed_rows_for_window(segment, window)
+    fig = build_asset_class_symbol_bar(rows, height=220)
+    if fig is None:
+        st.caption("P&L by asset class: — (no closed-trade P&L for this "
+                   "segment / window yet).")
+        return
+    st.plotly_chart(fig, use_container_width=True,
+                    config={"displayModeBar": False})
+    # Per-class trades/win caption beneath the bar (2-up).
+    per_class = _asset_symbol_pnl(rows)
+    counts: dict[str, dict[str, float]] = {}
+    for r in rows:
+        if r.get("realizedPnl") is None:
+            continue
+        cls = _row_asset_class(r)
+        c = counts.setdefault(cls, {"trades": 0, "wins": 0})
+        c["trades"] += 1
+        try:
+            if float(r.get("realizedPnl")) > 0:
+                c["wins"] += 1
+        except (TypeError, ValueError):
+            pass
+    ordered = sorted(per_class.keys(), key=_asset_class_order)
+    for i in range(0, len(ordered[:6]), 2):
+        cols_ac = st.columns(2)
+        for j, cls in enumerate(ordered[i:i + 2]):
+            lbl = _ASSET_CLASS_ICON.get(cls, f"• {cls}")
+            c = counts.get(cls, {"trades": 0, "wins": 0})
+            wr = (c["wins"] / c["trades"] * 100) if c["trades"] else None
+            cols_ac[j].caption(
+                f"{lbl}: {c['trades']} trades · win {fmt_pct(wr)}")
+
+
 def _exec_perf_window(window: str) -> dict:
     """One /performance window as a dict ({} on error/missing), error-aware."""
     d, err = _fetch(f"/api/bot/performance?window={window}")
@@ -2931,115 +3051,141 @@ def _render_readiness_block(strategies: list) -> None:
                    + " · full drill-down on the Promotion page")
 
 
-def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str) -> None:
-    """The executive ("CEO") summary band — a compact, scannable system-health
-    + business-performance header at the very top of the Overview page.
+def _segment_equity(segment: str) -> tuple[float | None, int]:
+    """Sum of PRESENT tracked balances for the segment's accounts.
 
-    Driven by the page's ``segment`` (real / paper / all) + ``window`` (24h /
-    7d / 30d / all) controls: the P&L / win-rate / expectancy / asset-class
-    figures reflect the chosen segment and window. Everything is wired to real
-    endpoints; any null/missing value renders as an em-dash, never a fabricated
-    0. Real / paper / prop are kept strictly separate — the "All" view is the
-    operator's EXPLICIT, All-labeled merge (never a silent blend into "real").
-    """
-    seg_name = {"real": "real money", "paper": "paper", "all": "all (real + paper)"}[segment]
-    st.markdown(f"### Executive summary · {seg_name} · {win_label}")
-
-    # ── Row 1: System · Capital & exposure ─────────────────────────────────
-    status = str(stats.get("status") or "unknown")
-    status_color = {"running": _TV_GREEN, "paused": "#f5a623",
-                    "stopped": _TV_RED}.get(status, "#6b7488")
-    # Last-tick age: prefer the strategies runtime block, fall back to stats.
-    strat_payload, _ = _fetch("/api/bot/strategies")
-    strat_payload = strat_payload if isinstance(strat_payload, dict) else {}
-    runtime = strat_payload.get("runtime") or {}
-    tick_age = runtime.get("tick_age_seconds")
-    strategies = strat_payload.get("strategies") or []
-
-    # Real equity = sum of PRESENT real-money balances (prop + paper excluded).
+    ``real`` → real-money accounts; ``paper`` → paper accounts; ``all`` →
+    real + paper (prop excluded — prop is never real money). Returns
+    ``(equity, n_missing)``; a missing / failed balance is excluded from the
+    sum (never summed as 0), and ``equity`` is None when NO in-scope account
+    has a tracked balance."""
     cfg, _ = _fetch("/api/bot/config")
     cfg = cfg if isinstance(cfg, dict) else {}
     accounts = cfg.get("accounts") or []
     bal_env, _ = _fetch("/api/bot/accounts/balances")
     balances = (bal_env or {}).get("balances") or {}
-    real_acct_ids = {
-        a.get("id") for a in accounts
-        if str(a.get("account_class") or "real_money").lower() not in _NON_REAL_CLASSES
-    }
-    _eq_total = 0.0
-    _eq_present = _eq_missing = 0
-    for i in real_acct_ids:
+
+    def _cls(a: dict) -> str:
+        return str(a.get("account_class") or "real_money").lower()
+
+    if segment == "paper":
+        ids = {a.get("id") for a in accounts if _cls(a) == "paper"}
+    elif segment == "all":
+        ids = {a.get("id") for a in accounts if _cls(a) != "prop"}
+    else:  # real
+        ids = {a.get("id") for a in accounts if _cls(a) not in _NON_REAL_CLASSES}
+
+    total = 0.0
+    present = missing = 0
+    for i in ids:
         b = (balances.get(i) or {}).get("balance")
         if b is None:
-            _eq_missing += 1
+            missing += 1
             continue
         try:
-            _eq_total += float(b)
-            _eq_present += 1
+            total += float(b)
+            present += 1
         except (TypeError, ValueError):
-            _eq_missing += 1
-    real_equity = fmt_usd(_eq_total) if _eq_present else "—"
+            missing += 1
+    return (total if present else None), missing
 
-    pos_all, _ = _fetch("/api/bot/positions?include_paper=true")
-    pos_all = pos_all or []
-    real_open = [p for p in pos_all if _is_real_money(p)]
-    paper_open = [p for p in pos_all if _row_account_class(p) == "paper"]
-    real_open_upnl, real_open_unk = _sum_upnl(real_open)
 
+def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str) -> None:
+    """The slim executive header at the top of the Overview page — the SIX
+    headline cards the operator asked for (2026-07-09):
+
+        Total equity · Open trades · Realized P&L (# + %) ·
+        Unrealized P&L (# + %) · Win rate · Profit factor
+
+    Everything that used to live here (asset-class breakdown, strategy/ML
+    fleets, promotion readiness, the analyst/report/news glance) moved BELOW the
+    live-trades monitor. All figures follow the page's ``segment`` (real / paper
+    / all) + ``window`` (24h/7d/30d/all). The **%** on the two P&L cards is the
+    return on the SAME tracked equity shown in card 1 (a single consistent
+    denominator). Any null/missing value renders as an em-dash, never a
+    fabricated 0. Real / paper / prop stay strictly separate — "All" is the
+    operator's EXPLICIT, All-labeled merge, never a silent blend into "real"."""
+    seg_name = {"real": "real money", "paper": "paper", "all": "all (real + paper)"}[segment]
+    st.markdown(f"### Executive summary · {seg_name} · {win_label}")
+
+    # ── System status line ─────────────────────────────────────────────────
+    status = str(stats.get("status") or "unknown")
+    status_color = {"running": _TV_GREEN, "paused": "#f5a623",
+                    "stopped": _TV_RED}.get(status, "#6b7488")
+    strat_payload, _ = _fetch("/api/bot/strategies")
+    strat_payload = strat_payload if isinstance(strat_payload, dict) else {}
+    tick_age = (strat_payload.get("runtime") or {}).get("tick_age_seconds")
     st.markdown(_status_dot(status_color)
                 + f"**System {status.upper()}** · last tick {_fmt_age(tick_age)} ago"
                 + f" · datasource {stats.get('datasource', '?')}",
                 unsafe_allow_html=True)
-    # 2-up metric grids throughout — readable on a phone (Streamlit keeps two
-    # columns side-by-side even on narrow screens; >2 gets cramped).
-    r1a, r1b = st.columns(2)
-    r1a.metric("Real equity", real_equity)
-    r1b.metric("Open · real", len(real_open))
-    r1c, r1d = st.columns(2)
-    r1c.metric("Open uPnL · real",
-               _upnl_metric(real_open_upnl, len(real_open) - real_open_unk, real_open_unk))
-    r1d.metric("Open · paper", len(paper_open))
-    if _eq_missing:
-        st.caption(f"⚠️ {_eq_missing} real-money account(s) without a tracked "
-                   "balance snapshot (excluded from Real equity).")
 
-    # ── Row 2: windowed P&L / win rate / expectancy for the chosen segment ──
-    # One /performance pull for the chosen window, resolved to the segment block
-    # (paper sub-block / explicit real+paper combine / real top-level).
+    # ── Equity for the segment (real / paper / all) ────────────────────────
+    equity_val, eq_missing = _segment_equity(segment)
+    equity_str = fmt_usd(equity_val) if equity_val is not None else "—"
+
+    # ── Open positions for the segment ─────────────────────────────────────
+    pos_all, _ = _fetch("/api/bot/positions?include_paper=true")
+    pos_all = pos_all or []
+    if segment == "real":
+        seg_open = [p for p in pos_all if _is_real_money(p)]
+    elif segment == "paper":
+        seg_open = [p for p in pos_all if _row_account_class(p) == "paper"]
+    else:  # all → real + paper (prop excluded)
+        seg_open = [p for p in pos_all
+                    if _is_real_money(p) or _row_account_class(p) == "paper"]
+    open_upnl, open_unk = _sum_upnl(seg_open)
+    open_known = len(seg_open) - open_unk
+
+    # ── Windowed realized P&L / win rate / profit factor for the segment ───
     block, combined = _perf_for_segment(window, segment)
-    # 24h real can fall back to /stats.pnl24h (shared close-time basis) so the
-    # headline is never blank when /performance is briefly unavailable.
     _pnl = block.get("totalPnl")
     if _pnl is None and window == "24h" and segment == "real":
         _pnl = stats.get("pnl24h")
-    _total = block.get("totalPnl")
-    if _total is None and window == "all" and segment == "real":
-        _total = stats.get("totalPnL")
+    if _pnl is None and window == "all" and segment == "real":
+        _pnl = stats.get("totalPnL")
     _wr = block.get("winRate")
     if _wr is None and window == "all" and segment == "real":
         _wr = stats.get("winRate")
-
-    p1, p2 = st.columns(2)
-    p1.metric(f"Net P&L · {win_label}", fmt_usd(_pnl))
-    p2.metric(f"Win rate · {win_label}", fmt_pct(_wr))
-    p3, p4 = st.columns(2)
-    _trades = block.get("totalTrades")
-    p3.metric(f"Trades · {win_label}", _trades if _trades is not None else "—")
-    p4.metric(f"Expectancy · {win_label}", fmt_usd(block.get("expectancy")))
-
-    p5, p6 = st.columns(2)
     _pf = block.get("profitFactor")
-    p5.metric("Profit factor", fmt_num(_pf) if _pf is not None else "—")
-    _mdd = block.get("maxDrawdown")
-    p6.metric("Max drawdown", fmt_usd(_mdd) if _mdd is not None else "—")
-    if combined:
-        st.caption("Profit factor / max drawdown: — · not available for the "
-                   "combined (All) view (can't be reconstructed from the "
-                   "real + paper sub-blocks).")
 
-    # Contextual secondary line so the OTHER segment is never invisible:
-    #  - real/all view → show the paper one-liner;
-    #  - paper view    → show the real one-liner.
+    def _pct_of_equity(v: Any) -> float | None:
+        if v is None or not equity_val:
+            return None
+        try:
+            return float(v) / float(equity_val) * 100.0
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
+
+    realized_pct = _pct_of_equity(_pnl)
+    unreal_pct = _pct_of_equity(open_upnl) if open_known else None
+
+    # ── The six cards (2-up × 3 — readable on a phone) ─────────────────────
+    c1, c2 = st.columns(2)
+    c1.metric("Total equity", equity_str)
+    c2.metric("Open trades", len(seg_open))
+    c3, c4 = st.columns(2)
+    c3.metric(f"Realized P&L · {win_label}", fmt_usd(_pnl),
+              delta=(f"{realized_pct:+.2f}%" if realized_pct is not None else None))
+    c4.metric("Unrealized P&L",
+              _upnl_metric(open_upnl, open_known, open_unk),
+              delta=(f"{unreal_pct:+.2f}%" if unreal_pct is not None else None))
+    c5, c6 = st.columns(2)
+    c5.metric(f"Win rate · {win_label}", fmt_pct(_wr))
+    c6.metric("Profit factor", fmt_num(_pf) if _pf is not None else "—")
+
+    if eq_missing:
+        st.caption(f"⚠️ {eq_missing} {seg_name} account(s) without a tracked "
+                   "balance snapshot (excluded from Total equity; the P&L % is "
+                   "against the equity that IS tracked).")
+    elif equity_val:
+        st.caption(f"P&L % = return on the tracked equity above "
+                   f"({fmt_usd(equity_val)}).")
+    if combined:
+        st.caption("Profit factor may be — for the combined (All) view "
+                   "(not reconstructable from the real + paper sub-blocks).")
+
+    # Contextual secondary line so the OTHER segment is never invisible.
     if segment in ("real", "all"):
         _paper_blk, _ = _perf_for_segment(window, "paper")
         if _paper_blk:
@@ -3059,32 +3205,22 @@ def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str)
                 f"trades {_real_blk.get('totalTrades', 0)}"
             )
 
-    # ── Asset-class P&L breakdown (chosen segment + window) — chart + metrics ─
-    per_class = block.get("perAssetClass") if block else None
-    st.markdown(f"**P&L by asset class · {win_label} ({seg_name})**")
-    ac_fig = build_asset_class_bar(per_class, height=200)
-    if ac_fig is not None:
-        st.plotly_chart(ac_fig, use_container_width=True,
-                        config={"displayModeBar": False})
-        # Compact per-class trades/win caption beneath the bar (2-up).
-        rows_ac = sorted(per_class, key=lambda r: _asset_class_order(r.get("assetClass")))
-        for i in range(0, len(rows_ac[:6]), 2):
-            cols_ac = st.columns(2)
-            for j, rac in enumerate(rows_ac[i:i + 2]):
-                cls = str(rac.get("assetClass") or "—").lower()
-                lbl = _ASSET_CLASS_ICON.get(cls, f"• {cls}")
-                cols_ac[j].caption(
-                    f"{lbl}: {rac.get('trades', 0)} trades · "
-                    f"win {fmt_pct(rac.get('winRate'))}"
-                )
-    else:
-        st.caption("P&L by asset class: — (no per-asset-class data for this "
-                   "segment / window yet).")
 
-    # ── Strategy fleet + ML fleet health (always stacked 1-per-row on phones) ─
-    # best/worst are anchored on the all-time real-money perStrategy aggregate
-    # regardless of the window picker (a fleet-health readout, not a windowed
-    # figure) — pull it once here.
+def _render_overview_fleets(stats: dict, segment: str, win_label: str,
+                            window: str) -> None:
+    """The fleet-health + promotion-readiness block — moved BELOW the live-trades
+    monitor (operator ask 2026-07-09). Strategy fleet + ML fleet counts +
+    best/worst strategy + promotion readiness, plus the per-symbol asset-class
+    P&L breakdown for the page's segment + window."""
+    strat_payload, _ = _fetch("/api/bot/strategies")
+    strat_payload = strat_payload if isinstance(strat_payload, dict) else {}
+    strategies = strat_payload.get("strategies") or []
+    seg_name = {"real": "real money", "paper": "paper", "all": "all (real + paper)"}[segment]
+
+    # ── Asset-class P&L breakdown, stacked by symbol (item 3) ──────────────
+    _render_asset_class_symbol_breakdown(segment, win_label, window, seg_note=seg_name)
+
+    # ── Strategy fleet + ML fleet health ───────────────────────────────────
     wall = _exec_perf_window("all")
     with st.container():
         st.markdown("**Strategy fleet**")
@@ -3097,12 +3233,11 @@ def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str)
                       and x.get("loaded") and not x.get("running"))
         n_off = sum(1 for x in strategies
                     if not x.get("enabled", True) or not x.get("loaded"))
-        sc = st.columns(4)  # four small counts read fine 4-up even on phones
+        sc = st.columns(4)
         sc[0].metric("Live", n_live)
         sc[1].metric("Shadow", n_shadow)
         sc[2].metric("Stale", n_stale)
         sc[3].metric("Off", n_off)
-        # Best & worst by all-time P&L from /performance perStrategy.
         per_strat = (wall.get("perStrategy") if wall else None) or []
         graded = [r for r in per_strat if r.get("totalPnl") is not None]
         if graded:
@@ -3118,6 +3253,7 @@ def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str)
         st.markdown("**ML fleet**")
         reg, reg_err = _fetch("/api/bot/ml/registry")
         rows_reg = (reg or {}).get("rows", []) if not reg_err else []
+
         def _stage_of(r: dict) -> str:
             return str(r.get("target_deployment_stage") or r.get("stage") or "").lower()
         n_adv = sum(1 for r in rows_reg
@@ -3132,7 +3268,6 @@ def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str)
         mc[1].metric("Shadow", n_sh)
         mc[2].metric("Candidate", n_cand)
         mc[3].metric("Disabled", n_dis)
-        # Last training time — newest ts across sessions / cycle events.
         last_train = None
         sess, serr = _fetch("/api/bot/ml/sessions")
         for srow in ((sess or {}).get("sessions", []) if not serr else []):
@@ -3148,11 +3283,9 @@ def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str)
         st.caption(f"Last training: {last_train or '—'}"
                    + ("" if rows_reg else " · registry unavailable"))
 
-    # ── Promotion readiness (models soaking/ready + strategy M7 verdicts) ─────
+    # ── Promotion readiness (models soaking/ready + strategy M7 verdicts) ──
     with st.container():
         _render_readiness_block(strategies)
-
-    st.divider()
 
 
 def _render_strategy_snapshot(frame: pd.DataFrame, hours: int = 24,
@@ -3270,105 +3403,10 @@ def _render_notification_banner(*, alerts_only: bool = False) -> None:
             st.info(body)
 
 
-def page_overview(stats: dict | None, stats_err: str | None) -> None:
-    st.header("Overview")
-    # Can't-miss system conditions (trainer down / broker account down /
-    # recently-opened trades) — full banner at the very top of Overview.
-    _render_notification_banner()
-    if stats_err:
-        st.warning(f"Stats endpoint error: {stats_err}")
-    s  = stats or {}
-    vm = s.get("vmHealth") or {}
-
-    # ── Page control bar — segment + time-window pickers drive the WHOLE page ──
-    # (exec summary, KPI row, 24h scorecard, P&L sparkline, per-strategy line,
-    # open-positions table). Segment defaults to Real money; window to 24h.
-    # Mobile-friendly: segmented_control with a horizontal-radio fallback.
-    st.caption("Choose what you're looking at — real money, paper, or both "
-               "(All) — and the time window.")
-    ov_segment, ov_win_label, ov_window = _control_bar(
-        "ov_segment", "ov_window", win_index=0)
-    st.divider()
-
-    # ── Executive ("CEO") summary band — at-a-glance system health + business
-    # performance for the chosen segment + window. Real / paper / prop kept
-    # strictly separate; "All" is the explicit, All-labeled merge.
-    _render_exec_summary(s, ov_segment, ov_win_label, ov_window)
-
-    # P&L calendar — under the exec summary, matching the Android Overview
-    # (own Real/Paper/Prop toggle + month picker + day $+% + monthly total,
-    # full history, NOT scoped to the page window).
-    _render_overview_calendar()
-    st.divider()
-
-    # M13 S1: surface the latest analyst summary at the top of the page.
-    # Silent no-op when /api/bot/insights/* isn't deployed yet OR the
-    # generator hasn't written its first cache file — see
-    # _render_overview_insight_card for the placeholder handling.
-    _render_overview_insight_card()
-
-    # ── Header band: headline KPIs for the chosen segment + window ─────────────
-    # The first thing seen on the page is the summary that matters. Both the
-    # primary metrics AND the secondary caption follow the segment picker:
-    #   - real / all → real-or-combined PRIMARY, paper SECONDARY caption;
-    #   - paper      → paper PRIMARY, real SECONDARY caption.
-    # 24h real can fall back to /stats.pnl24h (shared rolling-24h close-time
-    # basis); all-window real can fall back to /stats totals/winRate so the
-    # headline is never blank and never a fabricated $0.00 (the /stats winRate
-    # denominator discrepancy means /performance is preferred when present).
-    hb_block, hb_combined = _perf_for_segment(ov_window, ov_segment)
-    hb_pnl = hb_block.get("totalPnl")
-    if hb_pnl is None and ov_window == "24h" and ov_segment == "real":
-        hb_pnl = s.get("pnl24h")
-    hb_total = hb_block.get("totalPnl")
-    if hb_total is None and ov_window == "all" and ov_segment == "real":
-        hb_total = s.get("totalPnL")
-    hb_wr = hb_block.get("winRate")
-    if hb_wr is None and ov_window == "all" and ov_segment == "real":
-        hb_wr = s.get("winRate")
-    if ov_segment == "real":
-        hb_open = s.get("openTrades", 0)
-    elif ov_segment == "paper":
-        hb_open = s.get("paperOpenTrades") or 0
-    else:
-        hb_open = (s.get("openTrades", 0) or 0) + (s.get("paperOpenTrades") or 0)
-    seg_word = {"real": "real", "paper": "paper", "all": "all"}[ov_segment]
-    hb_status = s.get("status", "unknown")
-    hb_color = {"running": _TV_GREEN, "paused": "#f5a623",
-                "stopped": _TV_RED}.get(hb_status, "#6b7488")
-    _render_header_band(
-        real=[
-            (f"P&L · {ov_win_label}", fmt_usd(hb_pnl)),
-            (f"Total PnL · {seg_word}", fmt_usd(hb_total)),
-            (f"Open · {seg_word}", hb_open),
-            ("Win rate", fmt_pct(hb_wr)),
-        ],
-        status=(f"{hb_status.upper()} · {s.get('datasource', '?')}", hb_color),
-    )
-    # Secondary one-liner for the OTHER segment — never blended, always visible.
-    if ov_segment in ("real", "all"):
-        _ph_blk, _ = _perf_for_segment(ov_window, "paper")
-        if _ph_blk:
-            st.caption(
-                f"🧪 Paper · {ov_win_label} · P&L {fmt_usd(_ph_blk.get('totalPnl'))} "
-                f"· win {fmt_pct(_ph_blk.get('winRate'))} · "
-                f"open {s.get('paperOpenTrades') or 0}"
-            )
-    else:
-        _rh_blk, _ = _perf_for_segment(ov_window, "real")
-        if _rh_blk:
-            st.caption(
-                f"💰 Real · {ov_win_label} · P&L {fmt_usd(_rh_blk.get('totalPnl'))} "
-                f"· win {fmt_pct(_rh_blk.get('winRate'))} · "
-                f"open {s.get('openTrades', 0)}"
-            )
-    if hb_combined:
-        st.caption("All = explicit real + paper merge (profit factor / max "
-                   "drawdown not combinable → shown as —).")
-
-    # ── Cross-links — one compact row jumping to the detail pages behind these
-    # headline figures (closed-trade log, open positions, the strategy fleet).
-    # `_goto` queues the nav page + reruns; page labels match the SECTIONS map.
+def _render_overview_glance() -> None:
+    """Cross-link nav row + the latest-system-report and news-sentiment glance
+    cards — moved BELOW the live-trades monitor (operator ask 2026-07-09)."""
+    # Cross-links — one compact row jumping to the detail pages.
     nav1, nav2, nav3 = st.columns(3)
     with nav1:
         if st.button("Open Trades log →", key="ov_nav_trades",
@@ -3383,7 +3421,7 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
                      use_container_width=True):
             _goto("Strategies")
 
-    # ── Glance cards: latest system-report + news layer — summary here, full
+    # Glance cards: latest system-report + news layer — summary here, full
     # detail one click away (the overview→drill-down principle).
     rc, nc = st.columns(2)
     with rc:
@@ -3468,6 +3506,34 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
             if st.button("Open News →", key="ov_card_news",
                          use_container_width=True):
                 _goto("News")
+
+
+def page_overview(stats: dict | None, stats_err: str | None) -> None:
+    st.header("Overview")
+    # Can't-miss system conditions (trainer down / broker account down /
+    # recently-opened trades) — full banner at the very top of Overview.
+    _render_notification_banner()
+    if stats_err:
+        st.warning(f"Stats endpoint error: {stats_err}")
+    s  = stats or {}
+    vm = s.get("vmHealth") or {}
+
+    # ── Page control bar — segment + time-window pickers drive the WHOLE page ──
+    # (exec summary, KPI row, 24h scorecard, P&L sparkline, per-strategy line,
+    # open-positions table). Segment defaults to Real money; window to 24h.
+    # Mobile-friendly: segmented_control with a horizontal-radio fallback.
+    st.caption("Choose what you're looking at — real money, paper, or both "
+               "(All) — and the time window.")
+    ov_segment, ov_win_label, ov_window = _control_bar(
+        "ov_segment", "ov_window", win_index=0)
+    st.divider()
+
+    # ── Executive ("CEO") summary band — at-a-glance system health + business
+    # performance for the chosen segment + window. Real / paper / prop kept
+    # strictly separate; "All" is the explicit, All-labeled merge.
+    _render_exec_summary(s, ov_segment, ov_win_label, ov_window)
+    # Segment word reused by the snapshot section below.
+    seg_word = {"real": "real", "paper": "paper", "all": "all"}[ov_segment]
     st.divider()
 
     # ── Live charts (top of page) ──────────────────────────────────────────────
@@ -3699,6 +3765,27 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
                 _w, expander_label=_working_row_label(_w),
                 key_prefix=f"ovwo_{_i}_")
 
+    st.divider()
+
+    # ── Below the live-trades monitor (moved here 2026-07-09, operator ask):
+    # the per-symbol asset-class P&L breakdown + strategy/ML fleets + promotion
+    # readiness, then the analyst read, latest system report + news glance, and
+    # the P&L calendar. These used to sit above the monitor; the top of the page
+    # is now just the six exec cards.
+    _render_overview_fleets(s, ov_segment, ov_win_label, ov_window)
+    st.divider()
+
+    # M13 S1: the latest AI-analyst summary (silent no-op until the generator
+    # has written its first cache file).
+    _render_overview_insight_card()
+
+    # Cross-links + latest-report + news-sentiment glance cards.
+    _render_overview_glance()
+    st.divider()
+
+    # P&L calendar — own Real/Paper/Prop toggle + month picker + day $+%
+    # + monthly total, full history (NOT scoped to the page window).
+    _render_overview_calendar()
     st.divider()
 
     # ââ Snapshot (below the chart) ââââââââââââââââââââââââââââââââââââââââââââââ
@@ -4112,12 +4199,11 @@ def page_performance() -> None:
         )
         st.caption(f"{pf_label} window, uncapped (real-money primary · paper "
                    "secondary).")
-        # Asset-class P&L bar for the chosen window (real money).
-        _pf_ac = build_asset_class_bar(_pf_all.get("perAssetClass"), height=200)
-        if _pf_ac is not None:
-            st.markdown(f"**P&L by asset class · {pf_label} (real)**")
-            st.plotly_chart(_pf_ac, use_container_width=True,
-                            config={"displayModeBar": False})
+        # Asset-class P&L bar for the chosen window (real money), STACKED by
+        # symbol (item 3, 2026-07-09) so each asset-class bar shows its
+        # constituent instruments as coloured portions.
+        _render_asset_class_symbol_breakdown(
+            "real", pf_label, pf_window, seg_note="real")
         st.divider()
     render_trade_analytics()
 
@@ -4226,18 +4312,26 @@ def page_accounts() -> None:
         total, unk = _sum_upnl(legs)
         return _upnl_metric(total, len(legs) - unk, unk)
 
+    st.markdown("**💵 Real-money accounts**")
     _render_header_band(
         real=[
             ("Real balance", _bal_metric(_real_ids)),
             ("Open · real", _open_count(_real_ids)),
             ("uPnL · real", _upnl_metric_for(_real_ids)),
         ],
-        paper=([
-            ("balance", _bal_metric(_paper_ids)),
-            ("open", _open_count(_paper_ids)),
-            ("uPnL", _upnl_metric_for(_paper_ids)),
-        ] if _paper_ids else None),
     )
+    # Paper accounts get the SAME big-metric summary band as real money
+    # (operator ask 2026-07-09) — was a single 🧪 caption before. Still strictly
+    # separate from the real-money band (never blended).
+    if _paper_ids:
+        st.markdown("**🧪 Paper accounts**")
+        _render_header_band(
+            real=[
+                ("Paper balance", _bal_metric(_paper_ids)),
+                ("Open · paper", _open_count(_paper_ids)),
+                ("uPnL · paper", _upnl_metric_for(_paper_ids)),
+            ],
+        )
     # Prop-firm accounts: kept strictly separate from real money.
     if _prop_ids:
         _pt, _pp, _pm = _bal_sum(_prop_ids)
