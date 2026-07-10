@@ -80,9 +80,17 @@ complaint). Now:
   `every` set → in-place partial rerun on that cadence (page around it never
   re-renders); `every=None` → no auto-refresh but interactions inside rerun
   only that fragment. Falls back to a plain call if `st.fragment` is missing.
-- **Live regions:** the whole Overview view (10s, stats fetched inside the
-  fragment), the sidebar status dot + clock (30s), and the detail pages listed
-  in **`_PAGE_REFRESH_S`** (Positions/Signals 10s; Accounts/Health/Logs 30s).
+- **Live regions:** the whole Overview view (`POLL_INTERVAL_S`, stats fetched
+  inside the fragment), the sidebar status dot + clock (30s), and the detail
+  pages listed in **`_PAGE_REFRESH_S`** (Positions/Signals/Accounts/Health/Logs).
+- **Instant-on-click + gentle timer (2026-07-10).** `POLL_INTERVAL_S` is **30s**
+  (was 10s) and the `_fetch_cached` TTL is deliberately the **same** value: a
+  control tap (funding toggle / window / chart symbol / interval) reruns its
+  fragment and hits the WARM cache — so it updates instantly instead of
+  re-paying the whole page's ~30 blocking fetches or being swallowed mid-tap by
+  the refresh timer (the "click, nothing happens until Refresh" bug, worst on
+  mobile). The timer is the only thing that pays for a fresh fetch. Switching to
+  a not-yet-fetched chart symbol still pays ONE cold candle fetch.
 - **Everything else is static by design** — reading surfaces (Reports,
   Insights, Roadmap, Trades, Performance, …) never refresh under the reader,
   and **Prop stays static** because it carries the report-back form (an
@@ -232,6 +240,34 @@ layer (no per-page bespoke logic):
   (`since=`), in addition to the Overview/Trades pages that already had it. Open
   Positions stay window-less (they're point-in-time live state).
 
+## One funding toggle per tab — Real / Paper / Prop (2026-07-10)
+
+Operator ask: **one** funding-class toggle at the top of each tab, and
+everything on that tab scopes to it — no scattered secondary funding controls.
+The axis is the three funding classes **Real money / Paper / Prop** (replacing
+the old Real/Paper/**All** segment; the three are never blended). Implemented
+as `_funding_control` / `_funding_bar` (`_FUNDING_CHOICES` / `_FUNDING_SLUG`),
+with the hardened control coercing any stale/invalid cached value (e.g. a
+returning user's cached `"All"`) so the 3-option widget can't crash on first
+load. `_segment_filter_rows` / `_segment_filter_frame` / `_perf_for_segment` /
+`_segment_equity` all grew a `prop` branch. Wired into **Overview** (drives the
+exec summary, the open-trades list, the P&L-by-asset breakdown, the P&L
+calendar, the live-trades monitor + snapshot), **Positions**, **Trades**,
+**Performance** (the top toggle now drives the header band + asset breakdown +
+the deep-dive — `render_trade_analytics(segment)` no longer renders its own
+picker), and **Order Packages**. **Prop** is sourced from its own journal on
+each tab (prop isn't in the money DB): open → `_prop_open_positions` (filled
+tickets, mark-price uPnL); closed → `_prop_closed_rows` / `_prop_closed_frame`
+(prop fills); decision-level → the outbound prop **tickets**
+(`_render_prop_ticket_decisions`); per-window analytics → `_prop_perf_block` /
+`_prop_per_asset_class`. **Signals** has no funding axis (organize by
+strategy/asset/symbol only). The legacy `_control_bar` / `_segment_control` /
+`_segment_picker` (Real/Paper/All) are unused now but kept in place pending a
+cleanup. The **P&L-by-asset bar is stacked by SYMBOL** — each asset-class bar is
+subdivided by its constituent symbols (`build_asset_class_symbol_bar` over the
+per-symbol closed rows), with the authoritative `/performance` `perAssetClass`
+per-class bar as a fallback so it can never render blank.
+
 ## Sub-pages (endpoint reference)
 
 The list/registry pages — **Strategies, Models, Accounts** — share a
@@ -250,7 +286,7 @@ Nested expanders are illegal in Streamlit, so the in-row "Show all" + config use
 | Insights | `/api/bot/insights/{summary,recent,strategy/{name},health}` — AI Analyst (M13 S1). Renders the cached LLM narrative + grade pill + signals list for each of the four endpoints. The grade is 🟢 good / 🟡 mixed / 🔴 concerning; signals are bullet-tagged by severity. Per-strategy section uses a selectbox populated from `/api/bot/strategies` (falls back to the canonical 6-strategy list). The router returns a 200 placeholder envelope when the cache hasn't been written yet, so this tab renders cleanly even before the generator's first run; the Overview page also surfaces the `summary` payload as a compact "Latest Analyst Read" card at the top. **Read-only** — nothing here calls Anthropic (that's the bot's `ict-insights-generator.service`). |
 | Accounts | `/api/bot/config`, `/api/bot/accounts/balances`, `/api/pnl/history?account_id=`, `/api/bot/positions`, `/api/bot/trades/closed?account_id=` — one card per account (**all accounts incl. the demo `bybit_1`** — the old separate Demo tab was folded in here): live/dry status, tracked balance (snapshot), realized·30d + unrealized PnL, open-trade count, trades·30d, a **daily realised-P&L chart** (bars + cumulative), and an expandable 7-day trade log. Uses the **no-session** `/api/pnl/history` (not the session-gated `/api/pnl`); reads its `pnl` field (renamed from `realized_usd` in S-063 — **not** `realizedPnl`). |
 | Positions | `/api/bot/positions` (open) + `/api/bot/order-packages` + `/api/bot/signals` — **open positions only** (closed history moved to the separate **Trades** tab 2026-06-20, mirroring the Android app). Open positions render as full detail cards (`_render_trade_card`) — symbol + LONG/SHORT, **account** + strategy, entry/SL/TP/qty/uPnL (with the **`unrealizedPnlSource`** surfaced: broker truth · mark-price local · unavailable→"—"), an **evaluation row** (Risk:Reward, stop/target distance %, confidence/PnL%), the linked order package's decision & reasoning (`signalLogic` + `meta{setup_type,killzone,bias}` + Claude review), the per-model **ML scores persisted on the order package** (`modelScores` `{model_id:{stage,score}}` — a cheap field read, NOT the `/api/bot/trades/scores` recompile), and the best-effort triggering signal. **Options-expression rows** (`alpaca_options_paper`) additionally render a **defined-risk structure block** (`_render_options_structure` from `Position.options`: structure · net debit · max loss/gain · contracts · expiration · breakeven · per-leg OCC/strike/type table) — decision-time geometry, connection-free (per-leg live greeks/PnL are a bot-side follow-up); `null`/absent for any non-options trade. The header band keeps real / paper / **prop** strictly separate (prop is NOT real money). uPnL aggregates **exclude** legs whose value is `unavailable` (never summed as $0; a "+N unmeasured" caption notes them). The join data (order-packages + signals) is fetched **concurrently + time-boxed** (`_fetch_parallel`). |
-| Trades | `/api/bot/trades/closed?since=…&include_paper=true` + `/api/bot/order-packages` + `/api/bot/signals` — **closed-trade history** (split from Positions 2026-06-20). A Real money / Paper / All segment picker (prop excluded from real), a 24h / 7d / 30d / All window selector (7d default), and a tabular list whose **rows are clickable** (`st.dataframe` single-row select, selectbox fallback on older Streamlit) to open the same full `_render_trade_card`. |
+| Trades | `/api/bot/trades/closed?since=…&include_paper=true` + `/api/bot/order-packages` + `/api/bot/signals` — **closed-trade history** (split from Positions 2026-06-20). One **Real money / Paper / Prop** funding toggle (prop closed trades come from the prop journal via `_prop_closed_rows`, not `/trades/closed`), a 24h / 7d / 30d / All window selector (7d default), and a tabular list whose **rows are clickable** (`st.dataframe` single-row select, selectbox fallback on older Streamlit) to open the same full `_render_trade_card`. |
 | Signals | `/api/bot/signals` |
 | News | `/api/bot/news/recent` — M9 news layer shadow-soak feed: per-actionable-signal news decision (veto / boost / reduce / neutral, `adjustment`, `event_risk`) + applied reductive influence downsizes (`factor`/`action`). Headline counts (decisions / vetoes / boost·reduce / neutral) + a **"📰 Headlines read"** expander of the top source articles the layer read (`top_items` `{headline,url,score}`, each a clickable link to the story) + a decisions table. Renders an explicit "not active yet" state until the bot's news layer is active — activation is source-driven (`NEWS_SOURCE=rss`, or `newsapi` + `NEWS_API_KEY`; the legacy `NEWS_ENABLED` flag was removed bot-side 2026-06-10) — the log is empty until then. **Read-only.** |
 | Exit Ladder | `/api/bot/exit-ladder/soak` — ExitPlan exit-ladder shadow-soak feed (dynamic-take-profit consistency P3). One row per executed order: the **laddered exit that would be used** (the materialized ExitPlan sized to the order's real qty — partial-TP rungs + final + stop) vs the **single SL/TP target actually placed**. Summary metrics (orders soaked, API/prop split, how many differ + %), a venue filter (All/api/prop), and a flattened per-order table. **Observe-only** — nothing here changes a live exit (graduating the ladder is the backtest-gated P4). Empty until the first live opening order writes a row. **Read-only.** |

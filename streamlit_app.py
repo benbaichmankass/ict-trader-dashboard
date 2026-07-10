@@ -3127,66 +3127,136 @@ def _closed_rows_for_window(segment: str, window: str) -> list[dict]:
     return rows
 
 
+def _closed_rows_all(segment: str) -> list[dict]:
+    """All recent closed rows (NO window filter) — the per-symbol composition
+    fallback for when the windowed close-time filter drops rows. ``/trades/closed``
+    can return a recently-closed trade whose ``closedAt`` is null while its
+    ``openedAt`` predates the window, so the client-side close-time window drops
+    it even though ``/performance`` (which windows on a COALESCE(closed_at,
+    updated_at, timestamp) basis) still counts it — leaving the symbol split
+    blank while the class total is non-zero. This un-windowed set recovers the
+    symbol composition; the class TOTAL still comes from the authoritative
+    ``/performance`` figure, so the split is representative, not authoritative."""
+    if segment == "prop":
+        return _prop_closed_rows("all")
+    include_paper = "true" if segment in ("paper", "all") else "false"
+    rows, _ = _fetch("/api/bot/trades/closed?"
+                     + urlencode({"limit": 500, "include_paper": include_paper}))
+    return _segment_filter_rows(rows or [], segment)
+
+
+def _bar_from_symbol_agg(
+    agg: dict[str, dict[str, float]], height: int = 220
+) -> go.Figure | None:
+    """Stacked-by-symbol horizontal P&L bar from a ``{class: {symbol: pnl}}``
+    map (``barmode='relative'`` so a losing symbol extends left of zero). Returns
+    None when the map is empty. Shared by :func:`build_asset_class_symbol_bar`
+    and the anchored breakdown below."""
+    agg = {c: s for c, s in agg.items() if s}
+    if not agg:
+        return None
+    classes = sorted(agg.keys(), key=_asset_class_order)
+    class_labels = [_ASSET_CLASS_ICON.get(c, f"• {c}") for c in classes]
+    sym_abs: dict[str, float] = {}
+    for d in agg.values():
+        for s, v in d.items():
+            sym_abs[s] = sym_abs.get(s, 0.0) + abs(v)
+    symbols = sorted(sym_abs, key=lambda s: sym_abs[s], reverse=True)
+    fig = go.Figure()
+    for i, sym in enumerate(symbols):
+        xs = [agg.get(c, {}).get(sym, 0.0) for c in classes]
+        if not any(xs):
+            continue
+        fig.add_bar(
+            y=class_labels, x=xs, orientation="h", name=sym,
+            marker_color=_CATEGORICAL[i % len(_CATEGORICAL)],
+            hovertemplate=f"{sym} · %{{y}}: $%{{x:,.2f}}<extra></extra>",
+        )
+    fig.update_layout(barmode="relative",
+                      legend=dict(orientation="h", yanchor="top", y=-0.2,
+                                  xanchor="left", x=0))
+    fig.update_xaxes(showgrid=True, gridcolor=_LC_GRID_H, fixedrange=True,
+                     zeroline=True, zerolinecolor="#2a3a5a")
+    fig.update_yaxes(showgrid=False, fixedrange=True)
+    return _style_plotly(fig, height)
+
+
 def _render_asset_class_symbol_breakdown(
     segment: str, win_label: str, window: str, *, seg_note: str,
 ) -> None:
-    """P&L-by-asset-class bar **stacked by symbol** + a compact per-class
-    caption. Shared by the Overview and the Performance page.
+    """P&L-by-asset-class bar **stacked by symbol** + a compact per-class caption.
+    Shared by the Overview and the Performance page.
 
-    PRIMARY view (operator ask 2026-07-10): each asset-class bar is subdivided by
-    its constituent SYMBOLS (``build_asset_class_symbol_bar`` over the per-symbol
-    closed-trade rows), so you can see which instrument drove each class's P&L.
-    FALLBACK (so it can never go blank again — the "not working" bug): when no
-    per-symbol closed-trade P&L resolves for this class/window, render the
-    AUTHORITATIVE per-class bar from ``/performance`` ``perAssetClass`` (the same
-    source as the exec "Realized P&L" card). Prop rows carry their symbol too
-    (``_prop_closed_rows``), so the Prop view is symbol-stacked as well."""
+    Which asset classes appear and their totals come from the AUTHORITATIVE
+    ``/performance`` ``perAssetClass`` aggregate (the same source as the exec
+    "Realized P&L" card — never blank, never disagrees with the headline). Each
+    class bar is then SUBDIVIDED by its constituent symbols from the closed-trade
+    rows: the windowed rows first, and where a class the authoritative totals
+    report has NO windowed per-symbol data (the ``/trades/closed`` close-time
+    drift — a recently-closed trade with a null ``closedAt`` + an ``openedAt``
+    before the window is dropped by the client-side window even though
+    ``/performance`` still counts it), that class is filled from the un-windowed
+    recent rows so the symbol split still renders. This is why the earlier
+    version fell back to a flat per-class bar ("per-symbol split unavailable")
+    even with trades in the window. Prop carries its symbol too, so Prop is
+    symbol-stacked as well."""
     st.markdown(f"**P&L by asset class · by symbol · {win_label} ({seg_note})**")
-    # Per-symbol rows first (the rich stacked view the operator wants).
-    rows = _closed_rows_for_window(segment, window)
-    fig = build_asset_class_symbol_bar(rows, height=220)
-    if fig is not None:
-        st.plotly_chart(fig, use_container_width=True,
-                        config={"displayModeBar": False})
-        # Per-class trades/win caption beneath the bar (2-up), from the rows.
-        counts: dict[str, dict[str, float]] = {}
-        for r in rows:
-            if r.get("realizedPnl") is None:
-                continue
-            cls = _row_asset_class(r)
-            c = counts.setdefault(cls, {"trades": 0, "wins": 0})
-            c["trades"] += 1
-            try:
-                if float(r.get("realizedPnl")) > 0:
-                    c["wins"] += 1
-            except (TypeError, ValueError):
-                pass
-        ordered = sorted(counts.keys(), key=_asset_class_order)
-        for i in range(0, len(ordered[:6]), 2):
-            cols_ac = st.columns(2)
-            for j, cls in enumerate(ordered[i:i + 2]):
-                lbl = _ASSET_CLASS_ICON.get(cls, f"• {cls}")
-                c = counts.get(cls, {"trades": 0, "wins": 0})
-                wr = (c["wins"] / c["trades"] * 100) if c["trades"] else None
-                cols_ac[j].caption(
-                    f"{lbl}: {c['trades']} trades · win {fmt_pct(wr)}")
-        return
-    # Fallback: authoritative per-class bar (never blank when the exec card has
-    # P&L — the per-symbol rows can lag when a trade was held across the window).
+
+    # Authoritative per-class totals (defines which classes exist + the caption).
     if segment == "prop":
         per_class = _prop_per_asset_class(window)
     else:
         block, _combined = _perf_for_segment(window, segment)
         per_class = (block or {}).get("perAssetClass") or []
-    class_fig = build_asset_class_bar(per_class, height=220)
-    if class_fig is None:
-        st.caption("P&L by asset class: — (no closed-trade P&L for this "
-                   "class / window yet).")
+    per_class = [r for r in per_class if r.get("totalPnl") is not None]
+
+    # Per-symbol composition: windowed first, then per-class fill from recent.
+    win_agg = _asset_symbol_pnl(_closed_rows_for_window(segment, window))
+    all_agg: dict[str, dict[str, float]] | None = None
+    agg: dict[str, dict[str, float]] = {}
+    approx = False
+    for r in per_class:
+        cls = str(r.get("assetClass") or "unknown").lower()
+        if win_agg.get(cls):
+            agg[cls] = win_agg[cls]
+            continue
+        if all_agg is None:
+            all_agg = _asset_symbol_pnl(_closed_rows_all(segment))
+        if all_agg.get(cls):
+            agg[cls] = all_agg[cls]
+            approx = True
+    # No authoritative list (e.g. /performance down) → show whatever windowed
+    # rows resolve, so the bar isn't blank just because the aggregate failed.
+    if not per_class and win_agg:
+        agg = win_agg
+
+    fig = _bar_from_symbol_agg(agg, height=220)
+    if fig is None:
+        # Last resort: the flat authoritative per-class bar (no per-symbol data
+        # anywhere — e.g. brand-new account with only unresolved-PnL trades).
+        class_fig = build_asset_class_bar(per_class, height=220)
+        if class_fig is None:
+            st.caption("P&L by asset class: — (no closed-trade P&L for this "
+                       "class / window yet).")
+            return
+        st.plotly_chart(class_fig, use_container_width=True,
+                        config={"displayModeBar": False})
+        st.caption("Per-class totals shown; per-symbol split unavailable.")
+        _render_per_class_caption(per_class)
         return
-    st.plotly_chart(class_fig, use_container_width=True,
+
+    st.plotly_chart(fig, use_container_width=True,
                     config={"displayModeBar": False})
-    st.caption("Per-class totals shown; per-symbol split unavailable for this "
-               "class / window.")
+    if approx:
+        st.caption("Some classes' per-symbol split uses recent closed trades "
+                   "(the window's close-time data was incomplete); the per-class "
+                   "totals below follow the window.")
+    _render_per_class_caption(per_class)
+
+
+def _render_per_class_caption(per_class: list[dict]) -> None:
+    """2-up per-class 'N trades · win X%' caption from the authoritative
+    ``/performance`` ``perAssetClass`` list."""
     ordered = sorted(
         [r for r in per_class if r.get("totalPnl") is not None],
         key=lambda r: _asset_class_order(r.get("assetClass")))
