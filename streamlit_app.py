@@ -2545,6 +2545,41 @@ def _prop_closed_frame() -> pd.DataFrame:
     return pd.DataFrame.from_records(records)[cols] if records else pd.DataFrame(columns=cols)
 
 
+def _prop_closed_rows(window: str) -> list[dict]:
+    """Closed PROP fills shaped into the ``/trades/closed`` row schema so the
+    Trades page's table + detail card render them like any closed trade. Prop
+    lives in its own journal (`/api/bot/prop/fills`), never `/trades/closed`.
+    Windowed by close (report) time; ``all`` keeps everything."""
+    data, err = _fetch("/api/bot/prop/fills?limit=400")
+    fills = (data or {}).get("fills") or [] if not err else []
+    cutoff = (dt.datetime.utcnow() - dt.timedelta(days=_WINDOW_DAYS.get(window, 1))
+              if window != "all" else None)
+    rows: list[dict] = []
+    for f in fills:
+        if str(f.get("status") or "").lower() != "closed":
+            continue
+        ts = _parse_trade_ts(f.get("closed_at") or f.get("reported_at"))
+        if cutoff is not None and (ts is None or ts < cutoff):
+            continue
+        rows.append({
+            "closedAt": f.get("closed_at") or f.get("reported_at"),
+            "openedAt": f.get("opened_at"),
+            "account": f.get("account_id"),
+            "symbol": f.get("symbol"),
+            "side": f.get("direction"),
+            "pattern": "prop",
+            "qty": f.get("qty"),
+            "entryPrice": f.get("entry_price"),
+            "exitPrice": f.get("exit_price"),
+            "realizedPnl": f.get("pnl"),
+            "realizedPnlPct": f.get("pnl_percent"),
+            "closeReason": f.get("reason"),
+            "accountClass": "prop",
+            "isDemo": False,
+        })
+    return rows
+
+
 def _render_overview_calendar(segment: str) -> None:
     """The P&L calendar on the Overview — mirrors the Android Overview widget:
     a month picker + day $+% cells + a monthly total. Driven by the page's ONE
@@ -2583,25 +2618,27 @@ def _render_overview_calendar(segment: str) -> None:
                "loss · full history, pick the month above.")
 
 
-def render_trade_analytics() -> None:
+def render_trade_analytics(segment: str) -> None:
     """The performance deep-dive: filter + headline metrics + equity curve +
     calendar + win/loss bar + strategy pie + per-strategy breakdown.
 
-    Renders a Real money / Paper / All segment picker first so the operator
-    can inspect each segment in isolation without mixing real-money KPIs with
-    paper activity.
+    ``segment`` (real/paper/prop) comes from the page's ONE top funding toggle —
+    the deep-dive no longer renders its own segment picker (operator ask
+    2026-07-10: one toggle drives the whole tab). It renders only the time-window
+    axis; the window drives the headline metrics, equity curve, calendar and
+    win/loss bar via the shared ``df``.
     """
-    # Segment + time-window control bar — the deep-dive now honours the same
-    # 24h/7d/30d/All axis as the rest of the app (defaults to All-time, the
-    # page's purpose). The window drives the headline metrics, equity curve,
-    # calendar and win/loss bar via the shared `df`.
-    segment, dd_wlabel, dd_wslug = _control_bar(
-        "perf_segment", "perf_dd_window", win_index=3)
-    df, raw_count, err = _analytics_frame(include_paper=True)
-    if err:
-        st.info(f"Trade analytics unavailable: {err}")
-        return
-    df = _segment_filter_frame(df, segment)
+    dd_wlabel, dd_wslug = _window_control("perf_dd_window", index=3)
+    if segment == "prop":
+        # Prop closed trades live in the prop journal, not /trades/closed.
+        df = _prop_closed_frame()
+        raw_count = len(df)
+    else:
+        df, raw_count, err = _analytics_frame(include_paper=True)
+        if err:
+            st.info(f"Trade analytics unavailable: {err}")
+            return
+        df = _segment_filter_frame(df, segment)
     if not df.empty:
         _dd_cutoff = dt.datetime.utcnow() - dt.timedelta(days=_WINDOW_DAYS[dd_wslug])
         df = df[df["ts"] >= _dd_cutoff].reset_index(drop=True)
@@ -2610,6 +2647,8 @@ def render_trade_analytics() -> None:
             st.caption("No closed real-money trades yet — analytics will populate as trades close.")
         elif segment == "paper":
             st.caption("No closed paper trades in the lookback window.")
+        elif segment == "prop":
+            st.caption("No closed prop trades in the lookback window.")
         else:
             st.caption("No closed trades yet — analytics will populate as trades close.")
         return
@@ -4305,37 +4344,30 @@ def page_performance() -> None:
     st.header("Performance")
     st.caption(
         "Detailed system + per-strategy performance, plus per-symbol trade "
-        "context. Pick a window for the headline; the segment + strategy "
-        "filters for the deep-dive are below."
+        "context. One toggle — real money, paper, or prop — plus a window drive "
+        "the whole page; the strategy filter for the deep-dive is below."
     )
-    # Windowed headline band — uncapped /performance for the chosen window.
-    # Defaults to All-time (the page's purpose), with the same 24h/7d/30d/All
-    # axis as the rest of the app. The filterable deep-dive follows below.
-    pf_label, pf_window = _window_control("perf_hdr_window", index=3)  # All default
-    _pf_all = _exec_perf_window(pf_window)
-    if _pf_all and "winRate" in _pf_all:
-        _pf_paper = _pf_all.get("paper") or {}
+    # ── The ONE top toggle: funding class + window drive the WHOLE page ────────
+    pf_segment, pf_label, pf_window = _funding_bar(
+        "perf_hdr_segment", "perf_hdr_window", win_index=3)  # All default
+    _pf_block, _ = _perf_for_segment(pf_window, pf_segment)
+    _seg_name = _FUNDING_SEG_NAME.get(pf_segment, pf_segment)
+    if _pf_block and "winRate" in _pf_block:
         _render_header_band(
             real=[
-                ("Trades", _pf_all.get("totalTrades", 0)),
-                ("Win rate", fmt_pct(_pf_all.get("winRate"))),
-                ("Total PnL", fmt_usd(_pf_all.get("totalPnl"))),
-                ("Expectancy", fmt_usd(_pf_all.get("expectancy"))),
+                ("Trades", _pf_block.get("totalTrades", 0)),
+                ("Win rate", fmt_pct(_pf_block.get("winRate"))),
+                ("Total PnL", fmt_usd(_pf_block.get("totalPnl"))),
+                ("Expectancy", fmt_usd(_pf_block.get("expectancy"))),
             ],
-            paper=[
-                ("trades", _pf_paper.get("totalTrades", 0)),
-                ("win", fmt_pct(_pf_paper.get("winRate"))),
-                ("total", fmt_usd(_pf_paper.get("totalPnl"))),
-            ] if _pf_paper else None,
         )
-        st.caption(f"{pf_label} window, uncapped (real-money primary · paper "
-                   "secondary).")
-        # Asset-class P&L bar for the chosen window (real money) — from the
+        st.caption(f"{_seg_name} · {pf_label} window, uncapped.")
+        # Asset-class P&L bar for the chosen class + window — from the
         # authoritative /performance perAssetClass (matches the headline P&L).
         _render_asset_class_symbol_breakdown(
-            "real", pf_label, pf_window, seg_note="real")
+            pf_segment, pf_label, pf_window, seg_note=_seg_name)
         st.divider()
-    render_trade_analytics()
+    render_trade_analytics(pf_segment)
 
     st.divider()
     st.subheader("Trade context · per symbol")
@@ -4618,11 +4650,11 @@ def page_positions() -> None:
     where Positions and Trades are distinct views)."""
     st.header("Positions")
     st.caption("Live OPEN positions — full detail cards. Closed-trade history "
-               "lives on the separate **Trades** page. Use the segment picker "
-               "to switch between real money and paper. (Open positions have no "
-               "time window — see **Trades** for windowed history.)")
+               "lives on the separate **Trades** page. One toggle — real money, "
+               "paper, or prop. (Open positions have no time window — see "
+               "**Trades** for windowed history.)")
 
-    segment = _segment_control("pos_segment")
+    segment = _funding_control("pos_segment")
 
     # ── Header band: open exposure (real PRIMARY, paper SECONDARY) ──────────
     # Computed over ALL open positions (every class), independent of the
@@ -4661,20 +4693,29 @@ def page_positions() -> None:
     op_map, signals = _trade_card_join_data()
 
     st.subheader("Open")
-    rows, err = _fetch("/api/bot/positions?include_paper=true")
+    # Prop lives in its own journal (filled tickets, mark-price uPnL) — not
+    # /positions. Real/paper come from /positions.
+    if segment == "prop":
+        rows, err = _prop_open_positions(), None
+        unfiltered = rows
+    else:
+        rows, err = _fetch("/api/bot/positions?include_paper=true")
+        unfiltered = rows or []
+        rows = _segment_filter_rows(unfiltered, segment)
     if err:
         st.warning(err)
     else:
-        unfiltered = rows or []
-        rows = _segment_filter_rows(unfiltered, segment)
         if not rows:
-            # Smart empty state — if THIS segment has no open positions but
-            # another does, name it + offer a one-tap jump (open positions have
-            # no time window, so no widen-window jump here).
-            _empty_segment_hint(
-                unfiltered, segment, seg_widget_key="pos_segment",
-                noun="open positions",
-            )
+            if segment == "prop":
+                st.caption("No open prop trades right now.")
+            else:
+                # Smart empty state — if THIS segment has no open positions but
+                # another does, name it + offer a one-tap jump (open positions
+                # have no time window, so no widen-window jump here).
+                _empty_segment_hint(
+                    unfiltered, segment, seg_widget_key="pos_segment",
+                    noun="open positions",
+                )
         else:
             # Organize by strategy / account / asset group / symbol + isolate a
             # single group, each section captioned with its own open exposure.
@@ -4721,26 +4762,33 @@ def page_trades() -> None:
     """Closed-trade HISTORY — the window selector + clickable rows → detail
     card. Split from Positions (open) 2026-06-20 to mirror the Android app."""
     st.header("Trades")
-    st.caption("Closed-trade history. Pick a window and segment; click a row "
-               "for the full trade card. Open positions live on **Positions**.")
+    st.caption("Closed-trade history. One toggle — real money, paper, or prop — "
+               "plus a window; click a row for the full trade card. Open "
+               "positions live on **Positions**.")
 
-    # Mobile-friendly control bar — segment + window side-by-side. The window
-    # uses the same 24h/7d/30d/All axis as the rest of the app (default 7d).
-    segment, wlabel, wslug = _control_bar(
+    # Mobile-friendly control bar — ONE funding toggle + window side-by-side. The
+    # window uses the same 24h/7d/30d/All axis as the rest of the app (default 7d).
+    segment, wlabel, wslug = _funding_bar(
         "trades_segment", "trades_window", win_index=1)
     op_map, signals = _trade_card_join_data()
 
     days = _WINDOW_DAYS[wslug]
-    since = (dt.datetime.utcnow() - dt.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    closed_raw, cerr = _fetch(
-        "/api/bot/trades/closed?" + urlencode({
-            "limit": ANALYTICS_MAX_ROWS, "since": since, "include_paper": "true",
-        })
-    )
-    # Keep the UNFILTERED list (all classes, this window) so the empty-state hint
-    # can count per-segment availability without a second fetch.
-    closed_unfiltered = closed_raw or []
-    closed = _segment_filter_rows(closed_unfiltered, segment)
+    if segment == "prop":
+        # Prop closed trades live in the prop journal, not /trades/closed.
+        closed_unfiltered = _prop_closed_rows(wslug)
+        closed = closed_unfiltered
+        cerr = None
+    else:
+        since = (dt.datetime.utcnow() - dt.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        closed_raw, cerr = _fetch(
+            "/api/bot/trades/closed?" + urlencode({
+                "limit": ANALYTICS_MAX_ROWS, "since": since, "include_paper": "true",
+            })
+        )
+        # Keep the UNFILTERED list (all classes, this window) so the empty-state
+        # hint can count per-segment availability without a second fetch.
+        closed_unfiltered = closed_raw or []
+        closed = _segment_filter_rows(closed_unfiltered, segment)
     if cerr:
         st.warning(cerr)
     elif not closed:
@@ -5377,6 +5425,56 @@ def _render_working_order_card(
             st.code(msg)
 
 
+def _render_prop_ticket_decisions(window: str, wlabel: str) -> None:
+    """The PROP decision-level view for the Order Packages tab. Prop has no
+    order_packages — the outbound **ticket** (what the bot told the assistant to
+    place: strategy/symbol/dir/entry/SL/TP) IS its decision record. Windowed by
+    emit time; the full journal (fills, reconciliation) lives on the Prop tab."""
+    cutoff = (dt.datetime.utcnow() - dt.timedelta(days=_WINDOW_DAYS.get(window, 1))
+              if window != "all" else None)
+    tickets: list[dict] = []
+    for acct in _prop_accounts():
+        payload, err = _fetch(f"/api/bot/prop/tickets?account_id={acct}&limit=200")
+        if err or not isinstance(payload, dict):
+            continue
+        for t in payload.get("tickets") or []:
+            ts = _parse_trade_ts(t.get("created_at") or t.get("signal_time"))
+            if cutoff is not None and (ts is None or ts < cutoff):
+                continue
+            tickets.append(t)
+    if not tickets:
+        st.caption(f"No prop decisions (tickets) in the {wlabel.lower()} window.")
+        return
+    tickets.sort(key=lambda t: str(t.get("created_at") or ""), reverse=True)
+
+    def _n(status: str) -> int:
+        return sum(1 for t in tickets if str(t.get("status") or "").lower() == status)
+    _render_header_band(real=[
+        ("Tickets", len(tickets)),
+        ("Filled", _n("filled")),
+        ("Placed", _n("placed")),
+        ("Closed", _n("closed")),
+    ])
+    st.divider()
+    rows = [{
+        "Created": t.get("created_at"),
+        "Strategy": t.get("strategy"),
+        "Symbol": t.get("symbol"),
+        "Dir": t.get("direction"),
+        "Entry": t.get("entry"),
+        "SL": t.get("sl"),
+        "TP": t.get("tp"),
+        "Status": t.get("status"),
+        "Valid until": t.get("valid_until"),
+    } for t in tickets]
+    st.caption(f"{len(tickets)} prop ticket(s) · {wlabel} window · the "
+               "decision-level prop record")
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    st.caption("Prop decisions are emitted as tickets for a supervised assistant "
+               "to place — see the **Prop** tab for the full journal (fills, "
+               "reconciliation, rule-distance cushion).")
+
+
 def page_order_packages() -> None:
     st.header("Order Packages")
     st.caption(
@@ -5385,10 +5483,15 @@ def page_order_packages() -> None:
         "decision grade. The decision level, not the fill level."
     )
 
-    # Segment + time-window bar (same 24h/7d/30d/All axis as the rest of the
-    # app; default 30d). The window scopes the decision history via `since=`.
-    segment, op_wlabel, op_wslug = _control_bar(
+    # One funding toggle + time-window bar (same 24h/7d/30d/All axis as the rest
+    # of the app; default 30d). The window scopes the decision history via `since=`.
+    segment, op_wlabel, op_wslug = _funding_bar(
         "op_segment", "op_window", win_index=2)
+    if segment == "prop":
+        # Prop has no order_packages — its decision-level record is the outbound
+        # ticket (what the bot told the assistant to place). Render those instead.
+        _render_prop_ticket_decisions(op_wslug, op_wlabel)
+        return
     op_since = (dt.datetime.utcnow()
                 - dt.timedelta(days=_WINDOW_DAYS[op_wslug])).strftime("%Y-%m-%dT%H:%M:%SZ")
     payload, err = _fetch(
