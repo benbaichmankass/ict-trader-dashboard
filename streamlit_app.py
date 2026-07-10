@@ -3187,48 +3187,63 @@ def _render_asset_class_symbol_breakdown(
     """P&L-by-asset-class bar **stacked by symbol** + a compact per-class caption.
     Shared by the Overview and the Performance page.
 
-    Which asset classes appear and their totals come from the AUTHORITATIVE
-    ``/performance`` ``perAssetClass`` aggregate (the same source as the exec
-    "Realized P&L" card — never blank, never disagrees with the headline). Each
-    class bar is then SUBDIVIDED by its constituent symbols from the closed-trade
-    rows: the windowed rows first, and where a class the authoritative totals
-    report has NO windowed per-symbol data (the ``/trades/closed`` close-time
-    drift — a recently-closed trade with a null ``closedAt`` + an ``openedAt``
-    before the window is dropped by the client-side window even though
-    ``/performance`` still counts it), that class is filled from the un-windowed
-    recent rows so the symbol split still renders. This is why the earlier
-    version fell back to a flat per-class bar ("per-symbol split unavailable")
-    even with trades in the window. Prop carries its symbol too, so Prop is
-    symbol-stacked as well."""
+    Classes + totals AND the per-symbol split both come from the AUTHORITATIVE
+    ``/performance`` aggregate: ``perAssetClass`` for the class totals (the same
+    source as the exec "Realized P&L" card) and ``perSymbol`` for the split —
+    both computed by the SAME windowed SQL query, so a class that reports a total
+    can NEVER render an empty per-symbol split. This replaced the client-side
+    ``/trades/closed`` re-aggregation, which came back empty (leaving a flat
+    per-class bar) because that endpoint drops a recently-closed trade whose
+    ``closedAt`` is null while ``/performance`` still counts it. A client-side
+    fallback remains for a bot that predates ``perSymbol``; Prop (not in the
+    money DB) comes from the prop journal, symbol-stacked as well."""
     st.markdown(f"**P&L by asset class · by symbol · {win_label} ({seg_note})**")
 
-    # Authoritative per-class totals (defines which classes exist + the caption).
-    if segment == "prop":
-        per_class = _prop_per_asset_class(window)
-    else:
-        block, _combined = _perf_for_segment(window, segment)
-        per_class = (block or {}).get("perAssetClass") or []
-    per_class = [r for r in per_class if r.get("totalPnl") is not None]
-
-    # Per-symbol composition: windowed first, then per-class fill from recent.
-    win_agg = _asset_symbol_pnl(_closed_rows_for_window(segment, window))
-    all_agg: dict[str, dict[str, float]] | None = None
     agg: dict[str, dict[str, float]] = {}
     approx = False
-    for r in per_class:
-        cls = str(r.get("assetClass") or "unknown").lower()
-        if win_agg.get(cls):
-            agg[cls] = win_agg[cls]
-            continue
-        if all_agg is None:
-            all_agg = _asset_symbol_pnl(_closed_rows_all(segment))
-        if all_agg.get(cls):
-            agg[cls] = all_agg[cls]
-            approx = True
-    # No authoritative list (e.g. /performance down) → show whatever windowed
-    # rows resolve, so the bar isn't blank just because the aggregate failed.
-    if not per_class and win_agg:
-        agg = win_agg
+    if segment == "prop":
+        # Prop isn't in /performance — per-symbol from the prop journal.
+        per_class = [r for r in _prop_per_asset_class(window)
+                     if r.get("totalPnl") is not None]
+        agg = _asset_symbol_pnl(_prop_closed_rows(window))
+        if not any(agg.values()):
+            agg = _asset_symbol_pnl(_prop_closed_rows("all"))
+            approx = bool(agg)
+    else:
+        block, _combined = _perf_for_segment(window, segment)
+        per_class = [r for r in ((block or {}).get("perAssetClass") or [])
+                     if r.get("totalPnl") is not None]
+        # AUTHORITATIVE per-symbol split from /performance `perSymbol` — computed
+        # by the SAME windowed query as the class totals, so a class that reports
+        # a total can never render an empty per-symbol split (the /trades/closed
+        # close-time drift that kept this bar flat). Grouped by asset class.
+        for row in (block or {}).get("perSymbol") or []:
+            p = row.get("totalPnl")
+            if p is None:
+                continue
+            cls = str(row.get("assetClass") or "unknown").lower()
+            sym = str(row.get("symbol") or "—").upper()
+            try:
+                agg.setdefault(cls, {})[sym] = float(p)
+            except (TypeError, ValueError):
+                pass
+        # Graceful fallback for a bot that predates the `perSymbol` field: fill
+        # each class from the client-side closed rows (windowed → recent).
+        if not agg:
+            win_agg = _asset_symbol_pnl(_closed_rows_for_window(segment, window))
+            all_agg: dict[str, dict[str, float]] | None = None
+            for r in per_class:
+                cls = str(r.get("assetClass") or "unknown").lower()
+                if win_agg.get(cls):
+                    agg[cls] = win_agg[cls]
+                    continue
+                if all_agg is None:
+                    all_agg = _asset_symbol_pnl(_closed_rows_all(segment))
+                if all_agg.get(cls):
+                    agg[cls] = all_agg[cls]
+                    approx = True
+            if not per_class and win_agg:
+                agg = win_agg
 
     fig = _bar_from_symbol_agg(agg, height=220)
     if fig is None:
