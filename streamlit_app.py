@@ -35,7 +35,19 @@ except ImportError:
 
 BOT_API = os.environ.get("BOT_API_URL", "http://141.145.193.91:8001")
 TIMEOUT_S = 10.0
-POLL_INTERVAL_S = 10
+# Live cadence AND the fetch-cache TTL (they are deliberately the SAME value —
+# see below). A click on any control (segment toggle, time window, chart symbol,
+# interval) reruns the surrounding fragment; that rerun must feel INSTANT, so it
+# has to hit the fetch cache instead of re-paying ~30 blocking HTTP round-trips.
+# Keeping the cache TTL == the auto-refresh cadence guarantees the cache stays
+# warm for the whole window BETWEEN scheduled refreshes — so interaction reruns
+# in that window are pure cache hits (instant), while the timer itself is the
+# only thing that pays for a fresh fetch. A gentler 30s cadence (was 10s) also
+# stops the timer from firing mid-tap and swallowing the interaction, which on
+# mobile was the "I click, nothing happens until I hit Refresh" bug. Switching
+# to a not-yet-fetched chart symbol still pays ONE cold candle fetch (a couple
+# of seconds) — expected — but no longer re-pays the whole page's fetch storm.
+POLL_INTERVAL_S = 30
 DEFAULT_LIMIT = 50
 
 # Fragment-based refresh (2026-07-05). Live regions re-render IN PLACE via
@@ -842,7 +854,7 @@ def render_sidebar() -> str:
         # Deploy marker — bump on each release so a stale Streamlit Cloud
         # instance is obvious at a glance. If this date is old, the app
         # needs a reboot/redeploy.
-        st.caption("build 2026-07-05 · fragment refresh (no page reloads)")
+        st.caption("build 2026-07-10 · instant-on-click · 30s gentle live refresh")
 
     return section  # type: ignore[return-value]
 
@@ -1844,6 +1856,8 @@ def _segment_filter_rows(rows: list[dict], segment: str) -> list[dict]:
         return rows
     if segment == "paper":
         return [r for r in (rows or []) if _row_account_class(r) == "paper"]
+    if segment == "prop":
+        return [r for r in (rows or []) if _row_account_class(r) == "prop"]
     # real money: prop and paper both excluded
     return [r for r in (rows or []) if _is_real_money(r)]
 
@@ -1856,6 +1870,8 @@ def _segment_filter_frame(df: pd.DataFrame, segment: str) -> pd.DataFrame:
     classes = df["accountClass"].astype(str).str.lower()
     if segment == "paper":
         return df[classes == "paper"].reset_index(drop=True)
+    if segment == "prop":
+        return df[classes == "prop"].reset_index(drop=True)
     return df[~classes.isin(_NON_REAL_CLASSES)].reset_index(drop=True)
 
 
@@ -1943,6 +1959,54 @@ def _control_bar(seg_key: str, win_key: str, *, win_index: int = 0) -> tuple[str
     c1, c2 = st.columns(2)
     with c1:
         segment = _segment_control(seg_key)
+    with c2:
+        win_label, win_slug = _window_control(win_key, index=win_index)
+    return segment, win_label, win_slug
+
+
+# ── Funding-class control — Real money / Paper / Prop ───────────────────────────
+#
+# The Overview's ONE top-of-page toggle (operator ask 2026-07-10): the whole
+# page reflects the single selected funding class. This is the three-way
+# real/paper/prop axis (the bot keeps the three strictly separate and never
+# blends them), REPLACING the old Real/Paper/All segment on the Overview — "All"
+# is dropped in favour of the three concrete funding classes. Prop rides its own
+# data paths (prop tickets/fills, mark-price estimate) since prop is not in the
+# `/trades/closed` / `/performance` money DB.
+_FUNDING_CHOICES: list[str] = ["Real money", "Paper", "Prop"]
+_FUNDING_SLUG: dict[str, str] = {"Real money": "real", "Paper": "paper", "Prop": "prop"}
+_FUNDING_SEG_WORD: dict[str, str] = {"real": "real", "paper": "paper", "prop": "prop"}
+_FUNDING_SEG_NAME: dict[str, str] = {
+    "real": "real money", "paper": "paper", "prop": "prop"}
+
+
+def _funding_control(key: str) -> str:
+    """Real money / Paper / Prop picker → ``real`` / ``paper`` / ``prop``."""
+    # Coerce any stale / invalid stored value BEFORE the widget renders — else
+    # Streamlit raises when session_state holds a label not in the option set.
+    # Two real sources of that: (a) a returning user whose browser cached this
+    # key as "All" back when it was a Real/Paper/All control, and (b) the shared
+    # `_empty_segment_hint`, which can queue an "All" label. Apply any queued
+    # value first, then drop it if it isn't one of the three funding choices.
+    _apply_pending_widget(key)
+    if st.session_state.get(key) not in _FUNDING_CHOICES:
+        st.session_state.pop(key, None)
+    label = _segmented_or_radio(
+        "Funding", _FUNDING_CHOICES, index=0, key=key,
+        help=("The one toggle that drives this whole tab. Real money = genuine "
+              "real-money accounts; Paper = paper-trading accounts; Prop = "
+              "prop-firm accounts (a mark-price estimate, no broker feed). The "
+              "three are never blended into one number."),
+    )
+    return _FUNDING_SLUG.get(label, "real")
+
+
+def _funding_bar(seg_key: str, win_key: str, *, win_index: int = 0) -> tuple[str, str, str]:
+    """The Overview control bar: one Real/Paper/Prop funding toggle + the
+    time window, side by side. Returns ``(segment, window_label, window_slug)``."""
+    c1, c2 = st.columns(2)
+    with c1:
+        segment = _funding_control(seg_key)
     with c2:
         win_label, win_slug = _window_control(win_key, index=win_index)
     return segment, win_label, win_slug
@@ -2125,6 +2189,10 @@ def _perf_for_segment(window: str, segment: str) -> tuple[dict, bool]:
     segment and ``combined`` flags the explicit All view (so the renderer can
     show the profitFactor / maxDrawdown "not available for combined" caption).
     ``{}`` on a real DB error / missing payload (renderers show em-dashes)."""
+    if segment == "prop":
+        # Prop is not in the money DB (no /performance) — build the same-shaped
+        # block from the prop-fills closed frame.
+        return _prop_perf_block(window), False
     d, err = _fetch(f"/api/bot/performance?window={window}")
     d = d if isinstance(d, dict) else {}
     if err or d.get("error") or "winRate" not in d:
@@ -2136,6 +2204,81 @@ def _perf_for_segment(window: str, segment: str) -> tuple[dict, bool]:
         return _combine_perf_blocks(d, paper), True
     # real: the top-level block IS real-money only (paper sub-block excluded).
     return d, False
+
+
+def _prop_perf_block(window: str) -> dict:
+    """A ``/performance``-shaped block for PROP, computed client-side from the
+    prop-fills closed frame windowed by close (report) time. Prop lives in its
+    own journal — never the money DB — so this is the prop analogue of the
+    real/paper blocks ``_perf_for_segment`` returns. ``perAssetClass`` is built
+    separately (``_prop_per_asset_class``) since the closed frame drops symbol.
+    Empty/null figures render as em-dashes, never fabricated zeros."""
+    empty = {"totalTrades": 0, "wins": 0, "losses": 0, "totalPnl": None,
+             "winRate": None, "expectancy": None, "profitFactor": None,
+             "maxDrawdown": None, "perAssetClass": []}
+    df = _prop_closed_frame()
+    if df is None or df.empty:
+        return empty
+    if window != "all":
+        cutoff = dt.datetime.utcnow() - dt.timedelta(days=_WINDOW_DAYS.get(window, 1))
+        df = df[df["ts"] >= cutoff]
+    if df.empty:
+        return empty
+    pnl = df["pnl"]
+    n = int(len(df))
+    wins = int((pnl > 0).sum())
+    losses = int((pnl < 0).sum())
+    total = float(pnl.sum())
+    gross_win = float(pnl[pnl > 0].sum())
+    gross_loss = float(-pnl[pnl < 0].sum())
+    return {
+        "totalTrades": n,
+        "wins": wins,
+        "losses": losses,
+        "totalPnl": total,
+        "winRate": round(wins / n * 100, 1) if n else None,
+        "expectancy": round(total / n, 2) if n else None,
+        "profitFactor": round(gross_win / gross_loss, 2) if gross_loss else None,
+        "maxDrawdown": None,
+        "perAssetClass": [],
+    }
+
+
+def _prop_per_asset_class(window: str) -> list[dict]:
+    """PROP P&L bucketed by asset class (from the prop-fills, which carry the
+    symbol) — the prop analogue of ``/performance``'s ``perAssetClass`` list, so
+    the Overview asset breakdown renders for the Prop toggle too."""
+    data, err = _fetch("/api/bot/prop/fills?limit=400")
+    fills = (data or {}).get("fills") or [] if not err else []
+    cutoff = (dt.datetime.utcnow() - dt.timedelta(days=_WINDOW_DAYS.get(window, 1))
+              if window != "all" else None)
+    acc: dict[str, dict] = {}
+    for f in fills:
+        if str(f.get("status") or "").lower() != "closed":
+            continue
+        raw = f.get("pnl")
+        if raw is None:
+            continue
+        try:
+            v = float(raw)
+        except (TypeError, ValueError):
+            continue
+        ts = _parse_trade_ts(f.get("reported_at"))
+        if cutoff is not None and (ts is None or ts < cutoff):
+            continue
+        cls = _symbol_asset_class(str(f.get("symbol") or ""))
+        a = acc.setdefault(cls, {"assetClass": cls, "trades": 0, "wins": 0,
+                                 "totalPnl": 0.0})
+        a["trades"] += 1
+        a["wins"] += 1 if v > 0 else 0
+        a["totalPnl"] += v
+    out = []
+    for a in acc.values():
+        t = a["trades"]
+        a["winRate"] = round(a["wins"] / t * 100, 1) if t else None
+        a["expectancy"] = round(a["totalPnl"] / t, 2) if t else None
+        out.append(a)
+    return out
 
 
 def _filter_strategy(df: pd.DataFrame, strategy: str) -> pd.DataFrame:
@@ -2402,21 +2545,19 @@ def _prop_closed_frame() -> pd.DataFrame:
     return pd.DataFrame.from_records(records)[cols] if records else pd.DataFrame(columns=cols)
 
 
-def _render_overview_calendar() -> None:
+def _render_overview_calendar(segment: str) -> None:
     """The P&L calendar on the Overview — mirrors the Android Overview widget:
-    its OWN Real / Paper / Prop toggle + a month picker + day $+% cells + a
-    monthly total. Full history, NOT scoped to the page window. Reuses
-    `build_pnl_calendar`; prop days come from the prop-fills frame."""
-    st.markdown("**📅 P&L calendar**")
-    cls = _segmented_or_radio(
-        "Funding", ["Real money", "Paper", "Prop"], index=0, key="ov_cal_class",
-    )
-    if cls == "Prop":
+    a month picker + day $+% cells + a monthly total. Driven by the page's ONE
+    top funding toggle (its own separate toggle was removed 2026-07-10). Full
+    history, NOT scoped to the page window. Reuses `build_pnl_calendar`; prop
+    days come from the prop-fills frame."""
+    seg_word = _FUNDING_SEG_NAME.get(segment, segment)
+    st.markdown(f"**📅 P&L calendar · {seg_word}**")
+    if segment == "prop":
         cal_df = _prop_closed_frame()
     else:
         frame, _, ferr = _analytics_frame(include_paper=True)
-        cal_df = frame if ferr else _segment_filter_frame(
-            frame, "real" if cls == "Real money" else "paper")
+        cal_df = frame if ferr else _segment_filter_frame(frame, segment)
     c1, c2 = st.columns([2, 3])
     with c1:
         months = _recent_months(6)
@@ -2433,7 +2574,7 @@ def _render_overview_calendar() -> None:
                 f"{fmt_usd(sum(mp.values()))} · {sum(mpc.values()):+.1f}%"
             )
         else:
-            st.caption(f"No closed {cls.lower()} trades this month.")
+            st.caption(f"No closed {seg_word} trades this month.")
     st.plotly_chart(
         build_pnl_calendar(cal_df, ym[0], ym[1]),
         use_container_width=True, config={"displayModeBar": False},
@@ -2865,126 +3006,46 @@ def build_asset_class_bar(per_class: list | None, height: int = 220) -> go.Figur
     return _style_plotly(fig, height)
 
 
-def _asset_symbol_pnl(rows: list[dict]) -> dict[str, dict[str, float]]:
-    """Aggregate realized P&L per (asset class → symbol) from closed-trade rows.
-
-    Null ``realizedPnl`` rows are skipped (never summed as 0) — matching the
-    API nullability contract."""
-    agg: dict[str, dict[str, float]] = {}
-    for r in rows or []:
-        v = r.get("realizedPnl")
-        if v is None:
-            continue
-        try:
-            v = float(v)
-        except (TypeError, ValueError):
-            continue
-        cls = _row_asset_class(r)
-        sym = str(r.get("symbol") or "—").upper()
-        agg.setdefault(cls, {}).setdefault(sym, 0.0)
-        agg[cls][sym] += v
-    return agg
-
-
-def build_asset_class_symbol_bar(rows: list[dict], height: int = 220) -> go.Figure | None:
-    """Horizontal P&L-by-asset-class bar **stacked by symbol** (operator ask
-    2026-07-09): each asset-class bar is subdivided into its constituent symbols,
-    one coloured portion each. ``barmode='relative'`` so a losing symbol extends
-    left of zero and a winning one right — the net bar length still reads as the
-    class total. Returns None when no closed-trade P&L resolves, so the caller
-    can fall back to a caption. Legend = the symbols."""
-    agg = _asset_symbol_pnl(rows)
-    if not agg:
-        return None
-    classes = sorted(agg.keys(), key=_asset_class_order)
-    class_labels = [_ASSET_CLASS_ICON.get(c, f"• {c}") for c in classes]
-    # Symbols ordered by total |P&L| so the biggest movers get the stable
-    # leading palette colours.
-    sym_abs: dict[str, float] = {}
-    for d in agg.values():
-        for s, v in d.items():
-            sym_abs[s] = sym_abs.get(s, 0.0) + abs(v)
-    symbols = sorted(sym_abs, key=lambda s: sym_abs[s], reverse=True)
-    fig = go.Figure()
-    for i, sym in enumerate(symbols):
-        xs = [agg.get(c, {}).get(sym, 0.0) for c in classes]
-        if not any(xs):
-            continue
-        fig.add_bar(
-            y=class_labels, x=xs, orientation="h", name=sym,
-            marker_color=_CATEGORICAL[i % len(_CATEGORICAL)],
-            hovertemplate=f"{sym} · %{{y}}: $%{{x:,.2f}}<extra></extra>",
-        )
-    fig.update_layout(barmode="relative",
-                      legend=dict(orientation="h", yanchor="top", y=-0.2,
-                                  xanchor="left", x=0))
-    fig.update_xaxes(showgrid=True, gridcolor=_LC_GRID_H, fixedrange=True,
-                     zeroline=True, zerolinecolor="#2a3a5a")
-    fig.update_yaxes(showgrid=False, fixedrange=True)
-    return _style_plotly(fig, height)
-
-
-def _closed_rows_for_window(segment: str, window: str) -> list[dict]:
-    """Closed-trade rows for the segment (real/paper/all) + window, for the
-    per-symbol asset-class breakdown. ``all``/``paper`` include paper rows;
-    the result is segment-filtered, then windowed by **CLOSE time** client-side.
-
-    Deliberately does NOT pass ``since=`` to the endpoint: the endpoint's
-    ``since`` filters on the trade's OPEN time, so a trade held for days (opened
-    before the window but closed inside it) is dropped — which is why "$5.07 P&L
-    · 7d" in the exec summary (a close-time SQL aggregate) showed an empty
-    asset-class breakdown. We fetch recent closed trades (newest-first) and keep
-    those whose close time falls in the window, matching the exec basis."""
-    include_paper = "true" if segment in ("paper", "all") else "false"
-    rows, _ = _fetch("/api/bot/trades/closed?"
-                     + urlencode({"limit": 500, "include_paper": include_paper}))
-    rows = _segment_filter_rows(rows or [], segment)
-    if window != "all":
-        cutoff = dt.datetime.utcnow() - dt.timedelta(days=_WINDOW_DAYS.get(window, 1))
-        rows = [
-            r for r in rows
-            if (_parse_trade_ts(r.get("closedAt") or r.get("openedAt")) or dt.datetime.min) >= cutoff
-        ]
-    return rows
-
-
 def _render_asset_class_symbol_breakdown(
     segment: str, win_label: str, window: str, *, seg_note: str,
 ) -> None:
-    """P&L-by-asset-class bar stacked by symbol + a compact per-class caption.
-    Shared by the Overview (below the monitor) and the Performance page."""
-    st.markdown(f"**P&L by asset class · by symbol · {win_label} ({seg_note})**")
-    rows = _closed_rows_for_window(segment, window)
-    fig = build_asset_class_symbol_bar(rows, height=220)
+    """P&L-by-asset-class bar + a compact per-class caption. Shared by the
+    Overview and the Performance page.
+
+    Sourced from the AUTHORITATIVE ``/performance`` ``perAssetClass`` aggregate
+    (real/paper) — the SAME endpoint that feeds the exec "Realized P&L" card, so
+    the breakdown and the headline number can never disagree. This replaced the
+    old client-side re-aggregation over ``/trades/closed?limit=500`` windowed by
+    close time, which drifted from the SQL close-time aggregate (rows opened
+    before the window but closed inside it, and the 500-row cap) and left the
+    bar empty even when the exec card showed real P&L — the "asset breakdown not
+    working" bug. Prop is not in the money DB, so its buckets come from the
+    prop-fills (``_prop_per_asset_class``)."""
+    st.markdown(f"**P&L by asset class · {win_label} ({seg_note})**")
+    if segment == "prop":
+        per_class = _prop_per_asset_class(window)
+    else:
+        block, _combined = _perf_for_segment(window, segment)
+        per_class = (block or {}).get("perAssetClass") or []
+    fig = build_asset_class_bar(per_class, height=220)
     if fig is None:
         st.caption("P&L by asset class: — (no closed-trade P&L for this "
-                   "segment / window yet).")
+                   "class / window yet).")
         return
     st.plotly_chart(fig, use_container_width=True,
                     config={"displayModeBar": False})
-    # Per-class trades/win caption beneath the bar (2-up).
-    per_class = _asset_symbol_pnl(rows)
-    counts: dict[str, dict[str, float]] = {}
-    for r in rows:
-        if r.get("realizedPnl") is None:
-            continue
-        cls = _row_asset_class(r)
-        c = counts.setdefault(cls, {"trades": 0, "wins": 0})
-        c["trades"] += 1
-        try:
-            if float(r.get("realizedPnl")) > 0:
-                c["wins"] += 1
-        except (TypeError, ValueError):
-            pass
-    ordered = sorted(per_class.keys(), key=_asset_class_order)
+    # Per-class trades/win caption beneath the bar (2-up), from the same list.
+    ordered = sorted(
+        [r for r in per_class if r.get("totalPnl") is not None],
+        key=lambda r: _asset_class_order(r.get("assetClass")))
     for i in range(0, len(ordered[:6]), 2):
         cols_ac = st.columns(2)
-        for j, cls in enumerate(ordered[i:i + 2]):
+        for j, r in enumerate(ordered[i:i + 2]):
+            cls = str(r.get("assetClass") or "—").lower()
             lbl = _ASSET_CLASS_ICON.get(cls, f"• {cls}")
-            c = counts.get(cls, {"trades": 0, "wins": 0})
-            wr = (c["wins"] / c["trades"] * 100) if c["trades"] else None
             cols_ac[j].caption(
-                f"{lbl}: {c['trades']} trades · win {fmt_pct(wr)}")
+                f"{lbl}: {int(r.get('trades') or 0)} trades · "
+                f"win {fmt_pct(r.get('winRate'))}")
 
 
 def _exec_perf_window(window: str) -> dict:
@@ -3079,6 +3140,8 @@ def _segment_equity(segment: str) -> tuple[float | None, int]:
 
     if segment == "paper":
         ids = {a.get("id") for a in accounts if _cls(a) == "paper"}
+    elif segment == "prop":
+        ids = {a.get("id") for a in accounts if _cls(a) == "prop"}
     elif segment == "all":
         ids = {a.get("id") for a in accounts if _cls(a) != "prop"}
     else:  # real
@@ -3114,7 +3177,9 @@ def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str)
     denominator). Any null/missing value renders as an em-dash, never a
     fabricated 0. Real / paper / prop stay strictly separate — "All" is the
     operator's EXPLICIT, All-labeled merge, never a silent blend into "real"."""
-    seg_name = {"real": "real money", "paper": "paper", "all": "all (real + paper)"}[segment]
+    seg_name = _FUNDING_SEG_NAME.get(
+        segment, {"real": "real money", "paper": "paper",
+                  "all": "all (real + paper)"}.get(segment, segment))
     st.markdown(f"### Executive summary · {seg_name} · {win_label}")
 
     # ── System status line ─────────────────────────────────────────────────
@@ -3134,15 +3199,17 @@ def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str)
     equity_str = fmt_usd(equity_val) if equity_val is not None else "—"
 
     # ── Open positions for the segment ─────────────────────────────────────
-    pos_all, _ = _fetch("/api/bot/positions?include_paper=true")
-    pos_all = pos_all or []
-    if segment == "real":
-        seg_open = [p for p in pos_all if _is_real_money(p)]
-    elif segment == "paper":
-        seg_open = [p for p in pos_all if _row_account_class(p) == "paper"]
-    else:  # all → real + paper (prop excluded)
-        seg_open = [p for p in pos_all
-                    if _is_real_money(p) or _row_account_class(p) == "paper"]
+    if segment == "prop":
+        # Prop has no broker feed — live prop trades come from the outbound
+        # `filled` tickets shaped into position-like rows (mark-price uPnL).
+        seg_open = _prop_open_positions()
+    else:
+        pos_all, _ = _fetch("/api/bot/positions?include_paper=true")
+        pos_all = pos_all or []
+        if segment == "paper":
+            seg_open = [p for p in pos_all if _row_account_class(p) == "paper"]
+        else:  # real
+            seg_open = [p for p in pos_all if _is_real_money(p)]
     open_upnl, open_unk = _sum_upnl(seg_open)
     open_known = len(seg_open) - open_unk
 
@@ -3194,25 +3261,61 @@ def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str)
         st.caption("Profit factor may be — for the combined (All) view "
                    "(not reconstructable from the real + paper sub-blocks).")
 
-    # Contextual secondary line so the OTHER segment is never invisible.
-    if segment in ("real", "all"):
-        _paper_blk, _ = _perf_for_segment(window, "paper")
-        if _paper_blk:
-            st.caption(
-                f"🧪 Paper · {win_label} · "
-                f"P&L {fmt_usd(_paper_blk.get('totalPnl'))} · "
-                f"win {fmt_pct(_paper_blk.get('winRate'))} · "
-                f"trades {_paper_blk.get('totalTrades', 0)}"
-            )
-    else:  # paper view → real one-liner
-        _real_blk, _ = _perf_for_segment(window, "real")
-        if _real_blk:
-            st.caption(
-                f"💰 Real · {win_label} · "
-                f"P&L {fmt_usd(_real_blk.get('totalPnl'))} · "
-                f"win {fmt_pct(_real_blk.get('winRate'))} · "
-                f"trades {_real_blk.get('totalTrades', 0)}"
-            )
+    # Contextual secondary line so the OTHER funding class is never invisible.
+    if segment == "real":
+        _other_blk, _ = _perf_for_segment(window, "paper")
+        _other_tag = "🧪 Paper"
+    else:  # paper / prop view → real-money one-liner
+        _other_blk, _ = _perf_for_segment(window, "real")
+        _other_tag = "💰 Real"
+    if _other_blk:
+        st.caption(
+            f"{_other_tag} · {win_label} · "
+            f"P&L {fmt_usd(_other_blk.get('totalPnl'))} · "
+            f"win {fmt_pct(_other_blk.get('winRate'))} · "
+            f"trades {_other_blk.get('totalTrades', 0)}"
+        )
+
+    # ── Open trades list (operator ask 2026-07-10) — AT THE END of the exec
+    # summary, reflecting the SAME funding toggle above. A compact table of the
+    # positions open right now for the selected class; the full detail cards live
+    # under each chart in the monitor below.
+    _render_exec_open_trades(seg_open, segment)
+
+
+def _render_exec_open_trades(seg_open: list[dict], segment: str) -> None:
+    """Compact open-trades table closing out the executive summary. Rows are the
+    already funding-class-filtered open positions; uPnL renders "—" (never a fake
+    $0) when the broker value is unavailable. Prop rows are the mark-price
+    estimate (labelled). Empty state names the class so it never reads as broken."""
+    seg_word = _FUNDING_SEG_NAME.get(segment, segment)
+    st.markdown(f"**Open trades · {seg_word}**")
+    if not seg_open:
+        st.caption(f"No open {seg_word} trades right now.")
+        return
+    rows = _sort_recent(list(seg_open), "open")
+
+    def _upnl_cell(p: dict) -> str:
+        v, known = _open_upnl(p)
+        return fmt_usd(v) if known else "—"
+
+    tbl = pd.DataFrame([
+        {
+            "Symbol": p.get("symbol") or "—",
+            "Side": str(p.get("side", "")).upper() or "—",
+            "Qty": p.get("qty", "—"),
+            "Entry": p.get("entryPrice", "—"),
+            "Strategy": p.get("pattern") or "—",
+            "Account": p.get("account") or "—",
+            "uPnL": _upnl_cell(p),
+            "Age": _fmt_duration(p.get("openedAt")) or "—",
+        }
+        for p in rows
+    ])
+    st.dataframe(tbl, hide_index=True, use_container_width=True)
+    if segment == "prop":
+        st.caption("🏦 Prop uPnL is a dashboard mark-price estimate (no broker "
+                   "feed) — never blended into real-money or paper totals.")
 
 
 def _render_overview_fleets(stats: dict) -> None:
@@ -3523,36 +3626,36 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     s  = stats or {}
     vm = s.get("vmHealth") or {}
 
-    # ── Page control bar — segment + time-window pickers drive the WHOLE page ──
-    # (exec summary, KPI row, 24h scorecard, P&L sparkline, per-strategy line,
-    # open-positions table). Segment defaults to Real money; window to 24h.
-    # Mobile-friendly: segmented_control with a horizontal-radio fallback.
-    st.caption("Choose what you're looking at — real money, paper, or both "
-               "(All) — and the time window.")
-    ov_segment, ov_win_label, ov_window = _control_bar(
+    # ── THE one toggle — Real money / Paper / Prop drives the WHOLE page ───────
+    # (exec summary, open-trades list, asset breakdown, calendar, live monitor,
+    # 24h scorecard, P&L curve, per-strategy line, open-positions table). This is
+    # the single funding-class control the operator asked for (2026-07-10): one
+    # toggle at the top, everything below reflects it. Defaults to Real money;
+    # window to 24h. Mobile-friendly: segmented_control with a radio fallback.
+    st.caption("One toggle for the whole tab — real money, paper, or prop — "
+               "plus the time window.")
+    ov_segment, ov_win_label, ov_window = _funding_bar(
         "ov_segment", "ov_window", win_index=0)
     st.divider()
 
     # ── Executive ("CEO") summary band — at-a-glance system health + business
-    # performance for the chosen segment + window. Real / paper / prop kept
-    # strictly separate; "All" is the explicit, All-labeled merge.
+    # performance for the chosen funding class + window. Real / paper / prop are
+    # never blended into one number.
     _render_exec_summary(s, ov_segment, ov_win_label, ov_window)
     # Segment word reused by the snapshot section below.
-    seg_word = {"real": "real", "paper": "paper", "all": "all"}[ov_segment]
-    _seg_name = {"real": "real money", "paper": "paper",
-                 "all": "all (real + paper)"}[ov_segment]
+    seg_word = _FUNDING_SEG_WORD.get(ov_segment, ov_segment)
+    _seg_name = _FUNDING_SEG_NAME.get(ov_segment, ov_segment)
     st.divider()
 
-    # ── P&L by asset class · by symbol (item 3) — stays with the exec cards,
-    # ABOVE the monitor (it was the exec-summary asset bar; never part of the
-    # 'move below the monitor' set).
+    # ── P&L by asset class (item 2) — stays with the exec cards, ABOVE the
+    # monitor. Authoritative /performance perAssetClass (matches the exec card).
     _render_asset_class_symbol_breakdown(ov_segment, ov_win_label, ov_window,
                                          seg_note=_seg_name)
     st.divider()
 
-    # P&L calendar — own Real/Paper/Prop toggle + month nav + monthly total,
-    # full closed-trade history (NOT windowed). Kept above the monitor.
-    _render_overview_calendar()
+    # P&L calendar — driven by the ONE top toggle now (its own separate toggle
+    # was removed 2026-07-10). Full closed-trade history (NOT windowed).
+    _render_overview_calendar(ov_segment)
     st.divider()
 
     # ── Live charts (top of page) ──────────────────────────────────────────────
@@ -3564,27 +3667,27 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     # demo bybit_1) also render on the charts — their entry/SL/TP lines and
     # live PnL — not just real-money positions. The per-symbol summary line
     # below tags paper rows so they read clearly as non-real-money.
-    positions, _ = _fetch("/api/bot/positions?include_paper=true")
-    positions = positions or []
+    _rp_positions, _ = _fetch("/api/bot/positions?include_paper=true")
+    _rp_positions = _rp_positions or []
     # Live PROP trades (Breakout manual-bridge) ride the SAME monitor. Prop has
     # no broker feed, so these come from the outbound 'filled' tickets shaped
     # into position-like rows with a mark-price uPnL estimate (accountClass=
-    # 'prop'). Merged in here so they flow through organize/focus, the chart
-    # symbol set, and the per-symbol cards — but kept a SEPARATE P&L bucket
-    # below (never blended into the real/paper sums). Empty (→ no change) when
-    # the prop endpoints aren't deployed or there's no open prop trade.
+    # 'prop'). Empty (→ no change) when the prop endpoints aren't deployed or
+    # there's no open prop trade.
     prop_positions = _prop_open_positions()
-    positions = positions + prop_positions
+    # The ONE top toggle governs the monitor too: show ONLY the selected funding
+    # class's live trades + charts (real / paper / prop), never a blend.
+    positions = _segment_filter_rows(_rp_positions + prop_positions, ov_segment)
     # Working PROP orders — a limit/pending order PLACED on the terminal but NOT
-    # filled yet. These hold no position and no P&L, so they are kept OUT of
-    # `positions` (never in a P&L sum); they render in their own "Working orders"
-    # section + a dashed LIMIT line on the chart. Empty → no change.
-    working_orders = _prop_working_orders()
+    # filled yet. No position and no P&L: kept OUT of `positions`, rendered in
+    # their own "Working orders" section + a dashed LIMIT line on the chart. Only
+    # relevant to the Prop view.
+    working_orders = _prop_working_orders() if ov_segment == "prop" else []
     ov_symbols = _overview_chart_symbols(positions)
     # A prop symbol the bot isn't otherwise config-trading (so _discover_symbols
-    # misses it) still needs a chart — float any such open-prop / working-order
+    # misses it) still needs a chart — float any such open / working-order
     # symbol to the top.
-    for _pp in prop_positions + working_orders:
+    for _pp in positions + working_orders:
         _ps = str(_pp.get("symbol") or "").upper()
         if _ps and _ps not in ov_symbols:
             ov_symbols.insert(0, _ps)
@@ -3811,9 +3914,14 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     # Headline KPIs now live in the header band at the TOP of the page (real
     # primary / paper secondary). This section is the supporting detail only:
     # the last-24h scorecard, system health, and the 30-day realised-P&L chart.
-    # Supporting detail — all driven by the page's segment + window picker.
-    odf_all, _, _ = _analytics_frame(include_paper=True)
-    odf = _segment_filter_frame(odf_all, ov_segment)
+    # Supporting detail — all driven by the page's funding toggle + window.
+    # Prop lives in its own journal (not /trades/closed), so source its closed
+    # frame from the prop fills; real/paper come from the analytics frame.
+    if ov_segment == "prop":
+        odf = _prop_closed_frame()
+    else:
+        odf_all, _, _ = _analytics_frame(include_paper=True)
+        odf = _segment_filter_frame(odf_all, ov_segment)
     # Window → hours for the scorecard. "All" uses the full analytics lookback.
     ov_hours = {"24h": 24, "7d": 7 * 24, "30d": 30 * 24,
                 "all": ANALYTICS_LOOKBACK_DAYS * 24}[ov_window]
@@ -3851,11 +3959,15 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
     pos_col, strat_col = st.columns(2)
     with pos_col:
         st.markdown(f"**Open positions ({seg_word})**")
-        # Filtered to the chosen segment. Real-money rows sort first, then
-        # paper — a "Type" column labels each.
-        positions_all, _ = _fetch("/api/bot/positions?include_paper=true")
-        positions_unfiltered = positions_all or []
-        positions_all = _segment_filter_rows(positions_unfiltered, ov_segment)
+        # Filtered to the chosen funding class. Prop comes from the prop tickets
+        # (no /positions feed); real/paper from /positions.
+        if ov_segment == "prop":
+            positions_unfiltered = _prop_open_positions()
+            positions_all = positions_unfiltered
+        else:
+            positions_all, _ = _fetch("/api/bot/positions?include_paper=true")
+            positions_unfiltered = positions_all or []
+            positions_all = _segment_filter_rows(positions_unfiltered, ov_segment)
         # Honour the live-trades monitor's organize/focus selection here too, so
         # isolating a group narrows this table to the same set.
         positions_all = _apply_focus(positions_all, ov_dim, ov_focus)
@@ -4218,9 +4330,8 @@ def page_performance() -> None:
         )
         st.caption(f"{pf_label} window, uncapped (real-money primary · paper "
                    "secondary).")
-        # Asset-class P&L bar for the chosen window (real money), STACKED by
-        # symbol (item 3, 2026-07-09) so each asset-class bar shows its
-        # constituent instruments as coloured portions.
+        # Asset-class P&L bar for the chosen window (real money) — from the
+        # authoritative /performance perAssetClass (matches the headline P&L).
         _render_asset_class_symbol_breakdown(
             "real", pf_label, pf_window, seg_note="real")
         st.divider()
