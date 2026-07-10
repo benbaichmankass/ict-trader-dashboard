@@ -1902,21 +1902,34 @@ def _segmented_or_radio(
     """Render a single-select control as ``st.segmented_control`` when available
     (bigger tap targets, nicer on phones), else fall back to a horizontal radio.
 
-    ``st.segmented_control`` (Streamlit ≥1.40) can return ``None`` when nothing
-    is selected — coerce that back to the default choice so callers always get a
-    real value. Streamlit Community Cloud may briefly run an older build than the
-    pin during a rollout, so the radio fallback keeps the page importable."""
+    ``st.segmented_control`` (Streamlit ≥1.40) can transiently return ``None`` on
+    a rerun — inside an auto-refreshing ``run_every`` fragment this snapped a
+    window/segment pick back to the hardcoded default until a full page refresh
+    committed it (the "change the timeframe, then hit refresh" bug). Two fixes:
+    (a) a ``None`` return falls back to the COMMITTED value in ``session_state``
+    (the user's actual pick), not ``choices[index]``; and (b) ``default=`` is
+    only seeded on FIRST render (when the key isn't in ``session_state`` yet) —
+    re-passing it every run alongside ``key`` can itself reset the selection.
+    Streamlit Community Cloud may briefly run an older build than the pin during
+    a rollout, so the radio fallback keeps the page importable."""
     # Honor any value queued by a cross-page jump (_goto / _queue_widget) BEFORE
     # the widget is created — the queued value is the DISPLAY label, not a slug.
     _apply_pending_widget(key)
     seg = getattr(st, "segmented_control", None)
     if callable(seg):
         try:
-            picked = seg(
-                label, choices, default=choices[index], key=key, help=help,
-                selection_mode="single",
-            )
-            return picked if picked is not None else choices[index]
+            kwargs: dict[str, Any] = {
+                "key": key, "help": help, "selection_mode": "single"}
+            # Seed the default ONLY on the first render; afterwards let
+            # session_state[key] drive so a fragment rerun can't snap it back.
+            if key not in st.session_state:
+                kwargs["default"] = choices[index]
+            picked = seg(label, choices, **kwargs)
+            if picked is not None:
+                return picked
+            # Transient None → the last committed selection, never the default.
+            committed = st.session_state.get(key)
+            return committed if committed in choices else choices[index]
         except (TypeError, ValueError):
             pass  # older signature / build → radio fallback below
     return st.radio(label, choices, index=index, horizontal=True, key=key, help=help)
