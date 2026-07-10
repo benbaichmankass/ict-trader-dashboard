@@ -25,7 +25,12 @@ import plotly.graph_objects as go
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
-import yfinance as yf
+# NOTE: yfinance is imported LAZILY inside `_fetch_candles_yf` — it pulls in a
+# heavy dependency tree (curl_cffi, lxml, websockets, …) that adds ~50–100 MB to
+# the process baseline, and it's only ever needed when the bot's /candles feed
+# is unavailable (the fallback path). Not importing it at module load keeps the
+# Streamlit Community Cloud memory footprint down (the "over resource limits"
+# guard). See BL-20260710-DASH-MEMORY.
 
 try:
     from streamlit_autorefresh import st_autorefresh
@@ -230,7 +235,7 @@ def _last_good_store() -> dict:
     return {}
 
 
-@st.cache_data(ttl=POLL_INTERVAL_S, show_spinner=False)
+@st.cache_data(ttl=POLL_INTERVAL_S, show_spinner=False, max_entries=256)
 def _fetch_cached(path: str) -> tuple[Any, str | None]:
     url = f"{BOT_API}{path}"
     try:
@@ -294,20 +299,21 @@ def _live_fragment(render, *, every: float | None = None) -> None:
     _region()
 
 
-# Per-page auto-refresh cadence (seconds) for the detail pages. Pages absent
-# here don't auto-refresh at all — they update on navigation / interaction /
-# the sidebar Refresh button / the slow HEARTBEAT_S safety rerun. Reading
-# surfaces (Reports, Insights, Roadmap, …) are deliberately static so a
-# refresh can never yank the page out from under you; Prop is static because
-# it carries the report-back FORM (an auto-rerun mid-typing can drop
-# in-progress input).
-_PAGE_REFRESH_S: dict[str, float] = {
-    "Positions": POLL_INTERVAL_S,
-    "Signals":   POLL_INTERVAL_S,
-    "Accounts":  30,
-    "Health":    30,
-    "Logs":      30,
-}
+# Per-page auto-refresh cadence (seconds) for the detail pages.
+#
+# EVENT-DRIVEN model (2026-07-10, BL-20260710-DASH-MEMORY): the per-page timer
+# auto-refresh is DISABLED. The old ``run_every`` fragments re-ran the whole
+# view (~30 blocking fetches + every chart rebuilt) on a wall-clock timer for
+# every open session, forever — which (a) pushed the Streamlit Community Cloud
+# app over its ~1 GB memory cap ("your app has gone over its resource limits")
+# and (b) raced user taps (the timer-triggered rerun fought the interaction, so
+# a control change needed a manual Refresh to stick). Now EVERY page (incl.
+# Overview) updates on interaction / navigation / the sidebar ↻ Refresh button /
+# the slow HEARTBEAT_S (300 s) safety rerun only — no per-page timer. Interaction
+# reruns are still fragment-scoped (see ``_live_fragment(every=None)``), so a tap
+# reruns only its region and the page around it stays put. Leave this map empty;
+# add a page back ONLY if a genuine live-ticking need outweighs the memory cost.
+_PAGE_REFRESH_S: dict[str, float] = {}
 
 
 def _post(path: str, json_data: dict) -> tuple[Any, str | None]:
@@ -479,11 +485,12 @@ def _fetch_candles_bot(
     return df[["timestamp", "open", "high", "low", "close", "volume"]]
 
 
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False, max_entries=16)
 def _fetch_candles_yf(
     symbol: str, interval: str, limit: int = 200
 ) -> tuple[pd.DataFrame | None, str | None]:
     try:
+        import yfinance as yf  # lazy — heavy dep tree, only the fallback needs it
         params = _YF_PARAMS.get(interval, _YF_PARAMS["15m"])
         yf_symbol = _yf_ticker(symbol)
 
@@ -835,26 +842,27 @@ def render_sidebar() -> str:
             key=nav_key,
         )
         st.divider()
-        # Live data: ON keeps the live regions (Overview monitor, Positions,
-        # Signals, …) updating IN PLACE on their own cadence — the page around
-        # them never reloads. OFF stops all auto-refresh so the app only hits
-        # the bot when you load/navigate.
+        # Data updates on interaction / navigation / ↻ Refresh. "Live data" ON
+        # additionally keeps a slow background safety refresh (every 5 min) so a
+        # long-idle tab can't drift stale; OFF stops even that. There is no
+        # fast wall-clock auto-poll any more — it was pushing the app over its
+        # memory cap and racing taps (BL-20260710-DASH-MEMORY).
         live = st.toggle(
-            "Live data", value=_DEFAULT_LIVE, key="live_data",
-            help=f"On: live regions update in place (every {POLL_INTERVAL_S}s "
-                 "where it matters) without reloading the page. Off: fetch "
-                 "only when you load or navigate (use 'Refresh now').",
+            "Background refresh", value=_DEFAULT_LIVE, key="live_data",
+            help="On: a slow safety refresh every 5 min keeps an idle tab from "
+                 "drifting stale. Data always updates the instant you tap a "
+                 "control, navigate, or hit ↻ Refresh — regardless of this toggle.",
         )
         if live:
-            st.caption(f"\U0001f7e2 Live · in-place updates ({POLL_INTERVAL_S}s)")
+            st.caption("\U0001f7e2 Updates on tap · slow 5-min safety refresh")
         else:
-            st.caption("⏸ Paused — not polling the bot")
+            st.caption("⏸ Updates on tap / navigation / ↻ Refresh only")
         if st.button("↻ Refresh now", use_container_width=True, key="refresh_now"):
             _fetch_cached.clear()
         # Deploy marker — bump on each release so a stale Streamlit Cloud
         # instance is obvious at a glance. If this date is old, the app
         # needs a reboot/redeploy.
-        st.caption("build 2026-07-10 · instant-on-click · 30s gentle live refresh")
+        st.caption("build 2026-07-10b · event-driven refresh (lower memory)")
 
     return section  # type: ignore[return-value]
 
@@ -2504,7 +2512,7 @@ def _strategy_breakdown(df: pd.DataFrame) -> pd.DataFrame:
             .reset_index(drop=True))
 
 
-@st.cache_data(ttl=POLL_INTERVAL_S, show_spinner=False)
+@st.cache_data(ttl=POLL_INTERVAL_S, show_spinner=False, max_entries=8)
 def _analytics_frame(include_paper: bool = False) -> tuple[pd.DataFrame, int, str | None]:
     """One closed-trade fetch (capped) → tidy frame, for the analytics widgets.
 
@@ -2523,7 +2531,7 @@ def _analytics_frame(include_paper: bool = False) -> tuple[pd.DataFrame, int, st
     return _closed_trades_frame(trades), len(trades), None
 
 
-@st.cache_data(ttl=POLL_INTERVAL_S, show_spinner=False)
+@st.cache_data(ttl=POLL_INTERVAL_S, show_spinner=False, max_entries=4)
 def _prop_closed_frame() -> pd.DataFrame:
     """Closed prop-journal fills → the same frame shape as `_closed_trades_frame`
     (strategy/pnl/pnl_pct/ts/outcome/accountClass/isDemo), for the PROP funding
@@ -4062,8 +4070,7 @@ def page_overview(stats: dict | None, stats_err: str | None) -> None:
                 st.caption(
                     f"{ov_symbol} · {ov_interval} · candles from the bot's "
                     f"exchange feed (yfinance fallback) · overlay toggles + "
-                    f"fullscreen on the chart · auto-refreshes every "
-                    f"{POLL_INTERVAL_S}s"
+                    f"fullscreen on the chart · updates on tap / ↻ Refresh"
                 )
 
             # Tickets UNDER the chart: per-class PnL metrics + the expandable
@@ -4547,7 +4554,7 @@ def render_performance_tab(symbol: str) -> None:
     st.caption(
         f"{symbol} · {interval} · candles from the bot's exchange feed "
         f"(yfinance fallback) · signals + open-trade entry/TP/SL + live PnL · "
-        f"auto-refreshes every {POLL_INTERVAL_S}s"
+        f"updates on tap / ↻ Refresh"
     )
 
 
@@ -8562,15 +8569,17 @@ def main() -> None:
     section = render_sidebar()
 
     if section == "Overview":
-        # Overview is the exec glance + live monitor (no card stack). The
-        # whole view is one live fragment: it refreshes in place every
-        # POLL_INTERVAL_S (stats fetched INSIDE so each cycle is fresh)
-        # without remounting the sidebar/nav around it.
+        # Overview is the exec glance + live monitor (no card stack). Wrapped in
+        # an interaction-scoped fragment (every=None): a tap reruns only this
+        # region (the sidebar/nav stay put), but there is NO wall-clock timer —
+        # the constant re-fetch churn was pushing the app over its memory cap and
+        # racing taps (BL-20260710-DASH-MEMORY). Fresh data comes on any
+        # interaction / navigation / ↻ Refresh / the 300 s heartbeat.
         def _overview_region() -> None:
             stats, stats_err = _fetch("/api/bot/stats")
             page_overview(stats, stats_err)
 
-        _live_fragment(_overview_region, every=POLL_INTERVAL_S)
+        _live_fragment(_overview_region, every=None)
     elif section == "Roadmap":
         # Roadmap is a full-page progress visualization (no card stack) and a
         # READING surface — no auto-refresh, interaction-scoped reruns only.
