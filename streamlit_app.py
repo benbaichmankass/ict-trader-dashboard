@@ -4641,6 +4641,18 @@ def page_accounts() -> None:
     positions, _ = _fetch("/api/bot/positions?include_paper=true")
     positions = positions or []
 
+    # Broker-truth realized ledger (bot-side committed ledger). Authoritative
+    # lifetime realized for accounts whose per-row journal pnl can't be trusted
+    # (netting + spot/perp + a sub-account switch ⇒ the journal under-records;
+    # e.g. bybit_2). We render it next to the window's journal realized so the
+    # operator sees the true figure. Best-effort: absent → the line just doesn't
+    # show. Keyed by account_id.
+    _bt_env, _ = _fetch("/api/bot/pnl/broker-truth")
+    _broker_truth = {}
+    for _r in ((_bt_env or {}).get("accounts") or []):
+        if isinstance(_r, dict) and _r.get("account_id"):
+            _broker_truth[_r["account_id"]] = _r
+
     # Surface config load errors as a banner rather than silently rendering
     # an empty/partial account roster.
     _cfg_errs = cfg.get("config_load_errors") or []
@@ -4815,6 +4827,33 @@ def page_accounts() -> None:
             _acc_unk_cap = _upnl_caption(unrealized_unk)
             if _acc_unk_cap:
                 st.caption("⚠️ " + _acc_unk_cap)
+
+            # Broker-truth realized (authoritative account lifetime figure) when
+            # this account has a reconciliation ledger record — surfaced next to
+            # the journal window figure because the live per-row pnl under-records
+            # for this account (spot/perp + sub-account switch). Renders null→"—".
+            _bt = _broker_truth.get(aid)
+            if _bt is not None:
+                _bt_real = _bt.get("realized_usd")
+                _bt_fees = _bt.get("fees_usd")
+                st.markdown(
+                    f"**🏦 Broker-truth realized (lifetime): "
+                    f"{fmt_usd(_bt_real)}**"
+                    + (f"  ·  fees {fmt_usd(_bt_fees)}" if _bt_fees is not None else "")
+                )
+                _subs = _bt.get("sub_accounts")
+                _src = _bt.get("source") or "broker export"
+                _win = ""
+                if _bt.get("window_start") and _bt.get("window_end"):
+                    _win = f" · {_bt['window_start']}..{_bt['window_end']}"
+                st.caption(
+                    "Authoritative broker wallet-truth (stitched across "
+                    + (f"{len(_subs)} sub-accounts" if isinstance(_subs, list) and _subs else _src)
+                    + f"{_win}). The windowed **Realized** metric above is the live "
+                    "journal's per-row figure, which under-records for this account; "
+                    "this line is the true lifetime realized. "
+                    + (_bt.get("note") or "")
+                )
 
             fig = build_daily_pnl_fig(ph, height=220)
             if fig is not None:
