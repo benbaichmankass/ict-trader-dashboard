@@ -499,21 +499,71 @@ def _mock_content(spec: dict) -> dict:
     }
 
 
+def _synthesize_course_audio(course: dict, out_dir: Path, tts_cands: list[str],
+                             only_ids: set[str] | None) -> None:
+    """Synthesize + attach audio for the course's episodes (optionally a subset).
+    Skips episodes that already have committed audio (`drive_id`/`audio_url`)
+    unless explicitly selected via ``only_ids``."""
+    audio_dir = out_dir / "audio"
+    audio_dir.mkdir(exist_ok=True)
+    for ep in course["episodes"]:
+        eid = ep.get("id")
+        if only_ids is not None and eid not in only_ids:
+            continue
+        if not ep.get("script"):
+            print(f"      (skip {eid}: no script to synthesize)")
+            continue
+        if only_ids is None and (ep.get("drive_id") or ep.get("audio_url")):
+            print(f"      (skip {eid}: already has hosted audio)")
+            continue
+        print(f"[audio] Synthesizing {eid}…")
+        pcm, rate = synthesize_episode(ep, course.get("hosts", {}), tts_cands)
+        wav = audio_dir / f"{course['course_id']}-{eid}.wav"
+        _pcm_to_wav(pcm, wav, rate)
+        ep["audio"] = f"audio/{wav.name}"
+        ep.pop("drive_id", None)   # a freshly-synthesized episode plays from the release
+        print(f"      -> {wav} ({len(pcm)//1024} KB, {rate} Hz)")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Generate a Learning course module via Gemini.")
-    ap.add_argument("spec", help="path to the module spec JSON")
+    ap.add_argument("spec", nargs="?", help="path to the module spec JSON (for a fresh course)")
+    ap.add_argument("--from-course", default=None,
+                    help="synthesize audio for an EXISTING course JSON (no content regen)")
+    ap.add_argument("--episodes", default=None,
+                    help="comma-separated episode ids to synthesize (default: all missing audio)")
     ap.add_argument("--audio", action="store_true", help="also synthesize multi-speaker audio")
     ap.add_argument("--dry-run", action="store_true", help="skip API calls; emit a mock module")
     ap.add_argument("--out-dir", default=None, help="output dir (default: repo data/courses)")
     args = ap.parse_args()
 
-    spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
-    if "course_id" not in spec:
-        sys.exit("spec must include 'course_id'.")
-
     out_dir = Path(args.out_dir) if args.out_dir else (
         Path(__file__).resolve().parents[2] / "data" / "courses")
     out_dir.mkdir(parents=True, exist_ok=True)
+    only_ids = ({e.strip() for e in args.episodes.split(",") if e.strip()}
+                if args.episodes else None)
+
+    # ── Path B: synthesize audio for an existing course (no content regen) ──
+    if args.from_course:
+        course = json.loads(Path(args.from_course).read_text(encoding="utf-8"))
+        if "course_id" not in course:
+            sys.exit("--from-course JSON must include 'course_id'.")
+        tts_cands = _candidate_models(_TTS_MODEL, "tts")
+        print(f"[audio] Existing course '{course['course_id']}' "
+              f"({len(course.get('episodes', []))} episodes)"
+              + (f"; only: {sorted(only_ids)}" if only_ids else "; all missing audio"))
+        _synthesize_course_audio(course, out_dir, tts_cands, only_ids)
+        out = out_dir / f"{course['course_id']}.json"
+        out.write_text(json.dumps(course, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"Done. Wrote {out}")
+        return
+
+    # ── Path A: generate a fresh course from a spec ──
+    if not args.spec:
+        sys.exit("Provide a spec path, or --from-course to add audio to an existing course.")
+    spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
+    if "course_id" not in spec:
+        sys.exit("spec must include 'course_id'.")
 
     if args.dry_run:
         text_model, tts_cands = _TEXT_MODEL, [_TTS_MODEL]
@@ -531,15 +581,7 @@ def main() -> None:
     print(f"      -> {len(course['episodes'])} episode(s), {n_lines} lines, {n_q} quiz Qs")
 
     if args.audio and not args.dry_run:
-        audio_dir = out_dir / "audio"
-        audio_dir.mkdir(exist_ok=True)
-        for ep in course["episodes"]:
-            print(f"[2/2] Synthesizing audio for {ep['id']}…")
-            pcm, rate = synthesize_episode(ep, course["hosts"], tts_cands)
-            wav = audio_dir / f"{course['course_id']}-{ep['id']}.wav"
-            _pcm_to_wav(pcm, wav, rate)
-            ep["audio"] = f"audio/{wav.name}"
-            print(f"      -> {wav} ({len(pcm)//1024} KB, {rate} Hz)")
+        _synthesize_course_audio(course, out_dir, tts_cands, only_ids)
 
     out = out_dir / f"{course['course_id']}.json"
     out.write_text(json.dumps(course, ensure_ascii=False, indent=2), encoding="utf-8")
