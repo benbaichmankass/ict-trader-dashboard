@@ -11,6 +11,12 @@
   "updated": "2026-07-14",
   "episodes": [
     {
+      "id": "deepdive-audio",
+      "title": "🎙️ Deep Dive — Why AI Is Math, Not Magic (audio)",
+      "summary": "A NotebookLM-generated audio deep dive on Chapter 1 — the big picture of what AI actually is, in plain language. Hosted in the shared learning Drive folder.",
+      "drive_id": "1A_ysI_TDyd_b4jS5ypLcnUefD0ekJ-Nl"
+    },
+    {
       "id": "ep1",
       "title": "Episode 1 — What do we even mean by “AI”?",
       "summary": "Why 'AI' resists a clean definition, and the two properties worth anchoring on: autonomy and adaptivity.",
