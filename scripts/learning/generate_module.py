@@ -56,6 +56,14 @@ _TTS_MODEL = os.environ.get("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
 _VOICE_A = os.environ.get("GEMINI_VOICE_A", "Kore")
 _VOICE_B = os.environ.get("GEMINI_VOICE_B", "Puck")
 _TIMEOUT = 120
+# TTS returns raw audio (large base64) and is much slower than a text call, so a
+# generous per-chunk timeout — a ~8-turn chunk of PCM can take a couple of
+# minutes on the free tier.
+_TTS_TIMEOUT = int(os.environ.get("GEMINI_TTS_TIMEOUT", "300"))
+# How many dialogue turns to synthesize per TTS request. The multi-speaker TTS
+# has an input cap + gets slow/timeout-prone on long transcripts, so a whole
+# 18-30-turn episode is chunked and the PCM concatenated.
+_TTS_CHUNK_TURNS = int(os.environ.get("GEMINI_TTS_CHUNK_TURNS", "8"))
 
 
 # ── Gemini REST helpers ─────────────────────────────────────────────────────
@@ -81,11 +89,11 @@ class _AllModelsFailed(RuntimeError):
     Raised (not sys.exit) so the caller can back off and retry a transient 5xx."""
 
 
-def _post(model: str, body: dict) -> dict:
+def _post(model: str, body: dict, timeout: int = _TIMEOUT) -> dict:
     r = requests.post(f"{_BASE}/{model}:generateContent",
                       headers={"X-goog-api-key": _key(),
                                "Content-Type": "application/json"},
-                      json=body, timeout=_TIMEOUT)
+                      json=body, timeout=timeout)
     if r.status_code != 200:
         raise _GeminiHTTPError(model, r.status_code, r.text)
     return r.json()
@@ -171,7 +179,8 @@ def _candidate_models(preferred: str, want: str) -> list[str]:
     return out
 
 
-def _generate(candidates: list[str], body: dict) -> tuple[str, dict]:
+def _generate(candidates: list[str], body: dict,
+              timeout: int = _TIMEOUT) -> tuple[str, dict]:
     """POST ``body`` against each candidate model until one returns 200.
 
     A model can fail two ways that warrant trying the NEXT candidate:
@@ -183,7 +192,7 @@ def _generate(candidates: list[str], body: dict) -> tuple[str, dict]:
     errors, saw_quota = [], False
     for model in candidates:
         try:
-            data = _post(model, body)
+            data = _post(model, body, timeout=timeout)
             if model != candidates[0]:
                 print(f"      (using '{model}')")
             return model, data
@@ -205,6 +214,12 @@ def _generate(candidates: list[str], body: dict) -> tuple[str, dict]:
                 print(f"      (model '{model}' busy/{exc.status}; trying next)")
                 continue
             raise  # a genuine error (e.g. 400 bad request) — surface it
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            # A slow/large TTS chunk timed out, or a transient network blip —
+            # treat like a transient 5xx so the caller backs off + retries.
+            errors.append(f"{model}: network {type(exc).__name__}")
+            print(f"      (model '{model}' network {type(exc).__name__}; trying next)")
+            continue
     tail = "\n  ".join(errors)
     if saw_quota:
         msg = (
@@ -379,13 +394,12 @@ def _pcm_to_wav(pcm: bytes, path: Path, rate: int = 24000) -> None:
         w.writeframes(pcm)
 
 
-def synthesize_episode(ep: dict, hosts: dict, tts_candidates: list[str]) -> tuple[bytes, int]:
-    name_a, name_b = hosts.get("a", "Host A"), hosts.get("b", "Host B")
+def _tts_chunk_body(lines: list[dict], name_a: str, name_b: str) -> dict:
     transcript = "TTS the following two-host conversation naturally:\n" + "\n".join(
         f"{name_a if ln.get('s') == 'a' else name_b}: {ln.get('t','')}"
-        for ln in ep.get("script", [])
+        for ln in lines
     )
-    body = {
+    return {
         "contents": [{"parts": [{"text": transcript}]}],
         "generationConfig": {
             "responseModalities": ["AUDIO"],
@@ -395,17 +409,54 @@ def synthesize_episode(ep: dict, hosts: dict, tts_candidates: list[str]) -> tupl
             ]}},
         },
     }
-    _model, data = _generate(tts_candidates, body)
-    part = (data.get("candidates") or [{}])[0].get("content", {}).get("parts", [{}])[0]
-    inline = part.get("inlineData") or part.get("inline_data") or {}
-    b64 = inline.get("data")
-    if not b64:
-        sys.exit(f"TTS returned no audio for {ep.get('id')}. Raw: {json.dumps(data)[:600]}")
+
+
+def _synthesize_chunk(lines: list[dict], name_a: str, name_b: str,
+                      tts_candidates: list[str], attempts: int = 3) -> tuple[bytes, int]:
+    """One TTS call for a chunk of turns, with backoff on a transient failure."""
+    body = _tts_chunk_body(lines, name_a, name_b)
+    last = ""
+    for attempt in range(1, attempts + 1):
+        try:
+            _model, data = _generate(tts_candidates, body, timeout=_TTS_TIMEOUT)
+        except _AllModelsFailed as exc:
+            last = str(exc)
+            wait = min(5 * attempt, 20)
+            print(f"      (TTS chunk transient failure; retry {attempt}/{attempts} in {wait}s)")
+            time.sleep(wait)
+            continue
+        part = (data.get("candidates") or [{}])[0].get("content", {}).get("parts", [{}])[0]
+        inline = part.get("inlineData") or part.get("inline_data") or {}
+        b64 = inline.get("data")
+        if not b64:
+            last = f"no audio in response: {json.dumps(data)[:400]}"
+            print(f"      (TTS chunk returned no audio; retry {attempt}/{attempts})")
+            time.sleep(min(3 * attempt, 10))
+            continue
+        rate = 24000
+        m = re.search(r"rate=(\d+)", inline.get("mimeType", inline.get("mime_type", "")))
+        if m:
+            rate = int(m.group(1))
+        return base64.b64decode(b64), rate
+    sys.exit(f"TTS failed for a chunk after {attempts} attempts. Last: {last}")
+
+
+def synthesize_episode(ep: dict, hosts: dict, tts_candidates: list[str]) -> tuple[bytes, int]:
+    """Synthesize a full episode by chunking the script into groups of turns and
+    concatenating the PCM — a whole 18-30-turn episode overruns the TTS input cap
+    / times out in one call."""
+    name_a, name_b = hosts.get("a", "Host A"), hosts.get("b", "Host B")
+    script = ep.get("script", [])
+    chunks = [script[i:i + _TTS_CHUNK_TURNS]
+              for i in range(0, len(script), _TTS_CHUNK_TURNS)] or [[]]
+    pcm_parts: list[bytes] = []
     rate = 24000
-    m = re.search(r"rate=(\d+)", inline.get("mimeType", inline.get("mime_type", "")))
-    if m:
-        rate = int(m.group(1))
-    return base64.b64decode(b64), rate
+    for ci, chunk in enumerate(chunks, 1):
+        if len(chunks) > 1:
+            print(f"      chunk {ci}/{len(chunks)} ({len(chunk)} turns)…")
+        pcm, rate = _synthesize_chunk(chunk, name_a, name_b, tts_candidates)
+        pcm_parts.append(pcm)
+    return b"".join(pcm_parts), rate
 
 
 # ── Assembly + CLI ──────────────────────────────────────────────────────────

@@ -6,8 +6,11 @@ name: generate-learning-module
 #   * workflow_dispatch — pick a spec + whether to synthesize audio.
 #   * a labelled issue  — open an issue labelled `generate-module` with an
 #     optional `spec:` / `audio:` line in the body.
-# The generated module is printed (summary) and uploaded as an artifact; it is
-# NOT auto-committed (review first, then commit into data/courses/).
+# The generated module is printed (summary) and uploaded as an artifact. With
+# `audio: true` the synthesized audio is hosted on a GitHub Release (tag
+# `learning-audio`) and each episode's `audio` (local wav) is rewritten to an
+# `audio_url` (release mp3). With `commit: true` the course JSON is committed to
+# data/courses/ on a review branch (never main).
 
 on:
   workflow_dispatch:
@@ -113,6 +116,56 @@ jobs:
           for i, o in enumerate(q.get("options", [])):
               print(f"   [{i}] {o}", "  <-- answer" if i == q.get("answer") else "")
           print("  explain:", q.get("explain"))
+          PY
+
+      # When audio was synthesized, host it off-repo on a GitHub Release (a
+      # separate CDN-backed blob store — no repo/clone bloat) and rewrite each
+      # episode's local `audio` (wav) to an `audio_url` (release mp3). The
+      # dashboard plays an audio_url in its persistent bar WITH a speed control
+      # (a Drive /preview iframe can't be sped up); the mp3 also streams with
+      # range requests + CORS so <audio> seeks cleanly.
+      - name: Host audio on a GitHub Release
+        if: steps.inp.outputs.audio == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wavs=(generated/audio/*.wav)
+          if [ ${#wavs[@]} -eq 0 ]; then
+            echo "No WAVs were generated; nothing to host."
+            exit 0
+          fi
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          tag="learning-audio"
+          gh release view "$tag" >/dev/null 2>&1 || \
+            gh release create "$tag" \
+              --title "Learning course audio" \
+              --notes "CDN-hosted audio assets for Learning courses (generated)."
+          mp3s=()
+          for w in "${wavs[@]}"; do
+            base="$(basename "${w%.wav}")"
+            mp3="generated/audio/${base}.mp3"
+            ffmpeg -y -loglevel error -i "$w" -codec:a libmp3lame -b:a 96k "$mp3"
+            mp3s+=("$mp3")
+          done
+          gh release upload "$tag" "${mp3s[@]}" --clobber
+          echo "Uploaded ${#mp3s[@]} mp3(s) to release '$tag'."
+          f=$(ls generated/*.json | head -1)
+          python - "$f" "$REPO" "$tag" <<'PY'
+          import json, os, sys
+          f, repo, tag = sys.argv[1], sys.argv[2], sys.argv[3]
+          d = json.load(open(f, encoding="utf-8"))
+          base = f"https://github.com/{repo}/releases/download/{tag}"
+          for ep in d.get("episodes", []):
+              a = ep.get("audio")
+              if a and a.endswith(".wav"):
+                  name = os.path.basename(a)[:-4] + ".mp3"
+                  ep["audio_url"] = f"{base}/{name}"
+                  ep.pop("audio", None)   # drop the local wav ref — play from the release
+          json.dump(d, open(f, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          print("audio_url set:", [e.get("audio_url") for e in d.get("episodes", [])])
           PY
 
       - uses: actions/upload-artifact@v4
