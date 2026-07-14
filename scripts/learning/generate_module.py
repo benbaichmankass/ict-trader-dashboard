@@ -67,18 +67,26 @@ def _key() -> str:
     return k
 
 
+class _GeminiHTTPError(RuntimeError):
+    """A non-200 from a Gemini generateContent call (carries the status)."""
+
+    def __init__(self, model: str, status: int, text: str) -> None:
+        super().__init__(f"Gemini {model} error {status}: {text[:300]}")
+        self.model, self.status, self.text = model, status, text
+
+
 def _post(model: str, body: dict) -> dict:
     r = requests.post(f"{_BASE}/{model}:generateContent",
                       headers={"X-goog-api-key": _key(),
                                "Content-Type": "application/json"},
                       json=body, timeout=_TIMEOUT)
     if r.status_code != 200:
-        sys.exit(f"Gemini {model} error {r.status_code}: {r.text[:500]}")
+        raise _GeminiHTTPError(model, r.status_code, r.text)
     return r.json()
 
 
 def _list_models() -> list[dict]:
-    """The models this key can actually use (paginated ListModels)."""
+    """The models this key can see (paginated ListModels)."""
     models: list[dict] = []
     page_token = ""
     for _ in range(10):  # safety bound
@@ -96,24 +104,20 @@ def _list_models() -> list[dict]:
     return models
 
 
-def _pick_model(preferred: str, want: str) -> str:
-    """Resolve a usable model name, tolerating deprecated defaults.
+def _candidate_models(preferred: str, want: str) -> list[str]:
+    """Preference-ordered model names to TRY (first success wins).
 
-    ``want`` is 'text' (generateContent, non-TTS) or 'tts' (audio). Returns
-    ``preferred`` when the API still lists it as usable; otherwise auto-picks a
-    current model, preferring a ``*flash*`` (text) / ``*tts*`` (audio) name and
-    the newest version (lexical max of the candidates).
+    ``want`` is 'text' (generateContent, non-TTS) or 'tts' (audio). ListModels
+    is only a hint — it happily lists models that 404 on the actual call (e.g.
+    ``gemini-2.5-flash`` is "no longer available to NEW users" yet still
+    listed), so we return an ordered list and the caller tries each until one
+    returns 200 rather than trusting the listing.
     """
-    models = _list_models()
     usable = {}  # short name -> supported methods
-    for m in models:
+    for m in _list_models():
         name = m.get("name", "").split("/")[-1]
-        methods = m.get("supportedGenerationMethods", [])
         if name:
-            usable[name] = methods
-
-    if preferred in usable and "generateContent" in usable[preferred]:
-        return preferred
+            usable[name] = m.get("supportedGenerationMethods", [])
 
     def _is_tts(n: str) -> bool:
         return "tts" in n.lower()
@@ -122,18 +126,59 @@ def _pick_model(preferred: str, want: str) -> str:
         n for n, methods in usable.items()
         if "generateContent" in methods and _is_tts(n) == (want == "tts")
     ]
-    if want == "text":
-        flash = [n for n in cands if "flash" in n.lower() and "preview" not in n.lower()]
-        pool = flash or [n for n in cands if "flash" in n.lower()] or cands
-    else:
-        pool = cands
-    if not pool:
+
+    def _rank(n: str) -> tuple:
+        low = n.lower()
+        # Prefer: flash (text), non-preview, non-lite, then newest by version.
+        return (
+            0 if ("flash" in low or want == "tts") else 1,
+            0 if "preview" not in low else 1,
+            0 if "lite" not in low else 1,
+            n,  # lexical — newer dated/versioned names sort later
+        )
+
+    ordered = sorted(cands, key=_rank)
+    # Try dated/versioned aliases before the bare deprecated alias, but keep the
+    # configured default in the running if it's actually usable.
+    if preferred in usable and preferred not in ordered:
+        ordered.append(preferred)
+    ordered = [preferred] + [n for n in ordered if n != preferred] \
+        if preferred in ordered else ordered
+    # De-dupe, preserve order.
+    seen, out = set(), []
+    for n in ordered:
+        if n not in seen:
+            seen.add(n)
+            out.append(n)
+    if not out:
         sys.exit(f"No usable Gemini {want} model for this key. "
                  f"Available: {sorted(usable)}")
-    chosen = sorted(pool)[-1]
-    if chosen != preferred:
-        print(f"      (model '{preferred}' unavailable; using '{chosen}')")
-    return chosen
+    return out
+
+
+def _generate(candidates: list[str], body: dict) -> tuple[str, dict]:
+    """POST ``body`` against each candidate model until one returns 200.
+
+    Skips a candidate on a 404 / "not available" style error (a listed-but-
+    ungranted model) and moves on; re-raises anything else (a real API error).
+    """
+    errors = []
+    for model in candidates:
+        try:
+            data = _post(model, body)
+            if model != candidates[0]:
+                print(f"      (using '{model}')")
+            return model, data
+        except _GeminiHTTPError as exc:
+            transient_catalog = exc.status in (403, 404) or \
+                "not available" in exc.text.lower() or \
+                "not found" in exc.text.lower()
+            errors.append(str(exc))
+            if transient_catalog:
+                print(f"      (model '{model}' unavailable; trying next)")
+                continue
+            raise  # a genuine error (rate-limit, bad request, 5xx) — surface it
+    sys.exit("No usable Gemini model succeeded. Tried:\n  " + "\n  ".join(errors))
 
 
 # ── Step 1: source -> module JSON (script + quiz) ───────────────────────────
@@ -197,19 +242,19 @@ def _extract_json(text: str) -> dict:
         raise
 
 
-def generate_module_content(spec: dict, model: str) -> dict:
+def generate_module_content(spec: dict, candidates: list[str]) -> tuple[str, dict]:
     body = {
         "system_instruction": {"parts": [{"text": _MODULE_INSTRUCTIONS}]},
         "contents": [{"role": "user", "parts": [{"text": _build_module_prompt(spec)}]}],
         "generationConfig": {"temperature": 0.7, "responseMimeType": "application/json",
                              "maxOutputTokens": 8192},
     }
-    data = _post(model, body)
+    model, data = _generate(candidates, body)
     parts = (data.get("candidates") or [{}])[0].get("content", {}).get("parts", [])
     text = "".join(p.get("text", "") for p in parts)
     if not text:
         sys.exit(f"Gemini returned no text. Raw: {json.dumps(data)[:600]}")
-    return _extract_json(text)
+    return model, _extract_json(text)
 
 
 # ── Step 2: script -> multi-speaker audio (optional) ────────────────────────
@@ -222,7 +267,7 @@ def _pcm_to_wav(pcm: bytes, path: Path, rate: int = 24000) -> None:
         w.writeframes(pcm)
 
 
-def synthesize_episode(ep: dict, hosts: dict, tts_model: str) -> tuple[bytes, int]:
+def synthesize_episode(ep: dict, hosts: dict, tts_candidates: list[str]) -> tuple[bytes, int]:
     name_a, name_b = hosts.get("a", "Host A"), hosts.get("b", "Host B")
     transcript = "TTS the following two-host conversation naturally:\n" + "\n".join(
         f"{name_a if ln.get('s') == 'a' else name_b}: {ln.get('t','')}"
@@ -238,7 +283,7 @@ def synthesize_episode(ep: dict, hosts: dict, tts_model: str) -> tuple[bytes, in
             ]}},
         },
     }
-    data = _post(tts_model, body)
+    _model, data = _generate(tts_candidates, body)
     part = (data.get("candidates") or [{}])[0].get("content", {}).get("parts", [{}])[0]
     inline = part.get("inlineData") or part.get("inline_data") or {}
     b64 = inline.get("data")
@@ -308,14 +353,14 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if args.dry_run:
-        text_model, tts_model = _TEXT_MODEL, _TTS_MODEL
+        text_model, tts_cands = _TEXT_MODEL, [_TTS_MODEL]
         print("[1/2] Generating module content (dry-run)…")
         content = _mock_content(spec)
     else:
-        text_model = _pick_model(_TEXT_MODEL, "text")
-        tts_model = _pick_model(_TTS_MODEL, "tts") if args.audio else _TTS_MODEL
-        print(f"[1/2] Generating module content ({text_model})…")
-        content = generate_module_content(spec, text_model)
+        text_cands = _candidate_models(_TEXT_MODEL, "text")
+        tts_cands = _candidate_models(_TTS_MODEL, "tts") if args.audio else [_TTS_MODEL]
+        print(f"[1/2] Generating module content (try order: {', '.join(text_cands[:4])}…)")
+        text_model, content = generate_module_content(spec, text_cands)
     course = _assemble(spec, content, text_model)
 
     n_q = len(course.get("quiz", []))
@@ -327,7 +372,7 @@ def main() -> None:
         audio_dir.mkdir(exist_ok=True)
         for ep in course["episodes"]:
             print(f"[2/2] Synthesizing audio for {ep['id']}…")
-            pcm, rate = synthesize_episode(ep, course["hosts"], tts_model)
+            pcm, rate = synthesize_episode(ep, course["hosts"], tts_cands)
             wav = audio_dir / f"{course['course_id']}-{ep['id']}.wav"
             _pcm_to_wav(pcm, wav, rate)
             ep["audio"] = f"audio/{wav.name}"
