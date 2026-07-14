@@ -8635,20 +8635,108 @@ def _course_player_html(ep: dict, hosts: dict) -> str:
     return _COURSE_TTS_HTML.replace("__PAYLOAD__", json.dumps(payload))
 
 
-def _drive_audio_embed(drive_id: str) -> str:
-    """Google-Drive-hosted audio via Drive's own preview player (streams, any
-    size, no server round-trip). Requires the file/folder be shared
-    'Anyone with the link → Viewer'; until then Drive shows an access prompt."""
-    src = f"https://drive.google.com/file/d/{drive_id}/preview"
-    view = f"https://drive.google.com/file/d/{drive_id}/view"
-    return (
-        f'<iframe src="{src}" width="100%" height="80" allow="autoplay" '
-        'style="border:0;border-radius:8px;"></iframe>'
-        f'<div style="font:12px/1.4 sans-serif;color:#8b949e;margin-top:6px;">'
-        f'No player above? The file must be shared "Anyone with the link". '
-        f'<a href="{view}" target="_blank" rel="noopener" '
-        'style="color:#58a6ff;">Open in Google&nbsp;Drive ↗</a></div>'
-    )
+# Custom audio player: a persistent bottom "now playing" bar (play/pause, seek,
+# time, playback-speed, close) that lives in the parent document, so it keeps
+# playing as you navigate between pages (a plain <audio>/iframe remounts + stops
+# on every Streamlit rerun). Each episode renders a small "▶ Play episode" button
+# that loads it into the bar. If the parent-document injection is blocked, it
+# falls back to a self-contained inline player with speed buttons (no
+# persistence). Drive audio streams from the direct-download URL.
+_AUDIO_PLAYER_TMPL = r"""
+<div id="ict-ap"></div>
+<script>
+(function(){
+  var SRC=__SRC__, TITLE=__TITLE__, EPID=__EPID__, VIEW=__VIEW__;
+  var SPEEDS=[0.75,1,1.25,1.5,1.75,2];
+  function fmt(t){if(!isFinite(t))return"0:00";var m=Math.floor(t/60),s=Math.floor(t%60);return m+":"+(s<10?"0":"")+s;}
+  var CSS="#ict-gap{position:fixed;left:0;right:0;bottom:0;z-index:99999;display:flex;align-items:center;gap:10px;"
+    +"padding:8px 12px;background:#12161d;border-top:1px solid #2a3038;color:#e9edf2;"
+    +"font-family:system-ui,-apple-system,sans-serif;box-shadow:0 -2px 12px rgba(0,0,0,.35);}"
+    +"#ict-gap .pp{background:#a9700f;color:#fff;border:0;border-radius:50%;width:42px;height:42px;font-size:16px;cursor:pointer;flex:0 0 auto;}"
+    +"#ict-gap .cl{background:transparent;color:#8b949e;border:0;width:30px;height:30px;font-size:20px;cursor:pointer;flex:0 0 auto;}"
+    +"#ict-gap .mid{flex:1 1 auto;min-width:0;}"
+    +"#ict-gap .ttl{font-size:12px;color:#c9d1d9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:3px;}"
+    +"#ict-gap .row{display:flex;align-items:center;gap:8px;font-size:11px;color:#8b949e;font-variant-numeric:tabular-nums;}"
+    +"#ict-gap input[type=range]{flex:1 1 auto;accent-color:#a9700f;height:5px;}"
+    +"#ict-gap select{background:#1c2431;color:#e9edf2;border:1px solid #39424f;border-radius:6px;padding:7px 6px;font-size:13px;flex:0 0 auto;}"
+    +"body{padding-bottom:78px !important;}"
+    +"@media(max-width:640px){#ict-gap{gap:6px;padding:6px 8px;}#ict-gap .pp{width:46px;height:46px;}}";
+  function buildBar(doc){
+    var win=doc.defaultView;
+    if(!doc.getElementById('ict-gap-style')){var st=doc.createElement('style');st.id='ict-gap-style';st.textContent=CSS;doc.head.appendChild(st);}
+    var bar=doc.getElementById('ict-gap');
+    if(!bar){
+      bar=doc.createElement('div');bar.id='ict-gap';
+      bar.innerHTML='<audio id="ict-gap-a" preload="metadata"></audio>'
+        +'<button class="pp" id="ict-gap-p">&#9654;</button>'
+        +'<div class="mid"><div class="ttl" id="ict-gap-t"></div>'
+        +'<div class="row"><span id="ict-gap-c">0:00</span>'
+        +'<input type="range" id="ict-gap-s" min="0" max="1000" value="0">'
+        +'<span id="ict-gap-d">0:00</span></div></div>'
+        +'<select id="ict-gap-r"></select>'
+        +'<button class="cl" id="ict-gap-x" title="Close">&times;</button>';
+      doc.body.appendChild(bar);
+      var a=bar.querySelector('#ict-gap-a'),p=bar.querySelector('#ict-gap-p'),
+          s=bar.querySelector('#ict-gap-s'),c=bar.querySelector('#ict-gap-c'),
+          d=bar.querySelector('#ict-gap-d'),r=bar.querySelector('#ict-gap-r'),
+          t=bar.querySelector('#ict-gap-t');
+      SPEEDS.forEach(function(v){var o=doc.createElement('option');o.value=v;o.text=v+'×';if(v===1)o.selected=true;r.appendChild(o);});
+      p.onclick=function(){a.paused?a.play():a.pause();};
+      a.addEventListener('play',function(){p.innerHTML='&#10074;&#10074;';});
+      a.addEventListener('pause',function(){p.innerHTML='&#9654;';});
+      a.addEventListener('timeupdate',function(){if(a.duration){s.value=a.currentTime/a.duration*1000;c.textContent=fmt(a.currentTime);}});
+      a.addEventListener('loadedmetadata',function(){d.textContent=fmt(a.duration);});
+      a.addEventListener('error',function(){t.innerHTML=(a.dataset.title||'')+' — could not stream'+(a.dataset.view?' · <a href="'+a.dataset.view+'" target="_blank" style="color:#58a6ff">open in Drive ↗</a>':'');});
+      s.oninput=function(){if(a.duration)a.currentTime=s.value/1000*a.duration;};
+      r.onchange=function(){a.playbackRate=parseFloat(r.value);};
+      bar.querySelector('#ict-gap-x').onclick=function(){a.pause();bar.style.display='none';};
+      win.ictLoadAudio=function(src,title,epid,view){
+        var A=doc.getElementById('ict-gap-a');bar.style.display='flex';
+        A.dataset.title=title;A.dataset.view=view||'';t.textContent=title;
+        if(A.dataset.epid!==epid){A.dataset.epid=epid;A.src=src;A.playbackRate=parseFloat(r.value)||1;}
+        A.play().catch(function(){});
+      };
+    }
+    return bar;
+  }
+  var host=document.getElementById('ict-ap');
+  try{
+    var pdoc=window.parent.document;
+    buildBar(pdoc);
+    host.innerHTML='<button class="ict-inline">&#9654; Play episode</button>'
+      +'<div class="note">Plays in the bar pinned at the bottom &mdash; keeps going as you browse; set speed there.</div>';
+    var s1=document.createElement('style');
+    s1.textContent='.ict-inline{background:#a9700f;color:#fff;border:0;border-radius:8px;padding:11px 16px;font:600 14px system-ui;cursor:pointer;}'
+      +'.note{font:12px/1.4 system-ui;color:#8b949e;margin-top:6px;}';
+    document.head.appendChild(s1);
+    host.querySelector('.ict-inline').onclick=function(){window.parent.ictLoadAudio(SRC,TITLE,EPID,VIEW);};
+  }catch(e){
+    host.innerHTML='<audio id="ict-fa" controls preload="metadata" style="width:100%" src="'+SRC+'"></audio>'
+      +'<div class="note" id="ict-fn"></div>';
+    var s2=document.createElement('style');
+    s2.textContent='.note{font:12px/1.4 system-ui;color:#8b949e;margin-top:6px;}'
+      +'.sp{background:#1c2431;color:#e9edf2;border:1px solid #39424f;border-radius:6px;padding:5px 9px;margin-right:4px;cursor:pointer;font-size:12px;}';
+    document.head.appendChild(s2);
+    var fa=document.getElementById('ict-fa'),fn=document.getElementById('ict-fn');
+    fn.innerHTML='Speed: '+SPEEDS.map(function(v){return '<button class="sp" data-v="'+v+'">'+v+'×</button>';}).join('')
+      +(VIEW?' · <a href="'+VIEW+'" target="_blank" style="color:#58a6ff">open in Drive ↗</a>':'');
+    fn.querySelectorAll('.sp').forEach(function(b){b.onclick=function(){fa.playbackRate=parseFloat(b.dataset.v);};});
+  }
+})();
+</script>
+"""
+
+
+def _drive_direct_url(drive_id: str) -> str:
+    return f"https://drive.google.com/uc?export=download&id={drive_id}"
+
+
+def _audio_player_html(src: str, title: str, ep_id: str, view_url: str = "") -> str:
+    return (_AUDIO_PLAYER_TMPL
+            .replace("__SRC__", json.dumps(src))
+            .replace("__TITLE__", json.dumps(title))
+            .replace("__EPID__", json.dumps(ep_id))
+            .replace("__VIEW__", json.dumps(view_url or "")))
 
 
 def _course_slug(course: dict) -> str:
@@ -8710,20 +8798,19 @@ def _render_course_quiz(course: dict) -> None:
             st.warning("Worth another listen, then retake it.")
 
 
-def _has_transcript(ep: dict) -> bool:
-    return bool(ep.get("transcript")) or bool(ep.get("script"))
-
-
 def _render_course_transcript(ep: dict, hosts: dict) -> None:
-    if not _has_transcript(ep):
-        return
-    with st.expander("📄 Transcript", expanded=False):
-        # A freeform transcript string (e.g. the NotebookLM audio's transcript)
-        # takes precedence; otherwise render the two-host script lines.
-        text = ep.get("transcript")
-        if text:
+    # A `transcript_url` (e.g. the NotebookLM notebook, which holds the audio's
+    # transcript) renders as a link; a freeform `transcript` string or the
+    # two-host `script` render inline in an expander.
+    url = ep.get("transcript_url")
+    if url:
+        st.markdown(f"[📄 Open the transcript in NotebookLM ↗]({url})")
+    text = ep.get("transcript")
+    if text:
+        with st.expander("📄 Transcript", expanded=False):
             st.markdown(str(text))
-        else:
+    elif ep.get("script"):
+        with st.expander("📄 Transcript", expanded=False):
             for ln in ep.get("script", []):
                 who = hosts.get(ln.get("s"), "")
                 st.markdown(f"**{who}:** {ln.get('t', '')}")
@@ -8765,11 +8852,18 @@ def _render_course(course: dict) -> None:
                 _render_course_transcript(ep, course.get("hosts", {}))
             elif ep.get("drive_id"):
                 # Audio hosted in the shared Google Drive learning folder.
-                components.html(_drive_audio_embed(ep["drive_id"]), height=120)
+                did = ep["drive_id"]
+                components.html(
+                    _audio_player_html(
+                        _drive_direct_url(did), ep.get("title", ""), ep.get("id", ""),
+                        f"https://drive.google.com/file/d/{did}/view"),
+                    height=90)
                 _render_course_transcript(ep, course.get("hosts", {}))
             elif ep.get("audio_url"):
                 # Any other directly-playable hosted audio URL.
-                st.audio(ep["audio_url"])
+                components.html(
+                    _audio_player_html(ep["audio_url"], ep.get("title", ""), ep.get("id", "")),
+                    height=90)
                 _render_course_transcript(ep, course.get("hosts", {}))
             elif has_script:
                 # No audio file — the browser reads the script with built-in TTS.
