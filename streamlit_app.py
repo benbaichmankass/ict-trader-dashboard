@@ -8710,11 +8710,23 @@ def _render_course_quiz(course: dict) -> None:
             st.warning("Worth another listen, then retake it.")
 
 
+def _has_transcript(ep: dict) -> bool:
+    return bool(ep.get("transcript")) or bool(ep.get("script"))
+
+
 def _render_course_transcript(ep: dict, hosts: dict) -> None:
+    if not _has_transcript(ep):
+        return
     with st.expander("📄 Transcript", expanded=False):
-        for ln in ep.get("script", []):
-            who = hosts.get(ln.get("s"), "")
-            st.markdown(f"**{who}:** {ln.get('t', '')}")
+        # A freeform transcript string (e.g. the NotebookLM audio's transcript)
+        # takes precedence; otherwise render the two-host script lines.
+        text = ep.get("transcript")
+        if text:
+            st.markdown(str(text))
+        else:
+            for ln in ep.get("script", []):
+                who = hosts.get(ln.get("s"), "")
+                st.markdown(f"**{who}:** {ln.get('t', '')}")
 
 
 def _render_course(course: dict) -> None:
@@ -8750,18 +8762,15 @@ def _render_course(course: dict) -> None:
                 # Real generated (or hand-supplied) audio committed in-repo.
                 with open(audio_path, "rb") as fh:
                     st.audio(fh.read())
-                if has_script:
-                    _render_course_transcript(ep, course.get("hosts", {}))
+                _render_course_transcript(ep, course.get("hosts", {}))
             elif ep.get("drive_id"):
                 # Audio hosted in the shared Google Drive learning folder.
                 components.html(_drive_audio_embed(ep["drive_id"]), height=120)
-                if has_script:
-                    _render_course_transcript(ep, course.get("hosts", {}))
+                _render_course_transcript(ep, course.get("hosts", {}))
             elif ep.get("audio_url"):
                 # Any other directly-playable hosted audio URL.
                 st.audio(ep["audio_url"])
-                if has_script:
-                    _render_course_transcript(ep, course.get("hosts", {}))
+                _render_course_transcript(ep, course.get("hosts", {}))
             elif has_script:
                 # No audio file — the browser reads the script with built-in TTS.
                 st.caption("▶ Play uses your browser's built-in voice. Pick two "
