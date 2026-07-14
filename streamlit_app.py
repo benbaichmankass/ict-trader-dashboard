@@ -8635,43 +8635,70 @@ def _course_player_html(ep: dict, hosts: dict) -> str:
     return _COURSE_TTS_HTML.replace("__PAYLOAD__", json.dumps(payload))
 
 
-# Persistent "now playing" bar: Google Drive blocks direct hotlinking of a file
-# into a plain <audio> element (it now needs a scan-confirmation token a media
-# element can't do), so the ONLY thing that reliably plays a Drive file is
-# Drive's own /preview player. We embed THAT in a bar pinned to the bottom of
-# the app (injected into the parent document) so it keeps playing as you
-# navigate between pages — a normal inline iframe remounts + stops on every
-# Streamlit rerun. Tradeoff: Google's embedded player has no playback-speed
-# control (re-hosting the audio would be needed for that). `URL` is the
-# /preview page for a drive_id (or a directly-playable page for audio_url).
+# Persistent "now playing" bar, pinned to the bottom of the app (injected into
+# the PARENT document so it survives Streamlit reruns + page navigation — a
+# normal inline iframe/audio remounts + stops on every rerun). It is DUAL-MODE:
+#   * mode "audio"  → a real <audio> element for a directly-playable URL (our
+#     GitHub-Release-hosted mp3s). Carries a big tappable playback-SPEED button
+#     (0.75/1/1.25/1.5/1.75/2×) — the whole point of re-hosting off Drive.
+#   * mode "iframe" → Drive's own /preview player for a `drive_id`. Google now
+#     needs a scan-confirmation token a plain <audio> can't provide, so its
+#     embedded player is the only thing that reliably plays a Drive file — but
+#     it has NO speed control (that's why real audio goes to GitHub Releases).
+# Mobile: the bar reserves right-edge padding so its controls never hide under
+# Streamlit Cloud's floating bottom-right "Manage app" button, the speed button
+# + close sit on the LEFT (always reachable), and the title is dropped on narrow
+# viewports to give the scrubber room.
 _AUDIO_PLAYER_TMPL = r"""
 <div id="ict-ap"></div>
 <script>
 (function(){
-  var URL=__URL__, TITLE=__TITLE__, EPID=__EPID__, VIEW=__VIEW__;
-  var CSS="#ict-gap{position:fixed;left:0;right:0;bottom:0;z-index:99999;display:flex;align-items:center;gap:8px;"
-    +"padding:6px 10px;background:#12161d;border-top:1px solid #2a3038;color:#e9edf2;"
-    +"font-family:system-ui,-apple-system,sans-serif;box-shadow:0 -2px 12px rgba(0,0,0,.35);}"
-    +"#ict-gap .cl{background:transparent;color:#8b949e;border:0;width:30px;height:34px;font-size:20px;cursor:pointer;flex:0 0 auto;}"
-    +"#ict-gap .ttl{font-size:12px;color:#c9d1d9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:32%;flex:0 1 auto;}"
+  var URL=__URL__, TITLE=__TITLE__, EPID=__EPID__, VIEW=__VIEW__, MODE=__MODE__;
+  var CSS="#ict-gap{position:fixed;left:0;right:0;bottom:0;z-index:2147483000;display:flex;align-items:center;gap:8px;"
+    +"padding:8px 10px;padding-right:64px;box-sizing:border-box;background:#12161d;border-top:1px solid #2a3038;color:#e9edf2;"
+    +"font-family:system-ui,-apple-system,sans-serif;box-shadow:0 -2px 12px rgba(0,0,0,.4);}"
+    +"#ict-gap .cl{background:transparent;color:#8b949e;border:0;width:34px;height:40px;font-size:22px;cursor:pointer;flex:0 0 auto;}"
+    +"#ict-gap .spd{background:#a9700f;color:#fff;border:0;border-radius:8px;min-width:56px;height:40px;font:700 15px system-ui;cursor:pointer;flex:0 0 auto;}"
+    +"#ict-gap .ttl{font-size:12px;color:#c9d1d9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:26%;flex:0 1 auto;}"
+    +"#ict-gap audio{flex:1 1 auto;height:40px;min-width:0;}"
     +"#ict-gap iframe{flex:1 1 auto;border:0;height:62px;min-width:0;border-radius:8px;}"
-    +"body{padding-bottom:80px !important;}"
-    +"@media(max-width:640px){#ict-gap .ttl{max-width:24%;}}";
+    +"body{padding-bottom:104px !important;}"
+    +"@media(max-width:640px){#ict-gap{padding-right:56px;}#ict-gap .ttl{display:none;}}";
+  var SPEEDS=[1,1.25,1.5,1.75,2,0.75];
   function buildBar(doc){
     var win=doc.defaultView;
     if(!doc.getElementById('ict-gap-style')){var st=doc.createElement('style');st.id='ict-gap-style';st.textContent=CSS;doc.head.appendChild(st);}
     var bar=doc.getElementById('ict-gap');
     if(!bar){
-      bar=doc.createElement('div');bar.id='ict-gap';
+      bar=doc.createElement('div');bar.id='ict-gap';bar.style.display='none';
       bar.innerHTML='<button class="cl" id="ict-gap-x" title="Close">&times;</button>'
+        +'<button class="spd" id="ict-gap-spd" title="Playback speed" style="display:none;">1&times;</button>'
         +'<div class="ttl" id="ict-gap-t"></div>'
-        +'<iframe id="ict-gap-if" allow="autoplay" allowfullscreen></iframe>';
+        +'<audio id="ict-gap-au" controls preload="none" style="display:none;"></audio>'
+        +'<iframe id="ict-gap-if" allow="autoplay" allowfullscreen style="display:none;"></iframe>';
       doc.body.appendChild(bar);
-      bar.querySelector('#ict-gap-x').onclick=function(){var f=doc.getElementById('ict-gap-if');f.src='about:blank';f.dataset.epid='';bar.style.display='none';};
-      win.ictLoadAudio=function(url,title,epid){
+      var au=doc.getElementById('ict-gap-au');
+      var spd=doc.getElementById('ict-gap-spd');
+      spd.onclick=function(){
+        var i=(SPEEDS.indexOf(au.playbackRate)+1)%SPEEDS.length;
+        var r=SPEEDS[i];au.playbackRate=r;
+        spd.textContent=(r===Math.floor(r)?r:r.toFixed(2).replace(/0$/,''))+'×';
+      };
+      bar.querySelector('#ict-gap-x').onclick=function(){
+        au.pause();au.removeAttribute('src');au.load();au.dataset.epid='';
+        var f=doc.getElementById('ict-gap-if');f.src='about:blank';f.dataset.epid='';
+        bar.style.display='none';
+      };
+      win.ictLoadAudio=function(url,title,epid,mode){
         var f=doc.getElementById('ict-gap-if');bar.style.display='flex';
         doc.getElementById('ict-gap-t').textContent=title;
-        if(f.dataset.epid!==epid){f.dataset.epid=epid;f.src=url;}
+        if(mode==='audio'){
+          f.style.display='none';au.style.display='';spd.style.display='';
+          if(au.dataset.epid!==epid){au.dataset.epid=epid;au.src=url;au.play().catch(function(){});}
+        }else{
+          au.pause();au.style.display='none';spd.style.display='none';f.style.display='';
+          if(f.dataset.epid!==epid){f.dataset.epid=epid;f.src=url;}
+        }
       };
     }
     return bar;
@@ -8680,30 +8707,37 @@ _AUDIO_PLAYER_TMPL = r"""
   try{
     buildBar(window.parent.document);
     host.innerHTML='<button class="ict-inline">&#9654; Open player</button>'
-      +'<div class="note">Opens the player pinned at the bottom &mdash; keeps playing as you browse.'
+      +'<div class="note">Opens the player pinned at the bottom &mdash; keeps playing as you browse'
+      +(MODE==='audio'?', with a speed control.':'.')
       +(VIEW?' <a href="'+VIEW+'" target="_blank" style="color:#58a6ff">Open in Drive ↗</a>':'')+'</div>';
     var s1=document.createElement('style');
     s1.textContent='.ict-inline{background:#a9700f;color:#fff;border:0;border-radius:8px;padding:11px 16px;font:600 14px system-ui;cursor:pointer;}'
       +'.note{font:12px/1.4 system-ui;color:#8b949e;margin-top:6px;}';
     document.head.appendChild(s1);
-    host.querySelector('.ict-inline').onclick=function(){window.parent.ictLoadAudio(URL,TITLE,EPID);};
+    host.querySelector('.ict-inline').onclick=function(){window.parent.ictLoadAudio(URL,TITLE,EPID,MODE);};
   }catch(e){
-    // Fallback (parent-document injection blocked): inline iframe, no persistence.
-    host.innerHTML='<iframe src="'+URL+'" width="100%" height="70" allow="autoplay" style="border:0;border-radius:8px;"></iframe>'
-      +(VIEW?'<div class="note"><a href="'+VIEW+'" target="_blank" style="color:#58a6ff">Open in Drive ↗</a></div>':'');
-    var s2=document.createElement('style');s2.textContent='.note{font:12px system-ui;color:#8b949e;margin-top:6px;}';document.head.appendChild(s2);
+    // Fallback (parent-document injection blocked): inline, no persistence.
+    if(MODE==='audio'){
+      host.innerHTML='<audio src="'+URL+'" controls preload="none" style="width:100%;"></audio>';
+    }else{
+      host.innerHTML='<iframe src="'+URL+'" width="100%" height="70" allow="autoplay" style="border:0;border-radius:8px;"></iframe>'
+        +(VIEW?'<div class="note"><a href="'+VIEW+'" target="_blank" style="color:#58a6ff">Open in Drive ↗</a></div>':'');
+      var s2=document.createElement('style');s2.textContent='.note{font:12px system-ui;color:#8b949e;margin-top:6px;}';document.head.appendChild(s2);
+    }
   }
 })();
 </script>
 """
 
 
-def _audio_player_html(page_url: str, title: str, ep_id: str, view_url: str = "") -> str:
+def _audio_player_html(page_url: str, title: str, ep_id: str, view_url: str = "",
+                       mode: str = "iframe") -> str:
     return (_AUDIO_PLAYER_TMPL
             .replace("__URL__", json.dumps(page_url))
             .replace("__TITLE__", json.dumps(title))
             .replace("__EPID__", json.dumps(ep_id))
-            .replace("__VIEW__", json.dumps(view_url or "")))
+            .replace("__VIEW__", json.dumps(view_url or ""))
+            .replace("__MODE__", json.dumps(mode)))
 
 
 def _course_slug(course: dict) -> str:
@@ -8830,8 +8864,14 @@ def _render_course(course: dict) -> None:
                     height=90)
                 _render_course_transcript(ep, course.get("hosts", {}))
             elif ep.get("audio_url"):
-                # A directly-playable hosted audio URL — native player.
-                st.audio(ep["audio_url"])
+                # A directly-playable hosted audio URL (our GitHub-Release mp3s).
+                # The persistent bottom bar in "audio" mode — keeps playing as
+                # you browse AND carries the playback-speed button.
+                components.html(
+                    _audio_player_html(
+                        ep["audio_url"], ep.get("title", ""), ep.get("id", ""),
+                        mode="audio"),
+                    height=90)
                 _render_course_transcript(ep, course.get("hosts", {}))
             elif has_script:
                 # No audio file — the browser reads the script with built-in TTS.

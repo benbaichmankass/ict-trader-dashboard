@@ -56,6 +56,14 @@ _TTS_MODEL = os.environ.get("GEMINI_TTS_MODEL", "gemini-2.5-flash-preview-tts")
 _VOICE_A = os.environ.get("GEMINI_VOICE_A", "Kore")
 _VOICE_B = os.environ.get("GEMINI_VOICE_B", "Puck")
 _TIMEOUT = 120
+# TTS returns raw audio (large base64) and is much slower than a text call, so a
+# generous per-chunk timeout — a ~8-turn chunk of PCM can take a couple of
+# minutes on the free tier.
+_TTS_TIMEOUT = int(os.environ.get("GEMINI_TTS_TIMEOUT", "300"))
+# How many dialogue turns to synthesize per TTS request. The multi-speaker TTS
+# has an input cap + gets slow/timeout-prone on long transcripts, so a whole
+# 18-30-turn episode is chunked and the PCM concatenated.
+_TTS_CHUNK_TURNS = int(os.environ.get("GEMINI_TTS_CHUNK_TURNS", "8"))
 
 
 # ── Gemini REST helpers ─────────────────────────────────────────────────────
@@ -81,11 +89,11 @@ class _AllModelsFailed(RuntimeError):
     Raised (not sys.exit) so the caller can back off and retry a transient 5xx."""
 
 
-def _post(model: str, body: dict) -> dict:
+def _post(model: str, body: dict, timeout: int = _TIMEOUT) -> dict:
     r = requests.post(f"{_BASE}/{model}:generateContent",
                       headers={"X-goog-api-key": _key(),
                                "Content-Type": "application/json"},
-                      json=body, timeout=_TIMEOUT)
+                      json=body, timeout=timeout)
     if r.status_code != 200:
         raise _GeminiHTTPError(model, r.status_code, r.text)
     return r.json()
@@ -171,7 +179,8 @@ def _candidate_models(preferred: str, want: str) -> list[str]:
     return out
 
 
-def _generate(candidates: list[str], body: dict) -> tuple[str, dict]:
+def _generate(candidates: list[str], body: dict,
+              timeout: int = _TIMEOUT) -> tuple[str, dict]:
     """POST ``body`` against each candidate model until one returns 200.
 
     A model can fail two ways that warrant trying the NEXT candidate:
@@ -183,7 +192,7 @@ def _generate(candidates: list[str], body: dict) -> tuple[str, dict]:
     errors, saw_quota = [], False
     for model in candidates:
         try:
-            data = _post(model, body)
+            data = _post(model, body, timeout=timeout)
             if model != candidates[0]:
                 print(f"      (using '{model}')")
             return model, data
@@ -205,6 +214,12 @@ def _generate(candidates: list[str], body: dict) -> tuple[str, dict]:
                 print(f"      (model '{model}' busy/{exc.status}; trying next)")
                 continue
             raise  # a genuine error (e.g. 400 bad request) — surface it
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            # A slow/large TTS chunk timed out, or a transient network blip —
+            # treat like a transient 5xx so the caller backs off + retries.
+            errors.append(f"{model}: network {type(exc).__name__}")
+            print(f"      (model '{model}' network {type(exc).__name__}; trying next)")
+            continue
     tail = "\n  ".join(errors)
     if saw_quota:
         msg = (
@@ -379,13 +394,12 @@ def _pcm_to_wav(pcm: bytes, path: Path, rate: int = 24000) -> None:
         w.writeframes(pcm)
 
 
-def synthesize_episode(ep: dict, hosts: dict, tts_candidates: list[str]) -> tuple[bytes, int]:
-    name_a, name_b = hosts.get("a", "Host A"), hosts.get("b", "Host B")
+def _tts_chunk_body(lines: list[dict], name_a: str, name_b: str) -> dict:
     transcript = "TTS the following two-host conversation naturally:\n" + "\n".join(
         f"{name_a if ln.get('s') == 'a' else name_b}: {ln.get('t','')}"
-        for ln in ep.get("script", [])
+        for ln in lines
     )
-    body = {
+    return {
         "contents": [{"parts": [{"text": transcript}]}],
         "generationConfig": {
             "responseModalities": ["AUDIO"],
@@ -395,17 +409,54 @@ def synthesize_episode(ep: dict, hosts: dict, tts_candidates: list[str]) -> tupl
             ]}},
         },
     }
-    _model, data = _generate(tts_candidates, body)
-    part = (data.get("candidates") or [{}])[0].get("content", {}).get("parts", [{}])[0]
-    inline = part.get("inlineData") or part.get("inline_data") or {}
-    b64 = inline.get("data")
-    if not b64:
-        sys.exit(f"TTS returned no audio for {ep.get('id')}. Raw: {json.dumps(data)[:600]}")
+
+
+def _synthesize_chunk(lines: list[dict], name_a: str, name_b: str,
+                      tts_candidates: list[str], attempts: int = 3) -> tuple[bytes, int]:
+    """One TTS call for a chunk of turns, with backoff on a transient failure."""
+    body = _tts_chunk_body(lines, name_a, name_b)
+    last = ""
+    for attempt in range(1, attempts + 1):
+        try:
+            _model, data = _generate(tts_candidates, body, timeout=_TTS_TIMEOUT)
+        except _AllModelsFailed as exc:
+            last = str(exc)
+            wait = min(5 * attempt, 20)
+            print(f"      (TTS chunk transient failure; retry {attempt}/{attempts} in {wait}s)")
+            time.sleep(wait)
+            continue
+        part = (data.get("candidates") or [{}])[0].get("content", {}).get("parts", [{}])[0]
+        inline = part.get("inlineData") or part.get("inline_data") or {}
+        b64 = inline.get("data")
+        if not b64:
+            last = f"no audio in response: {json.dumps(data)[:400]}"
+            print(f"      (TTS chunk returned no audio; retry {attempt}/{attempts})")
+            time.sleep(min(3 * attempt, 10))
+            continue
+        rate = 24000
+        m = re.search(r"rate=(\d+)", inline.get("mimeType", inline.get("mime_type", "")))
+        if m:
+            rate = int(m.group(1))
+        return base64.b64decode(b64), rate
+    sys.exit(f"TTS failed for a chunk after {attempts} attempts. Last: {last}")
+
+
+def synthesize_episode(ep: dict, hosts: dict, tts_candidates: list[str]) -> tuple[bytes, int]:
+    """Synthesize a full episode by chunking the script into groups of turns and
+    concatenating the PCM — a whole 18-30-turn episode overruns the TTS input cap
+    / times out in one call."""
+    name_a, name_b = hosts.get("a", "Host A"), hosts.get("b", "Host B")
+    script = ep.get("script", [])
+    chunks = [script[i:i + _TTS_CHUNK_TURNS]
+              for i in range(0, len(script), _TTS_CHUNK_TURNS)] or [[]]
+    pcm_parts: list[bytes] = []
     rate = 24000
-    m = re.search(r"rate=(\d+)", inline.get("mimeType", inline.get("mime_type", "")))
-    if m:
-        rate = int(m.group(1))
-    return base64.b64decode(b64), rate
+    for ci, chunk in enumerate(chunks, 1):
+        if len(chunks) > 1:
+            print(f"      chunk {ci}/{len(chunks)} ({len(chunk)} turns)…")
+        pcm, rate = _synthesize_chunk(chunk, name_a, name_b, tts_candidates)
+        pcm_parts.append(pcm)
+    return b"".join(pcm_parts), rate
 
 
 # ── Assembly + CLI ──────────────────────────────────────────────────────────
@@ -448,21 +499,71 @@ def _mock_content(spec: dict) -> dict:
     }
 
 
+def _synthesize_course_audio(course: dict, out_dir: Path, tts_cands: list[str],
+                             only_ids: set[str] | None) -> None:
+    """Synthesize + attach audio for the course's episodes (optionally a subset).
+    Skips episodes that already have committed audio (`drive_id`/`audio_url`)
+    unless explicitly selected via ``only_ids``."""
+    audio_dir = out_dir / "audio"
+    audio_dir.mkdir(exist_ok=True)
+    for ep in course["episodes"]:
+        eid = ep.get("id")
+        if only_ids is not None and eid not in only_ids:
+            continue
+        if not ep.get("script"):
+            print(f"      (skip {eid}: no script to synthesize)")
+            continue
+        if only_ids is None and (ep.get("drive_id") or ep.get("audio_url")):
+            print(f"      (skip {eid}: already has hosted audio)")
+            continue
+        print(f"[audio] Synthesizing {eid}…")
+        pcm, rate = synthesize_episode(ep, course.get("hosts", {}), tts_cands)
+        wav = audio_dir / f"{course['course_id']}-{eid}.wav"
+        _pcm_to_wav(pcm, wav, rate)
+        ep["audio"] = f"audio/{wav.name}"
+        ep.pop("drive_id", None)   # a freshly-synthesized episode plays from the release
+        print(f"      -> {wav} ({len(pcm)//1024} KB, {rate} Hz)")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Generate a Learning course module via Gemini.")
-    ap.add_argument("spec", help="path to the module spec JSON")
+    ap.add_argument("spec", nargs="?", help="path to the module spec JSON (for a fresh course)")
+    ap.add_argument("--from-course", default=None,
+                    help="synthesize audio for an EXISTING course JSON (no content regen)")
+    ap.add_argument("--episodes", default=None,
+                    help="comma-separated episode ids to synthesize (default: all missing audio)")
     ap.add_argument("--audio", action="store_true", help="also synthesize multi-speaker audio")
     ap.add_argument("--dry-run", action="store_true", help="skip API calls; emit a mock module")
     ap.add_argument("--out-dir", default=None, help="output dir (default: repo data/courses)")
     args = ap.parse_args()
 
-    spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
-    if "course_id" not in spec:
-        sys.exit("spec must include 'course_id'.")
-
     out_dir = Path(args.out_dir) if args.out_dir else (
         Path(__file__).resolve().parents[2] / "data" / "courses")
     out_dir.mkdir(parents=True, exist_ok=True)
+    only_ids = ({e.strip() for e in args.episodes.split(",") if e.strip()}
+                if args.episodes else None)
+
+    # ── Path B: synthesize audio for an existing course (no content regen) ──
+    if args.from_course:
+        course = json.loads(Path(args.from_course).read_text(encoding="utf-8"))
+        if "course_id" not in course:
+            sys.exit("--from-course JSON must include 'course_id'.")
+        tts_cands = _candidate_models(_TTS_MODEL, "tts")
+        print(f"[audio] Existing course '{course['course_id']}' "
+              f"({len(course.get('episodes', []))} episodes)"
+              + (f"; only: {sorted(only_ids)}" if only_ids else "; all missing audio"))
+        _synthesize_course_audio(course, out_dir, tts_cands, only_ids)
+        out = out_dir / f"{course['course_id']}.json"
+        out.write_text(json.dumps(course, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"Done. Wrote {out}")
+        return
+
+    # ── Path A: generate a fresh course from a spec ──
+    if not args.spec:
+        sys.exit("Provide a spec path, or --from-course to add audio to an existing course.")
+    spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
+    if "course_id" not in spec:
+        sys.exit("spec must include 'course_id'.")
 
     if args.dry_run:
         text_model, tts_cands = _TEXT_MODEL, [_TTS_MODEL]
@@ -480,15 +581,7 @@ def main() -> None:
     print(f"      -> {len(course['episodes'])} episode(s), {n_lines} lines, {n_q} quiz Qs")
 
     if args.audio and not args.dry_run:
-        audio_dir = out_dir / "audio"
-        audio_dir.mkdir(exist_ok=True)
-        for ep in course["episodes"]:
-            print(f"[2/2] Synthesizing audio for {ep['id']}…")
-            pcm, rate = synthesize_episode(ep, course["hosts"], tts_cands)
-            wav = audio_dir / f"{course['course_id']}-{ep['id']}.wav"
-            _pcm_to_wav(pcm, wav, rate)
-            ep["audio"] = f"audio/{wav.name}"
-            print(f"      -> {wav} ({len(pcm)//1024} KB, {rate} Hz)")
+        _synthesize_course_audio(course, out_dir, tts_cands, only_ids)
 
     out = out_dir / f"{course['course_id']}.json"
     out.write_text(json.dumps(course, ensure_ascii=False, indent=2), encoding="utf-8")

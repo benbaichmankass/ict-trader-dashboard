@@ -6,15 +6,26 @@ name: generate-learning-module
 #   * workflow_dispatch — pick a spec + whether to synthesize audio.
 #   * a labelled issue  — open an issue labelled `generate-module` with an
 #     optional `spec:` / `audio:` line in the body.
-# The generated module is printed (summary) and uploaded as an artifact; it is
-# NOT auto-committed (review first, then commit into data/courses/).
+# The generated module is printed (summary) and uploaded as an artifact. With
+# `audio: true` the synthesized audio is hosted on a GitHub Release (tag
+# `learning-audio`) and each episode's `audio` (local wav) is rewritten to an
+# `audio_url` (release mp3). With `commit: true` the course JSON is committed to
+# data/courses/ on a review branch (never main).
 
 on:
   workflow_dispatch:
     inputs:
       spec:
-        description: "Path to the module spec JSON"
+        description: "Path to the module spec JSON (fresh course)"
         default: "scripts/learning/example_spec.json"
+        required: false
+      from_course:
+        description: "Path to an EXISTING course JSON — synthesize audio for it (no content regen). Overrides spec."
+        default: ""
+        required: false
+      episodes:
+        description: "Comma-separated episode ids to synthesize (from_course only; default: all missing audio)"
+        default: ""
         required: false
       audio:
         description: "Also synthesize multi-speaker audio (true/false)"
@@ -57,16 +68,20 @@ jobs:
         run: |
           SPEC="${{ github.event.inputs.spec }}"
           AUDIO="${{ github.event.inputs.audio }}"
-          # Issue-driven: parse `spec:` / `audio:` lines from the body (env, not inline).
+          FROM_COURSE="${{ github.event.inputs.from_course }}"
+          EPISODES="${{ github.event.inputs.episodes }}"
+          COMMIT="${{ github.event.inputs.commit }}"
+          # Issue-driven: parse `spec:` / `audio:` / … lines from the body (env, not inline).
           if [ "${{ github.event_name }}" = "issues" ]; then
             SPEC=$(printf '%s' "$ISSUE_BODY" | sed -n 's/^spec:[[:space:]]*//p' | head -1)
             AUDIO=$(printf '%s' "$ISSUE_BODY" | sed -n 's/^audio:[[:space:]]*//p' | head -1)
-          fi
-          COMMIT="${{ github.event.inputs.commit }}"
-          if [ "${{ github.event_name }}" = "issues" ]; then
+            FROM_COURSE=$(printf '%s' "$ISSUE_BODY" | sed -n 's/^from_course:[[:space:]]*//p' | head -1)
+            EPISODES=$(printf '%s' "$ISSUE_BODY" | sed -n 's/^episodes:[[:space:]]*//p' | head -1)
             COMMIT=$(printf '%s' "$ISSUE_BODY" | sed -n 's/^commit:[[:space:]]*//p' | head -1)
           fi
           echo "spec=${SPEC:-scripts/learning/example_spec.json}" >> "$GITHUB_OUTPUT"
+          echo "from_course=${FROM_COURSE}" >> "$GITHUB_OUTPUT"
+          echo "episodes=${EPISODES}" >> "$GITHUB_OUTPUT"
           echo "audio=${AUDIO:-false}" >> "$GITHUB_OUTPUT"
           echo "commit=${COMMIT:-false}" >> "$GITHUB_OUTPUT"
 
@@ -83,12 +98,25 @@ jobs:
       - name: Generate module
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        env:
+          GEN_SPEC: ${{ steps.inp.outputs.spec }}
+          GEN_FROM_COURSE: ${{ steps.inp.outputs.from_course }}
+          GEN_EPISODES: ${{ steps.inp.outputs.episodes }}
+          GEN_AUDIO: ${{ steps.inp.outputs.audio }}
         run: |
           set -o pipefail
           AUDIO_FLAG=""
-          if [ "${{ steps.inp.outputs.audio }}" = "true" ]; then AUDIO_FLAG="--audio"; fi
-          echo ">>> spec=${{ steps.inp.outputs.spec }} audio=${{ steps.inp.outputs.audio }}"
-          python scripts/learning/generate_module.py "${{ steps.inp.outputs.spec }}" $AUDIO_FLAG --out-dir generated
+          if [ "$GEN_AUDIO" = "true" ]; then AUDIO_FLAG="--audio"; fi
+          if [ -n "$GEN_FROM_COURSE" ]; then
+            # Add audio to an EXISTING course (no content regeneration).
+            EP_FLAG=""
+            if [ -n "$GEN_EPISODES" ]; then EP_FLAG="--episodes $GEN_EPISODES"; fi
+            echo ">>> from_course=$GEN_FROM_COURSE episodes=$GEN_EPISODES"
+            python scripts/learning/generate_module.py --from-course "$GEN_FROM_COURSE" --audio $EP_FLAG --out-dir generated
+          else
+            echo ">>> spec=$GEN_SPEC audio=$GEN_AUDIO"
+            python scripts/learning/generate_module.py "$GEN_SPEC" $AUDIO_FLAG --out-dir generated
+          fi
           echo "===== generated files ====="
           ls -la generated generated/audio 2>/dev/null || true
 
@@ -113,6 +141,56 @@ jobs:
           for i, o in enumerate(q.get("options", [])):
               print(f"   [{i}] {o}", "  <-- answer" if i == q.get("answer") else "")
           print("  explain:", q.get("explain"))
+          PY
+
+      # When audio was synthesized, host it off-repo on a GitHub Release (a
+      # separate CDN-backed blob store — no repo/clone bloat) and rewrite each
+      # episode's local `audio` (wav) to an `audio_url` (release mp3). The
+      # dashboard plays an audio_url in its persistent bar WITH a speed control
+      # (a Drive /preview iframe can't be sped up); the mp3 also streams with
+      # range requests + CORS so <audio> seeks cleanly.
+      - name: Host audio on a GitHub Release
+        if: steps.inp.outputs.audio == 'true' || steps.inp.outputs.from_course != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          wavs=(generated/audio/*.wav)
+          if [ ${#wavs[@]} -eq 0 ]; then
+            echo "No WAVs were generated; nothing to host."
+            exit 0
+          fi
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          tag="learning-audio"
+          gh release view "$tag" >/dev/null 2>&1 || \
+            gh release create "$tag" \
+              --title "Learning course audio" \
+              --notes "CDN-hosted audio assets for Learning courses (generated)."
+          mp3s=()
+          for w in "${wavs[@]}"; do
+            base="$(basename "${w%.wav}")"
+            mp3="generated/audio/${base}.mp3"
+            ffmpeg -y -loglevel error -i "$w" -codec:a libmp3lame -b:a 96k "$mp3"
+            mp3s+=("$mp3")
+          done
+          gh release upload "$tag" "${mp3s[@]}" --clobber
+          echo "Uploaded ${#mp3s[@]} mp3(s) to release '$tag'."
+          f=$(ls generated/*.json | head -1)
+          python - "$f" "$REPO" "$tag" <<'PY'
+          import json, os, sys
+          f, repo, tag = sys.argv[1], sys.argv[2], sys.argv[3]
+          d = json.load(open(f, encoding="utf-8"))
+          base = f"https://github.com/{repo}/releases/download/{tag}"
+          for ep in d.get("episodes", []):
+              a = ep.get("audio")
+              if a and a.endswith(".wav"):
+                  name = os.path.basename(a)[:-4] + ".mp3"
+                  ep["audio_url"] = f"{base}/{name}"
+                  ep.pop("audio", None)   # drop the local wav ref — play from the release
+          json.dump(d, open(f, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+          print("audio_url set:", [e.get("audio_url") for e in d.get("episodes", [])])
           PY
 
       - uses: actions/upload-artifact@v4
