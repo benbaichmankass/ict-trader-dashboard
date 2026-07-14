@@ -5,8 +5,10 @@
 > REST API and holds no runtime state of its own. **One exception (2026-06-21):**
 > the **Prop** tab POSTs a fill/close or account-status *report* to
 > `/api/bot/prop/report` — an observability write to the prop journal, NOT a
-> live-trade action (it places/modifies no order). That's the only write the
-> dashboard makes.
+> live-trade action (it places/modifies no order). **Second write (2026-07-14):**
+> the **Learning** tab POSTs to `/api/bot/learning/progress` to mark a curriculum
+> resource done — likewise a pure observability write (no order path, no live
+> state). These two are the only writes the dashboard makes.
 
 ## Operating rules live in the bot repo
 
@@ -176,12 +178,14 @@ requirements.txt       — Python deps (streamlit, streamlit-autorefresh, reques
 README.md              — deploy + dev steps
 CLAUDE.md              — this file
 docs/                  — ad-hoc design notes
+data/                  — bundled fallback content (learning_curriculum.json)
 ```
 
-## Information architecture — 7 sections (redesign 2026-06-22; **Roadmap** added 2026-07-01)
+## Information architecture — 8 sections (redesign 2026-06-22; **Roadmap** added 2026-07-01; **Learning** added 2026-07-14)
 
-The sidebar collapsed from ~19 flat tabs to **7 sections** (six card-landings
-plus the special-cased **Overview** and **Roadmap** views), each a **landing of
+The sidebar collapsed from ~19 flat tabs to **8 sections** (the card-landing
+sections plus the special-cased **Overview**, **Roadmap**, and **Learning**
+views), each a **landing of
 summary cards** that drill into the existing detail page (principle: overview
 first, details one click away — `SECTIONS` / `PAGE_DESC` / `_section_for` +
 `_render_section_landing` + the `nav_section`/`nav_detail` state in
@@ -199,6 +203,7 @@ detail directly.
 | **Activity** | Positions · Trades · Order Packages · Signals |
 | **Admin** | Data Explorer · Logs · Health |
 | **Roadmap** | the product-roadmap progress visualization — milestones → sprints → work-session notes. No card grid — it *is* the view (special-cased like Overview; `page_roadmap` in `main()`). |
+| **Learning** | the **Learning Center** — a trading + AI curriculum (tracks → modules → resource rows) with per-resource progress tracking. No card grid — it *is* the view (special-cased like Roadmap; `page_learning` in `main()`). Content from `/api/bot/learning/curriculum` (bundled fallback `data/learning_curriculum.json`); progress via `/api/bot/learning/progress`. |
 
 Section-landing cards currently show a title + one-line blurb (`PAGE_DESC`) +
 an "Open" button; enriching each card with a live summary metric is the
@@ -302,6 +307,7 @@ Nested expanders are illegal in Streamlit, so the in-row "Show all" + config use
 | Reports | `/api/bot/reports` (index) + `/api/bot/reports/{id}` (one report's HTML) — **a log of links to the consolidated `/system-report` executive reports** (the bot-side master skill that runs health + performance + ML together per window). A window filter (All/since-last/daily/weekly/monthly), a newest-first table (generated/window/roll-up grade/headline), and an inline viewer that embeds the selected report's self-contained responsive HTML via `components.html` (plus a **Download HTML** button — the report HTML is self-contained, so the download/inline render is the human-usable path, independent of repo visibility). **Deep link:** a `?report=<id>` query param opens this page with that report pre-selected and rendered (`_consume_report_deeplink` in `main()` + the pre-select in `page_reports`) — this is the link the bot's Telegram system-report ping points at, so tapping the ping lands directly on the report. **Read-only** — the dashboard never generates a report; it renders what the bot committed under `comms/reports/`. |
 | Logs | `/api/bot/logs` |
 | Roadmap | `/api/bot/roadmap` (index) + `/api/bot/roadmap/sprint/{id}` (one log) — **product-roadmap progress view** parsed bot-side from `ROADMAP.md` + `docs/sprint-logs/`. A progress roll-up (milestones done/active/planned + a completion bar + total work-session count), a **milestone list** (`st.expander` per milestone: normalized status badge 🟢done/🟡active/📋planned + the full status detail markdown), and a **drill into sprints** — each milestone's mapped work-session logs (+ an "Other sessions" bucket for one-off/thematic sprints + a global "Jump to any work session" search) open into that session's parsed notes/summaries (`page_roadmap` → `_sprint_picker` → `_render_sprint_detail`, which renders the log's `##` sections inline + a raw-markdown toggle). Sprint→milestone mapping is the bot's (explicit `docs/sprint-logs/<id>.md` links in the milestone cell + the Historical Sprint Ledger's `M-mapping` + a filename-prefix fallback). **Read-only.** A top-level section (`SECTIONS["Roadmap"]=[]`, rendered directly like Overview). |
+| Learning | `/api/bot/learning/curriculum` (bundled fallback `data/learning_curriculum.json`) + `/api/bot/learning/progress` (GET/POST) — the **Learning Center**: a two-track curriculum (**The Markets** — markets/TA/ICT/your setups/risk/psychology; **The Machines** — AI-ML literacy/lifecycle/eval/LLMs/working-with-Claude/ML-in-trading) rendered as expandable modules of resource rows, each with a **done** checkbox that POSTs to the durable progress store. A progress roll-up (done/total), plus quick-start / suggested-cadence / scam-flags / reference-shelf sections. `page_learning` is special-cased in `main()` like Roadmap; content prefers the bot endpoint and falls back to the bundled copy so the tab works pre-deploy (progress read-only until the endpoint is live). The progress POST is the dashboard's second observability write (alongside the Prop report). **Read-mostly.** |
 
 **Candles: bot endpoint first, Yahoo Finance fallback.** `_fetch_candles`
 calls the bot's **`/api/bot/candles?symbol=&interval=&limit=`** route first

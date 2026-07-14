@@ -564,6 +564,7 @@ SECTIONS: dict[str, list[str]] = {
     "Accounts": ["Accounts", "Prop"],
     "Activity": ["Positions", "Trades", "Order Packages", "Signals"],
     "Roadmap": [],  # special-cased: renders page_roadmap directly (like Overview)
+    "Learning": [],  # special-cased: renders page_learning directly (like Roadmap)
     "Admin": ["Data Explorer", "Logs", "Health"],
 }
 SECTION_NAMES = list(SECTIONS.keys())
@@ -8415,6 +8416,169 @@ def page_roadmap() -> None:
         _all_sessions_browser(sprints, ms_order)
 
 
+def _learning_curriculum() -> tuple[dict | None, str | None]:
+    """Return (curriculum, source_note). Prefer the bot's
+    /api/bot/learning/curriculum; fall back to the bundled copy committed in
+    this repo (so the tab works before the bot endpoint is deployed)."""
+    data, _err = _fetch("/api/bot/learning/curriculum")
+    cur = (data or {}).get("curriculum") if isinstance(data, dict) else None
+    if cur:
+        return cur, None
+    try:
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "data", "learning_curriculum.json")
+        with open(p, encoding="utf-8") as fh:
+            return json.load(fh), (
+                "Showing the bundled curriculum — the bot's learning endpoint "
+                "isn't live yet, so progress tracking is read-only until it is."
+            )
+    except Exception:  # noqa: BLE001
+        return None, None
+
+
+def page_learning() -> None:
+    """Learning Center — the curriculum (trading + AI) with progress tracking.
+
+    A READING/interaction surface (special-cased top-level view like Roadmap).
+    Content comes from the bot's /api/bot/learning/curriculum (bundled fallback
+    committed here); per-resource progress is read from and written to
+    /api/bot/learning/progress (durable + cross-device). No auto-refresh."""
+    st.header("📚 Learning Center")
+
+    cur, source_note = _learning_curriculum()
+    if not cur:
+        st.info("The learning curriculum isn't available yet.")
+        return
+
+    if cur.get("subtitle"):
+        st.caption(cur["subtitle"])
+
+    # Progress store — durable, from the bot. If unavailable (endpoint not
+    # deployed), the tab stays a read-only reading surface.
+    prog, _perr = _fetch("/api/bot/learning/progress")
+    progress_available = bool(isinstance(prog, dict) and prog.get("present"))
+    items = prog.get("items", {}) if progress_available else {}
+
+    if source_note:
+        st.warning(source_note)
+    elif not progress_available:
+        st.caption("ℹ️ Progress tracking activates once the bot's learning "
+                   "endpoint is live — content below is fully browsable now.")
+
+    tracks = cur.get("tracks", [])
+
+    def _key(rid: str) -> str:
+        return f"lrn_{rid}"
+
+    # Seed every checkbox's session_state from the server ONCE (before both the
+    # roll-up and the widgets), so the roll-up can be computed from widget state
+    # and stay in lock-step with the checkboxes on screen.
+    all_ids = [r["id"] for t in tracks for m in t.get("modules", [])
+               for r in m.get("resources", [])]
+    for rid in all_ids:
+        k = _key(rid)
+        if k not in st.session_state:
+            st.session_state[k] = (items.get(rid, {}).get("status") == "done")
+
+    total = len(all_ids)
+    done = sum(1 for rid in all_ids if st.session_state.get(_key(rid)))
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Resources", total)
+    c2.metric("✅ Done", done)
+    c3.metric("Remaining", total - done)
+    if total:
+        st.progress(done / total,
+                    text=f"{done}/{total} complete ({done / total * 100:.0f}%)")
+    if st.session_state.get("_lrn_err"):
+        st.error(f"Couldn't save progress: {st.session_state['_lrn_err']}")
+
+    qs = cur.get("quickstart")
+    if qs:
+        with st.expander(f"⭐ {qs.get('title', 'Quick start')}", expanded=False):
+            for s in qs.get("steps", []):
+                st.markdown(f"- {s}")
+
+    st.divider()
+
+    def _toggle(rid: str, k: str) -> None:
+        checked = bool(st.session_state.get(k))
+        _, err = _post("/api/bot/learning/progress",
+                       {"resource_id": rid,
+                        "status": "done" if checked else "not_started"})
+        if err:
+            st.session_state[k] = not checked  # revert the widget on failure
+            st.session_state["_lrn_err"] = err
+        else:
+            st.session_state.pop("_lrn_err", None)
+            _fetch_cached.clear()
+
+    for t in tracks:
+        st.subheader(t.get("name", ""))
+        if t.get("blurb"):
+            st.caption(t["blurb"])
+        for m in t.get("modules", []):
+            mres = m.get("resources", [])
+            mdone = sum(1 for r in mres if st.session_state.get(_key(r["id"])))
+            num = m.get("num", "")
+            label = f"{num}. {m.get('title', '')}  ·  {mdone}/{len(mres)}"
+            with st.expander(label, expanded=False):
+                if m.get("goal"):
+                    st.markdown(f"*{m['goal']}*")
+                goals = m.get("goals", [])
+                if goals:
+                    st.markdown("**You'll be able to:**")
+                    for g in goals:
+                        st.markdown(f"- {g}")
+                if m.get("in_your_system"):
+                    st.info(f"**◢ In your system** — {m['in_your_system']}")
+                st.markdown("")
+                for r in mres:
+                    rid = r["id"]
+                    k = _key(rid)
+                    col1, col2 = st.columns([0.08, 0.92])
+                    with col1:
+                        st.checkbox(
+                            "Mark done", key=k, on_change=_toggle, args=(rid, k),
+                            disabled=not progress_available,
+                            label_visibility="collapsed",
+                        )
+                    with col2:
+                        flag = f" · *{r['flag']}*" if r.get("flag") else ""
+                        st.markdown(
+                            f"**[{r.get('title', '')}]({r.get('url', '')})**  ·  "
+                            f"`{r.get('format', '')}` · {r.get('cost', '')}{flag}"
+                        )
+                        meta = " — ".join(
+                            x for x in (r.get("by"), r.get("note")) if x)
+                        if meta:
+                            st.caption(meta)
+        st.divider()
+
+    cad = cur.get("cadence")
+    if cad:
+        with st.expander(f"🗓️ {cad.get('title', 'Suggested cadence')}",
+                         expanded=False):
+            for s in cad.get("steps", []):
+                st.markdown(f"- {s}")
+    scam = cur.get("scam_flags")
+    if scam:
+        with st.expander(f"🚩 {scam.get('title', 'What to avoid')}",
+                         expanded=False):
+            for s in scam.get("items", []):
+                st.markdown(f"- {s}")
+    shelf = cur.get("shelf")
+    if shelf:
+        st.markdown("**📌 Reference shelf**")
+        cols = st.columns(3)
+        for i, s in enumerate(shelf):
+            with cols[i % 3]:
+                st.markdown(f"[{s.get('name', '')}]({s.get('url', '')}) — "
+                            f"{s.get('desc', '')}")
+    if cur.get("updated"):
+        st.caption(f"Curriculum updated {cur['updated']}.")
+
+
 def page_gpu_spend() -> None:
     """M19 Tier-1 spot-GPU burst spend — per-training-session cost + monthly total vs cap.
 
@@ -8625,6 +8789,12 @@ def main() -> None:
         # Alert-severity banners (trainer/account down) stay visible here too.
         _render_notification_banner(alerts_only=True)
         _live_fragment(page_roadmap)
+    elif section == "Learning":
+        # Learning Center — a READING/interaction surface (curriculum + the
+        # operator's progress marks). No auto-refresh; interaction-scoped reruns
+        # only, like Roadmap. Alert-severity banners stay visible here too.
+        _render_notification_banner(alerts_only=True)
+        _live_fragment(page_learning)
     else:
         # Section landing: stacked cards that expand/collapse in place. Show
         # can't-miss ALERTS (trainer/account down) on every section — the full
