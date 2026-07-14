@@ -292,23 +292,40 @@ def _extract_json(text: str) -> dict:
         raise
 
 
-def _gen_json(candidates: list[str], system: str, user: str) -> tuple[str, dict]:
+def _gen_json(candidates: list[str], system: str, user: str,
+              attempts: int = 3) -> tuple[str, dict]:
+    """Generate + parse JSON, retrying on a malformed response.
+
+    Even in ``responseMimeType: application/json`` mode the model occasionally
+    emits invalid JSON (e.g. an unescaped quote inside a dialogue line). The
+    output is stochastic, so a re-request almost always parses; retry up to
+    ``attempts`` times before giving up.
+    """
     body = {
         "system_instruction": {"parts": [{"text": system}]},
         "contents": [{"role": "user", "parts": [{"text": user}]}],
         "generationConfig": {"temperature": 0.7, "responseMimeType": "application/json",
                              "maxOutputTokens": 8192},
     }
-    model, data = _generate(candidates, body)
-    cand0 = (data.get("candidates") or [{}])[0]
-    parts = cand0.get("content", {}).get("parts", [])
-    text = "".join(p.get("text", "") for p in parts)
-    if not text:
-        sys.exit(f"Gemini returned no text. Raw: {json.dumps(data)[:600]}")
-    if cand0.get("finishReason") == "MAX_TOKENS":
-        sys.exit("Gemini hit its output-token cap mid-response (the JSON is "
-                 "truncated). Shorten the episode/quiz scope in the spec.")
-    return model, _extract_json(text)
+    last_err = ""
+    for attempt in range(1, attempts + 1):
+        model, data = _generate(candidates, body)
+        cand0 = (data.get("candidates") or [{}])[0]
+        parts = cand0.get("content", {}).get("parts", [])
+        text = "".join(p.get("text", "") for p in parts)
+        if cand0.get("finishReason") == "MAX_TOKENS":
+            sys.exit("Gemini hit its output-token cap mid-response (the JSON is "
+                     "truncated). Shorten the episode/quiz scope in the spec.")
+        if not text:
+            last_err = f"empty text (raw: {json.dumps(data)[:200]})"
+        else:
+            try:
+                return model, _extract_json(text)
+            except json.JSONDecodeError as exc:
+                last_err = f"invalid JSON: {exc}"
+        if attempt < attempts:
+            print(f"      (malformed response, retrying {attempt + 1}/{attempts}: {last_err[:120]})")
+    sys.exit(f"Gemini returned unparseable JSON after {attempts} attempts: {last_err}")
 
 
 def generate_module_content(spec: dict, candidates: list[str]) -> tuple[str, dict]:
