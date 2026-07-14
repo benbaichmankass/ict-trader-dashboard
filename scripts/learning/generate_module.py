@@ -185,6 +185,8 @@ def _generate(candidates: list[str], body: dict) -> tuple[str, dict]:
             low = exc.text.lower()
             catalog = exc.status in (403, 404) or "not available" in low or "not found" in low
             quota = exc.status == 429 or "quota" in low or "rate limit" in low
+            transient = exc.status in (500, 502, 503, 504) or "unavailable" in low \
+                or "high demand" in low
             errors.append(f"{model}: {exc.status} {exc.text[:200]}")
             if catalog:
                 print(f"      (model '{model}' unavailable; trying next)")
@@ -193,7 +195,10 @@ def _generate(candidates: list[str], body: dict) -> tuple[str, dict]:
                 saw_quota = True
                 print(f"      (model '{model}' quota exhausted; trying next)")
                 continue
-            raise  # a genuine error (bad request, 5xx) — surface it
+            if transient:
+                print(f"      (model '{model}' busy/{exc.status}; trying next)")
+                continue
+            raise  # a genuine error (e.g. 400 bad request) — surface it
     tail = "\n  ".join(errors)
     if saw_quota:
         sys.exit(
