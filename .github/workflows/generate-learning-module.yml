@@ -98,7 +98,6 @@ jobs:
       - name: Generate module
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        env:
           GEN_SPEC: ${{ steps.inp.outputs.spec }}
           GEN_FROM_COURSE: ${{ steps.inp.outputs.from_course }}
           GEN_EPISODES: ${{ steps.inp.outputs.episodes }}
