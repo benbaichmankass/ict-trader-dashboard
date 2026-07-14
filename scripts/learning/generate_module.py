@@ -122,9 +122,18 @@ def _candidate_models(preferred: str, want: str) -> list[str]:
     def _is_tts(n: str) -> bool:
         return "tts" in n.lower()
 
+    # For TEXT we want a language model — exclude image/embedding/vision/etc.
+    _non_text = ("image", "embedding", "embed", "aqa", "vision")
+
+    def _eligible(n: str) -> bool:
+        low = n.lower()
+        if want == "tts":
+            return _is_tts(n)
+        return not _is_tts(n) and not any(t in low for t in _non_text)
+
     cands = [
         n for n, methods in usable.items()
-        if "generateContent" in methods and _is_tts(n) == (want == "tts")
+        if "generateContent" in methods and _eligible(n)
     ]
 
     def _rank(n: str) -> tuple:
@@ -159,10 +168,13 @@ def _candidate_models(preferred: str, want: str) -> list[str]:
 def _generate(candidates: list[str], body: dict) -> tuple[str, dict]:
     """POST ``body`` against each candidate model until one returns 200.
 
-    Skips a candidate on a 404 / "not available" style error (a listed-but-
-    ungranted model) and moves on; re-raises anything else (a real API error).
+    A model can fail two ways that warrant trying the NEXT candidate:
+      * catalog — 403/404/"not available"/"not found": listed but not granted.
+      * quota — 429: models have independent free-tier quotas, so a sibling may
+        still have headroom.
+    Anything else (400 bad request, 5xx) is a genuine error and is surfaced.
     """
-    errors = []
+    errors, saw_quota = [], False
     for model in candidates:
         try:
             data = _post(model, body)
@@ -170,15 +182,27 @@ def _generate(candidates: list[str], body: dict) -> tuple[str, dict]:
                 print(f"      (using '{model}')")
             return model, data
         except _GeminiHTTPError as exc:
-            transient_catalog = exc.status in (403, 404) or \
-                "not available" in exc.text.lower() or \
-                "not found" in exc.text.lower()
-            errors.append(str(exc))
-            if transient_catalog:
+            low = exc.text.lower()
+            catalog = exc.status in (403, 404) or "not available" in low or "not found" in low
+            quota = exc.status == 429 or "quota" in low or "rate limit" in low
+            errors.append(f"{model}: {exc.status} {exc.text[:200]}")
+            if catalog:
                 print(f"      (model '{model}' unavailable; trying next)")
                 continue
-            raise  # a genuine error (rate-limit, bad request, 5xx) — surface it
-    sys.exit("No usable Gemini model succeeded. Tried:\n  " + "\n  ".join(errors))
+            if quota:
+                saw_quota = True
+                print(f"      (model '{model}' quota exhausted; trying next)")
+                continue
+            raise  # a genuine error (bad request, 5xx) — surface it
+    tail = "\n  ".join(errors)
+    if saw_quota:
+        sys.exit(
+            "Every candidate Gemini model was quota-limited (HTTP 429). The "
+            "free tier's per-model quota for this key is exhausted or unset.\n"
+            "Fixes: wait for the daily free-tier reset, or enable billing on the "
+            "key's Google Cloud project (https://aistudio.google.com/apikey → "
+            "the project → set up billing) for a higher quota.\nTried:\n  " + tail)
+    sys.exit("No usable Gemini model succeeded. Tried:\n  " + tail)
 
 
 # ── Step 1: source -> module JSON (script + quiz) ───────────────────────────
