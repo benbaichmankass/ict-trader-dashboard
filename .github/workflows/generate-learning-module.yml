@@ -20,11 +20,15 @@ on:
         description: "Also synthesize multi-speaker audio (true/false)"
         default: "false"
         required: false
+      commit:
+        description: "Commit the generated course to data/courses/ on a branch for review (true/false)"
+        default: "false"
+        required: false
   issues:
     types: [opened]
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 concurrency:
@@ -58,8 +62,13 @@ jobs:
             SPEC=$(printf '%s' "$ISSUE_BODY" | sed -n 's/^spec:[[:space:]]*//p' | head -1)
             AUDIO=$(printf '%s' "$ISSUE_BODY" | sed -n 's/^audio:[[:space:]]*//p' | head -1)
           fi
+          COMMIT="${{ github.event.inputs.commit }}"
+          if [ "${{ github.event_name }}" = "issues" ]; then
+            COMMIT=$(printf '%s' "$ISSUE_BODY" | sed -n 's/^commit:[[:space:]]*//p' | head -1)
+          fi
           echo "spec=${SPEC:-scripts/learning/example_spec.json}" >> "$GITHUB_OUTPUT"
           echo "audio=${AUDIO:-false}" >> "$GITHUB_OUTPUT"
+          echo "commit=${COMMIT:-false}" >> "$GITHUB_OUTPUT"
 
       - name: Key presence (no value printed)
         env:
@@ -111,3 +120,26 @@ jobs:
           name: generated-module
           path: generated/
           if-no-files-found: warn
+
+      # Optional publish path: commit the generated course into data/courses/ on
+      # a review branch (artifacts can't be downloaded from a web session, so
+      # this is how a generated course gets reviewed + propagated to the bot's
+      # comms/learning/courses/). Never commits to main.
+      - name: Commit generated course to a review branch
+        if: steps.inp.outputs.commit == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          f=$(ls generated/*.json | head -1)
+          cid=$(python -c "import json,sys; print(json.load(open('$f'))['course_id'])")
+          mkdir -p data/courses
+          cp "$f" "data/courses/${cid}.json"
+          branch="learning/course-${cid}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add "data/courses/${cid}.json"
+          git commit -m "learning: generated course ${cid} (review)"
+          git push -f origin "$branch"
+          echo "Committed data/courses/${cid}.json to branch $branch"
