@@ -1,0 +1,113 @@
+name: generate-learning-module
+
+# Runs the Gemini course-generation pipeline (scripts/learning/generate_module.py)
+# with the repo's GEMINI_API_KEY secret, so a Learning module can be generated
+# without a key ever touching a local/dev session. Two triggers:
+#   * workflow_dispatch — pick a spec + whether to synthesize audio.
+#   * a labelled issue  — open an issue labelled `generate-module` with an
+#     optional `spec:` / `audio:` line in the body.
+# The generated module is printed (summary) and uploaded as an artifact; it is
+# NOT auto-committed (review first, then commit into data/courses/).
+
+on:
+  workflow_dispatch:
+    inputs:
+      spec:
+        description: "Path to the module spec JSON"
+        default: "scripts/learning/example_spec.json"
+        required: false
+      audio:
+        description: "Also synthesize multi-speaker audio (true/false)"
+        default: "false"
+        required: false
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: generate-learning-module
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.issue.labels.*.name, 'generate-module')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      - name: Resolve inputs
+        id: inp
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: |
+          SPEC="${{ github.event.inputs.spec }}"
+          AUDIO="${{ github.event.inputs.audio }}"
+          # Issue-driven: parse `spec:` / `audio:` lines from the body (env, not inline).
+          if [ "${{ github.event_name }}" = "issues" ]; then
+            SPEC=$(printf '%s' "$ISSUE_BODY" | sed -n 's/^spec:[[:space:]]*//p' | head -1)
+            AUDIO=$(printf '%s' "$ISSUE_BODY" | sed -n 's/^audio:[[:space:]]*//p' | head -1)
+          fi
+          echo "spec=${SPEC:-scripts/learning/example_spec.json}" >> "$GITHUB_OUTPUT"
+          echo "audio=${AUDIO:-false}" >> "$GITHUB_OUTPUT"
+
+      - name: Key presence (no value printed)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::GEMINI_API_KEY secret is EMPTY/UNSET in this repo. Add it (free: https://aistudio.google.com/apikey) as an Actions secret named GEMINI_API_KEY."
+            exit 1
+          fi
+          echo "GEMINI_API_KEY is present (length ${#GEMINI_API_KEY}; value hidden)."
+
+      - name: Generate module
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          set -o pipefail
+          AUDIO_FLAG=""
+          if [ "${{ steps.inp.outputs.audio }}" = "true" ]; then AUDIO_FLAG="--audio"; fi
+          echo ">>> spec=${{ steps.inp.outputs.spec }} audio=${{ steps.inp.outputs.audio }}"
+          python scripts/learning/generate_module.py "${{ steps.inp.outputs.spec }}" $AUDIO_FLAG --out-dir generated
+          echo "===== generated files ====="
+          ls -la generated generated/audio 2>/dev/null || true
+
+      - name: Summary (for the run log)
+        run: |
+          f=$(ls generated/*.json | head -1)
+          echo "===== module summary: $f ====="
+          python - "$f" <<'PY'
+          import json, sys
+          d = json.load(open(sys.argv[1], encoding="utf-8"))
+          print("course_id:", d.get("course_id"))
+          print("title:", d.get("title"))
+          print("generated_by:", d.get("generated_by"))
+          print("episodes:", [(e.get("id"), len(e.get("script", []))) for e in d.get("episodes", [])])
+          print("quiz_count:", len(d.get("quiz", [])))
+          print("\n--- first episode, first 6 lines ---")
+          for ln in (d.get("episodes") or [{}])[0].get("script", [])[:6]:
+              print(f"  {ln.get('s')}: {ln.get('t','')[:160]}")
+          print("\n--- first quiz question ---")
+          q = (d.get("quiz") or [{}])[0]
+          print(" ", q.get("q"))
+          for i, o in enumerate(q.get("options", [])):
+              print(f"   [{i}] {o}", "  <-- answer" if i == q.get("answer") else "")
+          print("  explain:", q.get("explain"))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generated-module
+          path: generated/
+          if-no-files-found: warn
