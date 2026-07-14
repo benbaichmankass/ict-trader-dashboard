@@ -8436,6 +8436,272 @@ def _learning_curriculum() -> tuple[dict | None, str | None]:
         return None, None
 
 
+# ── Interactive course: TTS "podcast" player + graded quiz ──────────────────
+# The player is a self-contained Web Speech API embed (no Python round-trip, no
+# audio files, no API key) — the browser's built-in voices read a two-host
+# script. Same components.html pattern as the lightweight-charts embed; a real
+# TTS-service upgrade (natural voices) is a documented follow-up.
+_COURSE_TTS_HTML = r"""
+<div id="pod">
+  <style>
+    #pod{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:#1b2130;}
+    #pod .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;}
+    #pod button{font:inherit;font-weight:600;border:1px solid #cbd2dc;background:#fff;
+      color:#1b2130;border-radius:8px;padding:7px 12px;cursor:pointer;}
+    #pod button:hover{border-color:#7c8595;}
+    #pod button.primary{background:#a9700f;color:#fff;border-color:#a9700f;}
+    #pod select{font:inherit;border:1px solid #cbd2dc;border-radius:8px;padding:6px 8px;background:#fff;color:#1b2130;max-width:160px;}
+    #pod label{font-size:.8rem;color:#4a5265;display:inline-flex;gap:5px;align-items:center;}
+    #pod .prog{font-variant-numeric:tabular-nums;font-size:.8rem;color:#4a5265;margin-left:auto;}
+    #pod #transcript{max-height:340px;overflow:auto;border:1px solid #e2e6ec;border-radius:10px;
+      padding:10px 12px;background:#fbfcfd;line-height:1.55;}
+    #pod .line{padding:5px 7px;border-radius:7px;cursor:pointer;margin-bottom:2px;}
+    #pod .line:hover{background:#eef1f5;}
+    #pod .line.active{background:#f4e6cd;}
+    #pod .who{font-weight:700;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;
+      padding:1px 6px;border-radius:5px;margin-right:6px;}
+    #pod .whoa{background:#e7f0ea;color:#2f7d5b;}
+    #pod .whob{background:#e6ecf5;color:#31558f;}
+    #pod .note{font-size:.74rem;color:#8a93a1;margin-top:6px;}
+    @media (prefers-color-scheme:dark){
+      #pod{color:#e9e6dd;}
+      #pod button{background:#1c2431;color:#e9e6dd;border-color:#39424f;}
+      #pod button.primary{background:#e2ac52;color:#161d28;border-color:#e2ac52;}
+      #pod select{background:#1c2431;color:#e9e6dd;border-color:#39424f;}
+      #pod label,#pod .prog{color:#a8b0be;}
+      #pod #transcript{background:#141b25;border-color:#28303d;}
+      #pod .line:hover{background:#1f2836;}
+      #pod .line.active{background:#3a2f14;}
+      #pod .whoa{background:#16281e;color:#57b78d;}
+      #pod .whob{background:#161f2e;color:#7ba0d6;}
+      #pod .note{color:#69717f;}
+    }
+  </style>
+  <div class="row">
+    <button id="play" class="primary">▶ Play</button>
+    <button id="pause">⏸ Pause</button>
+    <button id="stop">⏹ Stop</button>
+    <label>Speed
+      <select id="rate">
+        <option value="0.85">0.85×</option>
+        <option value="1" selected>1×</option>
+        <option value="1.15">1.15×</option>
+        <option value="1.3">1.3×</option>
+        <option value="1.5">1.5×</option>
+      </select></label>
+    <span class="prog" id="prog"></span>
+  </div>
+  <div class="row">
+    <label id="lblA">Voice A <select id="vA"></select></label>
+    <label id="lblB">Voice B <select id="vB"></select></label>
+  </div>
+  <div id="transcript"></div>
+  <div class="note" id="note"></div>
+  <script>
+    var DATA = __PAYLOAD__;
+    var synth = window.speechSynthesis;
+    var lines = DATA.lines || [];
+    var hosts = DATA.hosts || {a:"Host A", b:"Host B"};
+    var voices = [], idx = 0, playing = false;
+    var tEl = document.getElementById("transcript");
+
+    function esc(s){var d=document.createElement("div");d.textContent=s;return d.innerHTML;}
+    document.getElementById("lblA").firstChild.textContent = (hosts.a||"Voice A") + " ";
+    document.getElementById("lblB").firstChild.textContent = (hosts.b||"Voice B") + " ";
+
+    lines.forEach(function(ln,i){
+      var d=document.createElement("div");
+      d.className="line"; d.id="ln"+i;
+      var who = ln.s==="a" ? (hosts.a||"A") : (hosts.b||"B");
+      d.innerHTML = '<span class="who who'+(ln.s==="a"?"a":"b")+'">'+esc(who)+'</span>'+esc(ln.t);
+      d.onclick=function(){ idx=i; highlight(i); };
+      tEl.appendChild(d);
+    });
+
+    function populateVoices(){
+      voices = synth.getVoices() || [];
+      var en = voices.filter(function(v){return /^en/i.test(v.lang);});
+      var list = en.length ? en : voices;
+      var vA=document.getElementById("vA"), vB=document.getElementById("vB");
+      vA.innerHTML=""; vB.innerHTML="";
+      list.forEach(function(v){
+        var gi = voices.indexOf(v);
+        var o=document.createElement("option"); o.value=gi; o.textContent=v.name;
+        vA.appendChild(o); vB.appendChild(o.cloneNode(true));
+      });
+      if(list.length){
+        vA.value = voices.indexOf(list[0]);
+        vB.value = voices.indexOf(list[list.length>1?1:0]);
+      }
+      document.getElementById("note").textContent = list.length
+        ? "Tip: pick two different voices so the hosts sound distinct."
+        : "No speech voices detected in this browser — read the transcript above.";
+    }
+    populateVoices();
+    if(typeof speechSynthesis!=="undefined" && "onvoiceschanged" in speechSynthesis){
+      speechSynthesis.onvoiceschanged = populateVoices;
+    }
+
+    function highlight(i){
+      var els=document.querySelectorAll(".line");
+      for(var k=0;k<els.length;k++){ els[k].classList.remove("active"); }
+      var el=document.getElementById("ln"+i);
+      if(el){ el.classList.add("active"); el.scrollIntoView({block:"center",behavior:"smooth"}); }
+      document.getElementById("prog").textContent = lines.length ? (i+1)+" / "+lines.length : "";
+    }
+
+    function speakFrom(i){
+      if(i>=lines.length){ playing=false; idx=0; return; }
+      idx=i; highlight(i);
+      var ln=lines[i];
+      var u=new SpeechSynthesisUtterance(ln.t);
+      var sel = ln.s==="a" ? document.getElementById("vA") : document.getElementById("vB");
+      var vi = parseInt(sel.value,10);
+      if(!isNaN(vi) && voices[vi]) u.voice=voices[vi];
+      u.rate = parseFloat(document.getElementById("rate").value)||1;
+      u.pitch = ln.s==="a" ? 1.06 : 0.94;
+      u.onend = function(){ if(playing){ speakFrom(i+1); } };
+      u.onerror = function(){ if(playing){ speakFrom(i+1); } };
+      synth.speak(u);
+    }
+
+    function play(){
+      if(!lines.length) return;
+      if(synth.paused){ synth.resume(); playing=true; return; }
+      if(playing) return;
+      playing=true; synth.cancel(); speakFrom(idx);
+    }
+    function pause(){ if(playing && !synth.paused){ synth.pause(); playing=false; } }
+    function stop(){ playing=false; synth.cancel(); idx=0; highlight(0); }
+
+    document.getElementById("play").onclick=play;
+    document.getElementById("pause").onclick=pause;
+    document.getElementById("stop").onclick=stop;
+    // Chrome silently pauses long queues; a periodic resume keeps playback alive.
+    setInterval(function(){ if(playing && synth.paused){ synth.resume(); } }, 9000);
+    // Stop speech if the embed is torn down (episode switch / navigation).
+    window.addEventListener("pagehide", function(){ try{ synth.cancel(); }catch(e){} });
+    highlight(0);
+  </script>
+</div>
+"""
+
+
+def _load_course(course_id: str) -> dict | None:
+    """Load a committed course file (data/courses/<id>.json). Bundled in this
+    repo for now; a bot-served version is a follow-up."""
+    try:
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "data", "courses", f"{course_id}.json")
+        with open(p, encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _course_player_html(ep: dict, hosts: dict) -> str:
+    payload = {"lines": ep.get("script", []), "hosts": hosts}
+    return _COURSE_TTS_HTML.replace("__PAYLOAD__", json.dumps(payload))
+
+
+def _render_course_quiz(course: dict) -> None:
+    quiz = course.get("quiz", [])
+    if not quiz:
+        st.info("No quiz for this course yet.")
+        return
+    st.caption(f"{len(quiz)} questions — pick an answer for each, then submit. "
+               "You'll see what you got right and why.")
+    submitted = bool(st.session_state.get("course_eoai_submitted"))
+    for i, q in enumerate(quiz):
+        st.markdown(f"**{i + 1}. {q['q']}**")
+        st.radio(
+            "answer", list(range(len(q["options"]))),
+            format_func=lambda j, q=q: q["options"][j],
+            key=f"course_eoai_q_{q['id']}", index=None,
+            label_visibility="collapsed",
+        )
+        if submitted:
+            sel = st.session_state.get(f"course_eoai_q_{q['id']}")
+            ans = q["options"][q["answer"]]
+            if sel == q["answer"]:
+                st.success(f"✅ Correct — {q.get('explain', '')}")
+            elif sel is None:
+                st.warning(f"⬜ Unanswered. Answer: **{ans}**. {q.get('explain', '')}")
+            else:
+                st.error(f"❌ Not quite. Answer: **{ans}**. {q.get('explain', '')}")
+        st.write("")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Submit answers", key="course_eoai_submit", type="primary",
+                     use_container_width=True):
+            st.session_state["course_eoai_submitted"] = True
+            st.rerun()
+    with c2:
+        if st.button("Reset quiz", key="course_eoai_reset", use_container_width=True):
+            for q in quiz:
+                st.session_state.pop(f"course_eoai_q_{q['id']}", None)
+            st.session_state.pop("course_eoai_submitted", None)
+            st.rerun()
+    if submitted:
+        correct = sum(1 for q in quiz
+                      if st.session_state.get(f"course_eoai_q_{q['id']}") == q["answer"])
+        pct = correct / len(quiz) * 100 if quiz else 0
+        st.metric("Score", f"{correct} / {len(quiz)}", f"{pct:.0f}%")
+        if pct >= 80:
+            st.success("Great — you've got Chapter 1 down. 🎓")
+        elif pct >= 50:
+            st.info("Solid start — relisten to the episodes covering the ones you missed.")
+        else:
+            st.warning("Worth another listen, then retake it.")
+
+
+def _render_course(course: dict) -> None:
+    st.markdown(f"##### {course.get('title', '')}")
+    if course.get("subtitle"):
+        st.caption(course["subtitle"])
+    tab_ep, tab_quiz = st.tabs(["🎧 Episodes", "📝 Quiz"])
+    with tab_ep:
+        eps = course.get("episodes", [])
+        if not eps:
+            st.info("No episodes yet.")
+        else:
+            idx = st.radio(
+                "Episode", list(range(len(eps))),
+                format_func=lambda i: eps[i].get("title", f"Episode {i + 1}"),
+                key="course_eoai_ep",
+            )
+            ep = eps[idx]
+            mins = ep.get("minutes")
+            cap = ep.get("summary", "")
+            if mins:
+                cap = (cap + f"  ·  ~{mins} min").strip()
+            if cap:
+                st.caption(cap)
+            st.caption("▶ Play uses your browser's built-in voice. Pick two voices "
+                       "for the two hosts, adjust speed, or tap any line to jump. "
+                       "(No sound? Your browser may block speech — the transcript is "
+                       "right there to read.)")
+            components.html(_course_player_html(ep, course.get("hosts", {})),
+                            height=560, scrolling=False)
+    with tab_quiz:
+        _render_course_quiz(course)
+    if course.get("attribution"):
+        st.caption("ℹ️ " + course["attribution"])
+
+
+def _render_featured_course() -> None:
+    """Featured interactive course at the top of the Learning tab."""
+    course = _load_course("elements-of-ai-ch1")
+    if not course:
+        return
+    with st.container(border=True):
+        st.markdown("#### 🎧 Interactive course — listen & test  ·  *new*")
+        st.caption("An audio + quiz version of a curriculum resource. Starting "
+                   "with Elements of AI, Chapter 1 — the perfect on-ramp for "
+                   "Module 8 below.")
+        _render_course(course)
+
+
 def page_learning() -> None:
     """Learning Center — the curriculum (trading + AI) with progress tracking.
 
@@ -8498,6 +8764,8 @@ def page_learning() -> None:
         with st.expander(f"⭐ {qs.get('title', 'Quick start')}", expanded=False):
             for s in qs.get("steps", []):
                 st.markdown(f"- {s}")
+
+    _render_featured_course()
 
     st.divider()
 
