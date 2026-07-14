@@ -1,0 +1,15 @@
+{
+  "course_id": "elements-of-ai-ch2",
+  "title": "Elements of AI — Chapter 2: AI problem solving",
+  "subtitle": "Generated draft — search, games, and how machines 'plan' a sequence of moves.",
+  "attribution": "Concepts follow Chapter 2 of the free 'Elements of AI' course (University of Helsinki & MinnaLearn, CC BY-NC-SA 4.0). Original explanations generated for this app — not the course's text. Free course: https://course.elementsofai.com/2",
+  "source_url": "https://course.elementsofai.com/2",
+  "hosts": {"a": "Maya", "b": "Theo"},
+  "audience": "a smart non-technical operator of an automated ICT trading bot; tie examples to markets, search, and decision-making under uncertainty where natural.",
+  "quiz_count": 10,
+  "episodes": [
+    {"id": "ep1", "title": "Search & planning", "focus": "state space, search trees, why 'planning ahead' is a search problem; toy example (route finding / a simple game)", "minutes": 12},
+    {"id": "ep2", "title": "Games & adversaries", "focus": "the minimax idea, why game trees explode, and the intuition behind pruning — without heavy math", "minutes": 12}
+  ],
+  "sources": "PASTE OR SUMMARIZE YOUR OPEN / CC / OWN SOURCE MATERIAL HERE. The pipeline teaches from whatever you put in this field (bullet notes are fine). You are responsible for having the right to transform the sources. As a placeholder, here are seed concepts to expand: state-space search; search trees and branching factor; breadth-first vs depth-first as exploration strategies; the idea that 'planning' = finding a path through states; two-player games as adversarial search; minimax as assuming the opponent plays their best move; why exhaustive search is infeasible for large trees and why heuristics/pruning matter."
+}
