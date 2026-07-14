@@ -8604,6 +8604,22 @@ def _course_player_html(ep: dict, hosts: dict) -> str:
     return _COURSE_TTS_HTML.replace("__PAYLOAD__", json.dumps(payload))
 
 
+def _drive_audio_embed(drive_id: str) -> str:
+    """Google-Drive-hosted audio via Drive's own preview player (streams, any
+    size, no server round-trip). Requires the file/folder be shared
+    'Anyone with the link → Viewer'; until then Drive shows an access prompt."""
+    src = f"https://drive.google.com/file/d/{drive_id}/preview"
+    view = f"https://drive.google.com/file/d/{drive_id}/view"
+    return (
+        f'<iframe src="{src}" width="100%" height="80" allow="autoplay" '
+        'style="border:0;border-radius:8px;"></iframe>'
+        f'<div style="font:12px/1.4 sans-serif;color:#8b949e;margin-top:6px;">'
+        f'No player above? The file must be shared "Anyone with the link". '
+        f'<a href="{view}" target="_blank" rel="noopener" '
+        'style="color:#58a6ff;">Open in Google&nbsp;Drive ↗</a></div>'
+    )
+
+
 def _render_course_quiz(course: dict) -> None:
     quiz = course.get("quiz", [])
     if not quiz:
@@ -8690,12 +8706,24 @@ def _render_course(course: dict) -> None:
                                     "data", "courses", ep["audio"])
                 if os.path.exists(cand):
                     audio_path = cand
+            has_script = bool(ep.get("script"))
             if audio_path:
-                # Real generated (or hand-supplied) audio — play the file.
+                # Real generated (or hand-supplied) audio committed in-repo.
                 with open(audio_path, "rb") as fh:
                     st.audio(fh.read())
-                _render_course_transcript(ep, course.get("hosts", {}))
-            else:
+                if has_script:
+                    _render_course_transcript(ep, course.get("hosts", {}))
+            elif ep.get("drive_id"):
+                # Audio hosted in the shared Google Drive learning folder.
+                components.html(_drive_audio_embed(ep["drive_id"]), height=120)
+                if has_script:
+                    _render_course_transcript(ep, course.get("hosts", {}))
+            elif ep.get("audio_url"):
+                # Any other directly-playable hosted audio URL.
+                st.audio(ep["audio_url"])
+                if has_script:
+                    _render_course_transcript(ep, course.get("hosts", {}))
+            elif has_script:
                 # No audio file — the browser reads the script with built-in TTS.
                 st.caption("▶ Play uses your browser's built-in voice. Pick two "
                            "voices for the two hosts, adjust speed, or tap any line "
@@ -8703,6 +8731,8 @@ def _render_course(course: dict) -> None:
                            "transcript is right there to read.)")
                 components.html(_course_player_html(ep, course.get("hosts", {})),
                                 height=560, scrolling=False)
+            else:
+                st.info("Audio for this episode is coming soon.")
     with tab_quiz:
         _render_course_quiz(course)
     if course.get("attribution"):
@@ -8717,8 +8747,9 @@ def _render_featured_course() -> None:
     with st.container(border=True):
         st.markdown("#### 🎧 Interactive course — listen & test  ·  *new*")
         st.caption("An audio + quiz version of a curriculum resource. Starting "
-                   "with Elements of AI, Chapter 1 — the perfect on-ramp for "
-                   "Module 8 below.")
+                   "with Elements of AI, Chapter 1 — now with a full **audio deep "
+                   "dive** (first episode) plus short recap episodes and a quiz. "
+                   "The perfect on-ramp for Module 8 below.")
         _render_course(course)
 
 
