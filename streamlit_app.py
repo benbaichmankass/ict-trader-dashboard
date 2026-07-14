@@ -8655,6 +8655,13 @@ def _render_course_quiz(course: dict) -> None:
             st.warning("Worth another listen, then retake it.")
 
 
+def _render_course_transcript(ep: dict, hosts: dict) -> None:
+    with st.expander("📄 Transcript", expanded=False):
+        for ln in ep.get("script", []):
+            who = hosts.get(ln.get("s"), "")
+            st.markdown(f"**{who}:** {ln.get('t', '')}")
+
+
 def _render_course(course: dict) -> None:
     st.markdown(f"##### {course.get('title', '')}")
     if course.get("subtitle"):
@@ -8677,12 +8684,25 @@ def _render_course(course: dict) -> None:
                 cap = (cap + f"  ·  ~{mins} min").strip()
             if cap:
                 st.caption(cap)
-            st.caption("▶ Play uses your browser's built-in voice. Pick two voices "
-                       "for the two hosts, adjust speed, or tap any line to jump. "
-                       "(No sound? Your browser may block speech — the transcript is "
-                       "right there to read.)")
-            components.html(_course_player_html(ep, course.get("hosts", {})),
-                            height=560, scrolling=False)
+            audio_path = None
+            if ep.get("audio"):
+                cand = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                    "data", "courses", ep["audio"])
+                if os.path.exists(cand):
+                    audio_path = cand
+            if audio_path:
+                # Real generated (or hand-supplied) audio — play the file.
+                with open(audio_path, "rb") as fh:
+                    st.audio(fh.read())
+                _render_course_transcript(ep, course.get("hosts", {}))
+            else:
+                # No audio file — the browser reads the script with built-in TTS.
+                st.caption("▶ Play uses your browser's built-in voice. Pick two "
+                           "voices for the two hosts, adjust speed, or tap any line "
+                           "to jump. (No sound? Your browser may block speech — the "
+                           "transcript is right there to read.)")
+                components.html(_course_player_html(ep, course.get("hosts", {})),
+                                height=560, scrolling=False)
     with tab_quiz:
         _render_course_quiz(course)
     if course.get("attribution"):
