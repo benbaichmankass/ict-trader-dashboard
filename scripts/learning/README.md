@@ -13,8 +13,11 @@ env var against the Gemini REST API (no SDK; uses `requests`).
 1. Get a **free** Gemini API key: https://aistudio.google.com/apikey
 2. `export GEMINI_API_KEY=...`
 
-(Text generation runs on the free-tier `gemini-2.5-flash`. Audio uses a preview
-TTS model and may have tighter limits — start with text-only.)
+(Text generation prefers `gemini-2.5-flash`, but the pipeline **auto-discovers a
+usable model** from the key's own `ListModels` if that default is unavailable to
+the account — so a deprecated/ungranted default degrades to a current `*flash*`
+model instead of a 404. Audio uses a preview TTS model and may have tighter
+limits — start with text-only.)
 
 ## Use
 ```bash

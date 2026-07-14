@@ -77,6 +77,65 @@ def _post(model: str, body: dict) -> dict:
     return r.json()
 
 
+def _list_models() -> list[dict]:
+    """The models this key can actually use (paginated ListModels)."""
+    models: list[dict] = []
+    page_token = ""
+    for _ in range(10):  # safety bound
+        url = f"{_BASE}?pageSize=200"
+        if page_token:
+            url += f"&pageToken={page_token}"
+        r = requests.get(url, headers={"X-goog-api-key": _key()}, timeout=_TIMEOUT)
+        if r.status_code != 200:
+            sys.exit(f"Gemini ListModels error {r.status_code}: {r.text[:300]}")
+        data = r.json()
+        models.extend(data.get("models", []))
+        page_token = data.get("nextPageToken", "")
+        if not page_token:
+            break
+    return models
+
+
+def _pick_model(preferred: str, want: str) -> str:
+    """Resolve a usable model name, tolerating deprecated defaults.
+
+    ``want`` is 'text' (generateContent, non-TTS) or 'tts' (audio). Returns
+    ``preferred`` when the API still lists it as usable; otherwise auto-picks a
+    current model, preferring a ``*flash*`` (text) / ``*tts*`` (audio) name and
+    the newest version (lexical max of the candidates).
+    """
+    models = _list_models()
+    usable = {}  # short name -> supported methods
+    for m in models:
+        name = m.get("name", "").split("/")[-1]
+        methods = m.get("supportedGenerationMethods", [])
+        if name:
+            usable[name] = methods
+
+    if preferred in usable and "generateContent" in usable[preferred]:
+        return preferred
+
+    def _is_tts(n: str) -> bool:
+        return "tts" in n.lower()
+
+    cands = [
+        n for n, methods in usable.items()
+        if "generateContent" in methods and _is_tts(n) == (want == "tts")
+    ]
+    if want == "text":
+        flash = [n for n in cands if "flash" in n.lower() and "preview" not in n.lower()]
+        pool = flash or [n for n in cands if "flash" in n.lower()] or cands
+    else:
+        pool = cands
+    if not pool:
+        sys.exit(f"No usable Gemini {want} model for this key. "
+                 f"Available: {sorted(usable)}")
+    chosen = sorted(pool)[-1]
+    if chosen != preferred:
+        print(f"      (model '{preferred}' unavailable; using '{chosen}')")
+    return chosen
+
+
 # ── Step 1: source -> module JSON (script + quiz) ───────────────────────────
 
 _MODULE_INSTRUCTIONS = """\
@@ -138,14 +197,14 @@ def _extract_json(text: str) -> dict:
         raise
 
 
-def generate_module_content(spec: dict) -> dict:
+def generate_module_content(spec: dict, model: str) -> dict:
     body = {
         "system_instruction": {"parts": [{"text": _MODULE_INSTRUCTIONS}]},
         "contents": [{"role": "user", "parts": [{"text": _build_module_prompt(spec)}]}],
         "generationConfig": {"temperature": 0.7, "responseMimeType": "application/json",
                              "maxOutputTokens": 8192},
     }
-    data = _post(_TEXT_MODEL, body)
+    data = _post(model, body)
     parts = (data.get("candidates") or [{}])[0].get("content", {}).get("parts", [])
     text = "".join(p.get("text", "") for p in parts)
     if not text:
@@ -163,7 +222,7 @@ def _pcm_to_wav(pcm: bytes, path: Path, rate: int = 24000) -> None:
         w.writeframes(pcm)
 
 
-def synthesize_episode(ep: dict, hosts: dict) -> tuple[bytes, int]:
+def synthesize_episode(ep: dict, hosts: dict, tts_model: str) -> tuple[bytes, int]:
     name_a, name_b = hosts.get("a", "Host A"), hosts.get("b", "Host B")
     transcript = "TTS the following two-host conversation naturally:\n" + "\n".join(
         f"{name_a if ln.get('s') == 'a' else name_b}: {ln.get('t','')}"
@@ -179,7 +238,7 @@ def synthesize_episode(ep: dict, hosts: dict) -> tuple[bytes, int]:
             ]}},
         },
     }
-    data = _post(_TTS_MODEL, body)
+    data = _post(tts_model, body)
     part = (data.get("candidates") or [{}])[0].get("content", {}).get("parts", [{}])[0]
     inline = part.get("inlineData") or part.get("inline_data") or {}
     b64 = inline.get("data")
@@ -194,7 +253,7 @@ def synthesize_episode(ep: dict, hosts: dict) -> tuple[bytes, int]:
 
 # ── Assembly + CLI ──────────────────────────────────────────────────────────
 
-def _assemble(spec: dict, content: dict) -> dict:
+def _assemble(spec: dict, content: dict, model: str) -> dict:
     plan = {e.get("id"): e for e in spec.get("episodes", [])}
     episodes = []
     for ep in content.get("episodes", []):
@@ -213,7 +272,7 @@ def _assemble(spec: dict, content: dict) -> dict:
         "attribution": spec.get("attribution", ""),
         "source_url": spec.get("source_url", ""),
         "hosts": spec.get("hosts", {"a": "Maya", "b": "Theo"}),
-        "generated_by": f"gemini:{_TEXT_MODEL}",
+        "generated_by": f"gemini:{model}",
         "episodes": episodes,
         "quiz": content.get("quiz", []),
     }
@@ -248,9 +307,16 @@ def main() -> None:
         Path(__file__).resolve().parents[2] / "data" / "courses")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"[1/2] Generating module content ({'dry-run' if args.dry_run else _TEXT_MODEL})…")
-    content = _mock_content(spec) if args.dry_run else generate_module_content(spec)
-    course = _assemble(spec, content)
+    if args.dry_run:
+        text_model, tts_model = _TEXT_MODEL, _TTS_MODEL
+        print("[1/2] Generating module content (dry-run)…")
+        content = _mock_content(spec)
+    else:
+        text_model = _pick_model(_TEXT_MODEL, "text")
+        tts_model = _pick_model(_TTS_MODEL, "tts") if args.audio else _TTS_MODEL
+        print(f"[1/2] Generating module content ({text_model})…")
+        content = generate_module_content(spec, text_model)
+    course = _assemble(spec, content, text_model)
 
     n_q = len(course.get("quiz", []))
     n_lines = sum(len(e.get("script", [])) for e in course["episodes"])
@@ -261,7 +327,7 @@ def main() -> None:
         audio_dir.mkdir(exist_ok=True)
         for ep in course["episodes"]:
             print(f"[2/2] Synthesizing audio for {ep['id']}…")
-            pcm, rate = synthesize_episode(ep, course["hosts"])
+            pcm, rate = synthesize_episode(ep, course["hosts"], tts_model)
             wav = audio_dir / f"{course['course_id']}-{ep['id']}.wav"
             _pcm_to_wav(pcm, wav, rate)
             ep["audio"] = f"audio/{wav.name}"
