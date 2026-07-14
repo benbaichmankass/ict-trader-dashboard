@@ -45,7 +45,6 @@ import re
 import sys
 import wave
 from pathlib import Path
-from typing import Any
 
 import requests
 
