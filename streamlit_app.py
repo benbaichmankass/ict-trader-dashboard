@@ -8588,8 +8588,13 @@ _COURSE_TTS_HTML = r"""
 
 
 def _load_course(course_id: str) -> dict | None:
-    """Load a committed course file (data/courses/<id>.json). Bundled in this
-    repo for now; a bot-served version is a follow-up."""
+    """Load one course. Prefer the bot's /api/bot/learning/courses/<id> (the
+    central content store both apps read); fall back to the bundled copy in
+    data/courses/<id>.json so the tab works before the bot endpoint deploys."""
+    data, _err = _fetch(f"/api/bot/learning/courses/{course_id}")
+    course = (data or {}).get("course") if isinstance(data, dict) else None
+    if course:
+        return course
     try:
         p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          "data", "courses", f"{course_id}.json")
@@ -8597,6 +8602,32 @@ def _load_course(course_id: str) -> dict | None:
             return json.load(fh)
     except Exception:  # noqa: BLE001
         return None
+
+
+def _courses_library() -> list[dict]:
+    """Available courses as [{course_id, title, subtitle, …}], newest-first by
+    the bot index; falls back to scanning the bundled data/courses/ dir."""
+    data, _err = _fetch("/api/bot/learning/courses")
+    rows = (data or {}).get("courses") if isinstance(data, dict) else None
+    if rows:
+        return rows
+    out = []
+    try:
+        d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "courses")
+        for name in sorted(os.listdir(d)):
+            if not name.endswith(".json"):
+                continue
+            try:
+                with open(os.path.join(d, name), encoding="utf-8") as fh:
+                    c = json.load(fh)
+                out.append({"course_id": c.get("course_id") or name[:-5],
+                            "title": c.get("title", name[:-5]),
+                            "subtitle": c.get("subtitle", "")})
+            except Exception:  # noqa: BLE001
+                continue
+    except Exception:  # noqa: BLE001
+        return out
+    return out
 
 
 def _course_player_html(ep: dict, hosts: dict) -> str:
@@ -8620,24 +8651,32 @@ def _drive_audio_embed(drive_id: str) -> str:
     )
 
 
+def _course_slug(course: dict) -> str:
+    """A stable per-course session-state prefix so multiple courses don't share
+    quiz/episode widget state."""
+    cid = (course.get("course_id") or "course").lower()
+    return "course_" + re.sub(r"[^a-z0-9]+", "_", cid).strip("_")
+
+
 def _render_course_quiz(course: dict) -> None:
     quiz = course.get("quiz", [])
     if not quiz:
         st.info("No quiz for this course yet.")
         return
+    ns = _course_slug(course)
     st.caption(f"{len(quiz)} questions — pick an answer for each, then submit. "
                "You'll see what you got right and why.")
-    submitted = bool(st.session_state.get("course_eoai_submitted"))
+    submitted = bool(st.session_state.get(f"{ns}_submitted"))
     for i, q in enumerate(quiz):
         st.markdown(f"**{i + 1}. {q['q']}**")
         st.radio(
             "answer", list(range(len(q["options"]))),
             format_func=lambda j, q=q: q["options"][j],
-            key=f"course_eoai_q_{q['id']}", index=None,
+            key=f"{ns}_q_{q['id']}", index=None,
             label_visibility="collapsed",
         )
         if submitted:
-            sel = st.session_state.get(f"course_eoai_q_{q['id']}")
+            sel = st.session_state.get(f"{ns}_q_{q['id']}")
             ans = q["options"][q["answer"]]
             if sel == q["answer"]:
                 st.success(f"✅ Correct — {q.get('explain', '')}")
@@ -8648,23 +8687,23 @@ def _render_course_quiz(course: dict) -> None:
         st.write("")
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("Submit answers", key="course_eoai_submit", type="primary",
+        if st.button("Submit answers", key=f"{ns}_submit", type="primary",
                      use_container_width=True):
-            st.session_state["course_eoai_submitted"] = True
+            st.session_state[f"{ns}_submitted"] = True
             st.rerun()
     with c2:
-        if st.button("Reset quiz", key="course_eoai_reset", use_container_width=True):
+        if st.button("Reset quiz", key=f"{ns}_reset", use_container_width=True):
             for q in quiz:
-                st.session_state.pop(f"course_eoai_q_{q['id']}", None)
-            st.session_state.pop("course_eoai_submitted", None)
+                st.session_state.pop(f"{ns}_q_{q['id']}", None)
+            st.session_state.pop(f"{ns}_submitted", None)
             st.rerun()
     if submitted:
         correct = sum(1 for q in quiz
-                      if st.session_state.get(f"course_eoai_q_{q['id']}") == q["answer"])
+                      if st.session_state.get(f"{ns}_q_{q['id']}") == q["answer"])
         pct = correct / len(quiz) * 100 if quiz else 0
         st.metric("Score", f"{correct} / {len(quiz)}", f"{pct:.0f}%")
         if pct >= 80:
-            st.success("Great — you've got Chapter 1 down. 🎓")
+            st.success("Great — you've got this one down. 🎓")
         elif pct >= 50:
             st.info("Solid start — relisten to the episodes covering the ones you missed.")
         else:
@@ -8691,7 +8730,7 @@ def _render_course(course: dict) -> None:
             idx = st.radio(
                 "Episode", list(range(len(eps))),
                 format_func=lambda i: eps[i].get("title", f"Episode {i + 1}"),
-                key="course_eoai_ep",
+                key=f"{_course_slug(course)}_ep",
             )
             ep = eps[idx]
             mins = ep.get("minutes")
@@ -8740,17 +8779,33 @@ def _render_course(course: dict) -> None:
 
 
 def _render_featured_course() -> None:
-    """Featured interactive course at the top of the Learning tab."""
-    course = _load_course("elements-of-ai-ch1")
-    if not course:
+    """Interactive-course library at the top of the Learning tab. Lists every
+    available course (bot-served, bundled fallback) with a picker; a single
+    course renders directly."""
+    library = _courses_library()
+    if not library:
         return
+    # Keep the Elements of AI Ch.1 course first (the featured on-ramp).
+    library = sorted(library, key=lambda c: c.get("course_id") != "elements-of-ai-ch1")
     with st.container(border=True):
-        st.markdown("#### 🎧 Interactive course — listen & test  ·  *new*")
-        st.caption("An audio + quiz version of a curriculum resource. Starting "
-                   "with Elements of AI, Chapter 1 — now with a full **audio deep "
-                   "dive** (first episode) plus short recap episodes and a quiz. "
-                   "The perfect on-ramp for Module 8 below.")
-        _render_course(course)
+        st.markdown("#### 🎧 Interactive courses — listen & test  ·  *new*")
+        st.caption("Audio + quiz versions of curriculum resources — a full "
+                   "**audio deep dive** plus short recap episodes and a graded "
+                   "quiz each. Starting with Elements of AI; more modules can be "
+                   "generated and added over time.")
+        if len(library) > 1:
+            ids = [c.get("course_id") for c in library]
+            labels = {c.get("course_id"): c.get("title", c.get("course_id"))
+                      for c in library}
+            chosen = st.selectbox(
+                "Course", ids, format_func=lambda cid: labels.get(cid, cid),
+                key="course_library_pick",
+            )
+        else:
+            chosen = library[0].get("course_id")
+        course = _load_course(chosen) if chosen else None
+        if course:
+            _render_course(course)
 
 
 def page_learning() -> None:

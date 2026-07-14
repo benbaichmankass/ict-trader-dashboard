@@ -34,8 +34,31 @@ python scripts/learning/generate_module.py my_spec.json --audio
 python scripts/learning/generate_module.py my_spec.json --dry-run --out-dir /tmp/out
 ```
 Output: `data/courses/<course_id>.json` (+ `data/courses/audio/<id>-<ep>.wav` with
-`--audio`). Add it to the Learning tab by featuring its `course_id` (same way
-`elements-of-ai-ch1` is featured in `page_learning`).
+`--audio`). It appears automatically in the Learning tab's **course library**
+picker once committed.
+
+## Where courses live + hosting audio
+
+Courses are served centrally by the bot at **`/api/bot/learning/courses`** from
+`ict-trading-bot/comms/learning/courses/*.json`, so both the Streamlit dashboard
+and the Android app render the same courses. `data/courses/` here is the bundled
+fallback used before the bot endpoint is reachable. To publish a new course to
+both apps, commit its JSON to the bot repo's `comms/learning/courses/`.
+
+**Audio hosting — Google Drive is the standard for anything sizeable.** An
+episode plays audio from, in order of preference:
+
+| Episode field | Source | When to use |
+|---|---|---|
+| `drive_id` | a file in the shared learning Google Drive folder | **the default for real audio** (NotebookLM overviews, TTS renders) — keeps large files out of git |
+| `audio_url` | any directly-playable hosted URL | audio hosted elsewhere |
+| `audio` | a committed `data/courses/audio/*.wav` | small clips only |
+| *(none)* | the client's built-in TTS reads the `script` | script-only episodes |
+
+For `drive_id`: upload the file to the shared learning folder, share it
+**"Anyone with the link → Viewer"**, and put the Drive file id (the
+`/file/d/<ID>/` segment) in the episode. The apps embed Drive's own player, so
+it streams and needs no redeploy when you swap the file.
 
 ## Rights
 Only feed this **public-domain, Creative-Commons, or your-own** material. It
