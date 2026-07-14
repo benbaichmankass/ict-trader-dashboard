@@ -206,49 +206,70 @@ def _generate(candidates: list[str], body: dict) -> tuple[str, dict]:
 
 
 # ── Step 1: source -> module JSON (script + quiz) ───────────────────────────
+#
+# Generated ONE episode (and the quiz) per call. A whole module in a single
+# call overran the winning model's 8192-token output cap and truncated the JSON
+# mid-object; per-call keeps every response comfortably inside the cap and
+# scales to any module length.
 
-_MODULE_INSTRUCTIONS = """\
-You are an expert learning designer and podcast writer. Turn the SOURCE MATERIAL
-into a focused, engaging learning module as STRICT JSON — no prose outside JSON.
+_EPISODE_INSTRUCTIONS = """\
+You are an expert learning designer and podcast writer. Write ONE episode of a
+learning module as STRICT JSON — no prose, no markdown fences, JSON only.
 
 Rules:
-- Write ORIGINAL explanations that teach the concepts in the sources. Do NOT copy
-  sentences from the source; explain in your own words.
-- Each episode is a two-host dialogue between the two hosts named below. Alternate
-  turns naturally (18-30 turns per episode). Host "a" and host "b" trade off
-  explaining, questioning, and stress-testing ideas. Conversational, concrete,
-  lightly witty — a good podcast, not a lecture.
+- Write ORIGINAL explanations that teach the concepts. Do NOT copy sentences
+  from the source; explain in your own words.
+- The episode is a two-host dialogue between the two hosts named below. Alternate
+  turns naturally (18-30 turns). Host "a" and host "b" trade off explaining,
+  questioning, and stress-testing ideas. Conversational, concrete, lightly
+  witty — a good podcast, not a lecture.
 - Ground examples in the listener's context when given (see AUDIENCE).
-- The quiz has single-correct multiple-choice (or true/false) questions with a
-  0-based "answer" index into "options" and a one-sentence "explain".
 
-Output EXACTLY this JSON shape (no markdown fences):
-{
-  "episodes": [
-    {"id": "<from plan>", "title": "<from plan or improved>",
-     "script": [{"s": "a", "t": "..."}, {"s": "b", "t": "..."}, ...]}
-  ],
-  "quiz": [
-    {"id": "q1", "q": "...", "options": ["...", "..."], "answer": 0, "explain": "..."}
-  ]
-}
+Output EXACTLY this JSON shape:
+{"script": [{"s": "a", "t": "..."}, {"s": "b", "t": "..."}, ...]}
+"""
+
+_QUIZ_INSTRUCTIONS = """\
+You are an expert learning designer. Write a quiz for a learning module as
+STRICT JSON — no prose, no markdown fences, JSON only.
+
+Rules:
+- Single-correct multiple-choice (or true/false) questions covering the whole
+  module, with a 0-based "answer" index into "options" and a one-sentence
+  "explain".
+
+Output EXACTLY this JSON shape:
+{"quiz": [{"id": "q1", "q": "...", "options": ["...", "..."], "answer": 0, "explain": "..."}]}
 """
 
 
-def _build_module_prompt(spec: dict) -> str:
+def _context_lines(spec: dict) -> str:
     hosts = spec.get("hosts", {"a": "Host A", "b": "Host B"})
-    plan = spec.get("episodes", [])
-    plan_txt = "\n".join(
-        f'  - id={e.get("id", f"ep{i+1}")} title="{e.get("title","")}" '
-        f'focus="{e.get("focus","")}"'
-        for i, e in enumerate(plan)
-    ) or "  (design 3 well-sequenced episodes yourself)"
     return (
         f'HOSTS: host "a" = {hosts.get("a","Host A")}, host "b" = {hosts.get("b","Host B")}.\n'
         f'AUDIENCE: {spec.get("audience", "a smart non-technical operator of an automated trading system; tie examples to markets/algorithmic trading where natural.")}\n'
-        f'QUIZ: produce exactly {spec.get("quiz_count", 10)} questions covering the whole module.\n'
-        f'EPISODES TO PRODUCE:\n{plan_txt}\n\n'
         f'SOURCE MATERIAL:\n"""\n{spec.get("sources","").strip()}\n"""\n'
+    )
+
+
+def _build_episode_prompt(spec: dict, ep: dict, idx: int, total: int) -> str:
+    return (
+        _context_lines(spec) +
+        f'\nThis is EPISODE {idx + 1} of {total} in the module.\n'
+        f'EPISODE TITLE: {ep.get("title", "")}\n'
+        f'EPISODE FOCUS: {ep.get("focus", "cover this part of the source well")}\n'
+        f'Write only this one episode\'s script.\n'
+    )
+
+
+def _build_quiz_prompt(spec: dict) -> str:
+    n = spec.get("quiz_count", 10)
+    plan = spec.get("episodes", [])
+    titles = "; ".join(e.get("title", "") for e in plan if e.get("title"))
+    return (
+        _context_lines(spec) +
+        f'\nProduce exactly {n} questions covering the whole module'
+        + (f' (episodes: {titles})' if titles else '') + '.\n'
     )
 
 
@@ -266,19 +287,41 @@ def _extract_json(text: str) -> dict:
         raise
 
 
-def generate_module_content(spec: dict, candidates: list[str]) -> tuple[str, dict]:
+def _gen_json(candidates: list[str], system: str, user: str) -> tuple[str, dict]:
     body = {
-        "system_instruction": {"parts": [{"text": _MODULE_INSTRUCTIONS}]},
-        "contents": [{"role": "user", "parts": [{"text": _build_module_prompt(spec)}]}],
+        "system_instruction": {"parts": [{"text": system}]},
+        "contents": [{"role": "user", "parts": [{"text": user}]}],
         "generationConfig": {"temperature": 0.7, "responseMimeType": "application/json",
                              "maxOutputTokens": 8192},
     }
     model, data = _generate(candidates, body)
-    parts = (data.get("candidates") or [{}])[0].get("content", {}).get("parts", [])
+    cand0 = (data.get("candidates") or [{}])[0]
+    parts = cand0.get("content", {}).get("parts", [])
     text = "".join(p.get("text", "") for p in parts)
     if not text:
         sys.exit(f"Gemini returned no text. Raw: {json.dumps(data)[:600]}")
+    if cand0.get("finishReason") == "MAX_TOKENS":
+        sys.exit("Gemini hit its output-token cap mid-response (the JSON is "
+                 "truncated). Shorten the episode/quiz scope in the spec.")
     return model, _extract_json(text)
+
+
+def generate_module_content(spec: dict, candidates: list[str]) -> tuple[str, dict]:
+    plan = spec.get("episodes", []) or [{"id": "ep1", "title": "Overview"}]
+    episodes, used_model = [], None
+    pool = candidates  # widen on the first call, then PIN the winner
+    for i, ep in enumerate(plan):
+        model, obj = _gen_json(pool, _EPISODE_INSTRUCTIONS,
+                               _build_episode_prompt(spec, ep, i, len(plan)))
+        used_model = used_model or model
+        pool = [model]  # subsequent calls reuse the model that just worked
+        episodes.append({"id": ep.get("id", f"ep{i+1}"),
+                         "title": ep.get("title", f"Episode {i+1}"),
+                         "script": obj.get("script", [])})
+        print(f"      episode {i+1}/{len(plan)}: {len(obj.get('script', []))} turns")
+    _model, quiz_obj = _gen_json(pool, _QUIZ_INSTRUCTIONS, _build_quiz_prompt(spec))
+    print(f"      quiz: {len(quiz_obj.get('quiz', []))} questions")
+    return used_model, {"episodes": episodes, "quiz": quiz_obj.get("quiz", [])}
 
 
 # ── Step 2: script -> multi-speaker audio (optional) ────────────────────────
