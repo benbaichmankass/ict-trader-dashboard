@@ -43,6 +43,7 @@ import json
 import os
 import re
 import sys
+import time
 import wave
 from pathlib import Path
 
@@ -73,6 +74,11 @@ class _GeminiHTTPError(RuntimeError):
     def __init__(self, model: str, status: int, text: str) -> None:
         super().__init__(f"Gemini {model} error {status}: {text[:300]}")
         self.model, self.status, self.text = model, status, text
+
+
+class _AllModelsFailed(RuntimeError):
+    """Every candidate model failed a single generate attempt (quota/transient).
+    Raised (not sys.exit) so the caller can back off and retry a transient 5xx."""
 
 
 def _post(model: str, body: dict) -> dict:
@@ -201,13 +207,16 @@ def _generate(candidates: list[str], body: dict) -> tuple[str, dict]:
             raise  # a genuine error (e.g. 400 bad request) — surface it
     tail = "\n  ".join(errors)
     if saw_quota:
-        sys.exit(
+        msg = (
             "Every candidate Gemini model was quota-limited (HTTP 429). The "
             "free tier's per-model quota for this key is exhausted or unset.\n"
             "Fixes: wait for the daily free-tier reset, or enable billing on the "
             "key's Google Cloud project (https://aistudio.google.com/apikey → "
             "the project → set up billing) for a higher quota.\nTried:\n  " + tail)
-    sys.exit("No usable Gemini model succeeded. Tried:\n  " + tail)
+    else:
+        msg = "No usable Gemini model succeeded. Tried:\n  " + tail
+    # Raise (don't exit) so the caller can back off and retry a transient 5xx.
+    raise _AllModelsFailed(msg)
 
 
 # ── Step 1: source -> module JSON (script + quiz) ───────────────────────────
@@ -309,7 +318,18 @@ def _gen_json(candidates: list[str], system: str, user: str,
     }
     last_err = ""
     for attempt in range(1, attempts + 1):
-        model, data = _generate(candidates, body)
+        try:
+            model, data = _generate(candidates, body)
+        except _AllModelsFailed as exc:
+            # Every candidate failed this attempt (e.g. the pinned model 503'd
+            # and the rest are quota/catalog). Back off and retry — a transient
+            # "high demand" usually clears within seconds.
+            last_err = str(exc)
+            if attempt < attempts:
+                time.sleep(min(5 * attempt, 15))
+                print(f"      (all models failed, retrying {attempt + 1}/{attempts})")
+                continue
+            sys.exit(last_err)
         cand0 = (data.get("candidates") or [{}])[0]
         parts = cand0.get("content", {}).get("parts", [])
         text = "".join(p.get("text", "") for p in parts)
@@ -324,8 +344,9 @@ def _gen_json(candidates: list[str], system: str, user: str,
             except json.JSONDecodeError as exc:
                 last_err = f"invalid JSON: {exc}"
         if attempt < attempts:
+            time.sleep(min(3 * attempt, 10))
             print(f"      (malformed response, retrying {attempt + 1}/{attempts}: {last_err[:120]})")
-    sys.exit(f"Gemini returned unparseable JSON after {attempts} attempts: {last_err}")
+    sys.exit(f"Gemini returned unparseable output after {attempts} attempts: {last_err}")
 
 
 def generate_module_content(spec: dict, candidates: list[str]) -> tuple[str, dict]:
@@ -336,7 +357,9 @@ def generate_module_content(spec: dict, candidates: list[str]) -> tuple[str, dic
         model, obj = _gen_json(pool, _EPISODE_INSTRUCTIONS,
                                _build_episode_prompt(spec, ep, i, len(plan)))
         used_model = used_model or model
-        pool = [model]  # subsequent calls reuse the model that just worked
+        # Reuse the model that just worked FIRST, but keep the rest as fallback
+        # so a transient 5xx on the winner doesn't strand the run.
+        pool = [model] + [c for c in candidates if c != model]
         episodes.append({"id": ep.get("id", f"ep{i+1}"),
                          "title": ep.get("title", f"Episode {i+1}"),
                          "script": obj.get("script", [])})
