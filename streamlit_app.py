@@ -8685,7 +8685,7 @@ _AUDIO_PLAYER_TMPL = r"""
       a.addEventListener('play',function(){p.innerHTML='&#10074;&#10074;';});
       a.addEventListener('pause',function(){p.innerHTML='&#9654;';});
       a.addEventListener('timeupdate',function(){if(a.duration){s.value=a.currentTime/a.duration*1000;c.textContent=fmt(a.currentTime);}});
-      a.addEventListener('loadedmetadata',function(){d.textContent=fmt(a.duration);});
+      a.addEventListener('loadedmetadata',function(){d.textContent=fmt(a.duration);clearTimeout(win._ictWd);});
       a.addEventListener('error',function(){t.innerHTML=(a.dataset.title||'')+' — could not stream'+(a.dataset.view?' · <a href="'+a.dataset.view+'" target="_blank" style="color:#58a6ff">open in Drive ↗</a>':'');});
       s.oninput=function(){if(a.duration)a.currentTime=s.value/1000*a.duration;};
       r.onchange=function(){a.playbackRate=parseFloat(r.value);};
@@ -8695,6 +8695,8 @@ _AUDIO_PLAYER_TMPL = r"""
         A.dataset.title=title;A.dataset.view=view||'';t.textContent=title;
         if(A.dataset.epid!==epid){A.dataset.epid=epid;A.src=src;A.playbackRate=parseFloat(r.value)||1;}
         A.play().catch(function(){});
+        clearTimeout(win._ictWd);
+        win._ictWd=setTimeout(function(){if(A.readyState<1){t.innerHTML=(A.dataset.title||'')+' — could not stream'+(A.dataset.view?' · <a href="'+A.dataset.view+'" target="_blank" style="color:#58a6ff">open in Drive ↗</a>':'');}},9000);
       };
     }
     return bar;
@@ -8728,7 +8730,11 @@ _AUDIO_PLAYER_TMPL = r"""
 
 
 def _drive_direct_url(drive_id: str) -> str:
-    return f"https://drive.google.com/uc?export=download&id={drive_id}"
+    # drive.usercontent.google.com is the direct-serving host (raw bytes + byte
+    # ranges), which an <audio> element can stream; the drive.google.com/uc
+    # endpoint returns a redirect/interstitial that <audio> won't play.
+    return (f"https://drive.usercontent.google.com/download?"
+            f"id={drive_id}&export=download&confirm=t")
 
 
 def _audio_player_html(src: str, title: str, ep_id: str, view_url: str = "") -> str:
