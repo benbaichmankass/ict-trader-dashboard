@@ -44,15 +44,60 @@ export interface Candle {
   volume?: number | null;
 }
 
+export interface PerfStrategy {
+  name: string;
+  trades: number;
+  wins?: number | null;
+  winRate?: number | null;
+  totalPnl?: number | null;
+  expectancy?: number | null;
+}
+
 export interface Performance {
   window?: string;
   totalTrades?: number | null;
+  wins?: number | null;
+  losses?: number | null;
   winRate?: number | null;
   totalPnl?: number | null;
   expectancy?: number | null;
   profitFactor?: number | null;
   maxDrawdown?: number | null;
   perAssetClass?: Array<{ assetClass: string; trades: number; winRate?: number | null; totalPnl?: number | null }>;
+  perStrategy?: PerfStrategy[];
+  equity?: Array<{ t: number | string; cum: number }>;
+  paper?: Partial<Performance> | null;
+}
+
+export interface ClosedTrade {
+  id?: string | number;
+  symbol: string;
+  account?: string | null;
+  accountClass?: string | null;
+  assetClass?: string | null;
+  strategy?: string | null;
+  side?: string | null;
+  direction?: string | null;
+  qty?: number | null;
+  entryPrice?: number | null;
+  exitPrice?: number | null;
+  pnl?: number | null;
+  closedAt?: string | null;
+  openedAt?: string | null;
+}
+
+export interface Strategy {
+  name: string;
+  status?: string | null;
+  loaded?: boolean | null;
+  running?: boolean | null;
+  execution?: string | null;
+  accounts?: Array<{ id: string; live?: boolean }> | null;
+  symbols?: string[] | null;
+  trades?: number | null;
+  winRate?: number | null;
+  totalPnl?: number | null;
+  description?: { short?: string | null } | null;
 }
 
 async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -73,4 +118,14 @@ export const api = {
       `/api/bot/candles?symbol=${encodeURIComponent(symbol)}&interval=${encodeURIComponent(interval)}&limit=${limit}`,
       signal,
     ),
+  closedTrades: (opts: { since?: string; includePaper?: boolean; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams();
+    if (opts.since) q.set("since", opts.since);
+    if (opts.includePaper) q.set("include_paper", "true");
+    q.set("limit", String(opts.limit ?? 200));
+    return get<ClosedTrade[]>(`/api/bot/trades/closed?${q.toString()}`, signal);
+  },
+  // /api/bot/strategies returns per-strategy config + a top-level runtime block;
+  // shape varies, so fetch loosely and normalize in the view.
+  strategies: (signal?: AbortSignal) => get<any>("/api/bot/strategies", signal),
 };
