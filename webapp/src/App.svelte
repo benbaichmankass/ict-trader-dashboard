@@ -1,5 +1,10 @@
 <script lang="ts">
   import Overview from "./routes/Overview.svelte";
+  import Trades from "./routes/Trades.svelte";
+  import Performance from "./routes/Performance.svelte";
+  import Positions from "./routes/Positions.svelte";
+  import Strategies from "./routes/Strategies.svelte";
+  import { view, goto, VIEWS } from "./lib/nav";
   import { getBotApiUrl, setBotApiUrl } from "./lib/config";
 
   let showSettings = $state(false);
@@ -17,6 +22,11 @@
       <span class="logo">◆</span>
       <strong>ICT&nbsp;Trader</strong>
     </div>
+    <nav>
+      {#each VIEWS as v (v.id)}
+        <button class:active={$view === v.id} onclick={() => goto(v.id)}>{v.label}</button>
+      {/each}
+    </nav>
     <button class="gear" title="Settings" onclick={() => (showSettings = !showSettings)}>⚙</button>
   </header>
 
@@ -32,7 +42,17 @@
   {/if}
 
   <main>
-    <Overview />
+    {#if $view === "overview"}
+      <Overview />
+    {:else if $view === "trades"}
+      <Trades />
+    {:else if $view === "performance"}
+      <Performance />
+    {:else if $view === "positions"}
+      <Positions />
+    {:else if $view === "strategies"}
+      <Strategies />
+    {/if}
   </main>
 
   <footer class="muted">
@@ -49,8 +69,9 @@
   header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 12px;
     padding: 6px 0 14px;
+    flex-wrap: wrap;
   }
   .brand {
     display: flex;
@@ -61,6 +82,27 @@
   .logo {
     color: var(--accent);
   }
+  nav {
+    display: flex;
+    gap: 4px;
+    flex: 1;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  nav button {
+    background: none;
+    border: none;
+    color: var(--muted);
+    padding: 7px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13.5px;
+    white-space: nowrap;
+  }
+  nav button.active {
+    color: var(--text);
+    background: var(--panel-2);
+  }
   .gear {
     background: none;
     border: 1px solid var(--border);
@@ -70,6 +112,7 @@
     height: 34px;
     cursor: pointer;
     font-size: 16px;
+    flex-shrink: 0;
   }
   .settings {
     padding: 14px;
