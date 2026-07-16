@@ -17,6 +17,9 @@
   let stats = $state<BotStats | null>(null);
   let perf = $state<Performance | null>(null);
   let positions = $state<Position[]>([]);
+  let balances = $state<any>(null);
+  let config = $state<any>(null);
+  let strategies = $state<any>(null);
   let candlesBySymbol = $state<Record<string, Candle[]>>({});
   let wsStatus = $state<MarketStatus>("connecting");
   let apiError = $state<string | null>(null);
@@ -35,11 +38,28 @@
   let stream: MarketStream | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
+  // The exec summary needs the same inputs Streamlit's _render_exec_summary uses:
+  // stats + windowed performance + REST positions + tracked balances (equity) +
+  // config (account_class map) + strategies (tick age). Positions come via REST
+  // here so the open-trades table/count is populated even when the market
+  // WebSocket can't connect (sandbox, or a flaky mobile network) — the WS's
+  // onPositions still overwrites this with the live snapshot when it's up.
   async function poll() {
     try {
-      const [s, p] = await Promise.all([api.stats(), api.performance(win)]);
+      const [s, p, pos, bal, cfg, strat] = await Promise.all([
+        api.stats(),
+        api.performance(win),
+        api.positions(),
+        api.balances(),
+        api.config(),
+        api.strategies(),
+      ]);
       stats = s;
       perf = p;
+      if (wsStatus !== "open") positions = pos; // don't clobber a live WS snapshot
+      balances = bal;
+      config = cfg;
+      strategies = strat;
       apiError = null;
     } catch (e) {
       apiError = e instanceof Error ? e.message : String(e);
@@ -61,8 +81,21 @@
   // Positions scoped to the selected funding class (never blended).
   const shownPositions = $derived(positions.filter((p) => fundingOf(p) === funding));
 
+  // REST candle fallback so the chart renders even when the market WebSocket
+  // can't connect (sandbox / flaky mobile). The WS's onCandles overwrites this
+  // with per-tick data when it's live — REST only fills the gap.
+  async function fetchCandles(sym: string) {
+    try {
+      const r = await api.candles(sym, interval, 200);
+      if (r?.candles?.length) candlesBySymbol = { ...candlesBySymbol, [sym]: r.candles };
+    } catch {
+      /* leave the chart's empty state; not fatal */
+    }
+  }
+
   function startStream() {
     stream?.stop();
+    fetchCandles(selected); // seed the chart immediately via REST
     stream = new MarketStream([selected], interval, {
       onCandles: (sym, _iv, cs) => {
         candlesBySymbol = { ...candlesBySymbol, [sym]: cs };
@@ -113,7 +146,7 @@
     <div class="err panel">Couldn't reach the bot API: <span class="mono">{apiError}</span></div>
   {/if}
 
-  <ExecSummary {stats} {perf} {funding} />
+  <ExecSummary {stats} {perf} {positions} {balances} {config} {strategies} {funding} {win} />
 
   <div class="chartcard panel">
     <div class="picker">
