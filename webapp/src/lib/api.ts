@@ -82,6 +82,12 @@ export interface ClosedTrade {
   entryPrice?: number | null;
   exitPrice?: number | null;
   pnl?: number | null;
+  // The bot serialises closed-trade PnL/strategy under these names; the loader
+  // normalises them into pnl/strategy so consumers can read one field.
+  realizedPnl?: number | null;
+  realizedPnlPct?: number | null;
+  pattern?: string | null;
+  closeReason?: string | null;
   closedAt?: string | null;
   openedAt?: string | null;
 }
@@ -123,7 +129,17 @@ export const api = {
     if (opts.since) q.set("since", opts.since);
     if (opts.includePaper) q.set("include_paper", "true");
     q.set("limit", String(opts.limit ?? 200));
-    return get<ClosedTrade[]>(`/api/bot/trades/closed?${q.toString()}`, signal);
+    return get<ClosedTrade[]>(`/api/bot/trades/closed?${q.toString()}`, signal).then((rows) =>
+      // Normalise the bot's field names so every consumer reads pnl/strategy:
+      // the endpoint returns `realizedPnl` (not `pnl`) and carries the strategy
+      // in `pattern` (not `strategy`). Without this, Trades/Accounts show
+      // Net P&L / Win rate / Strategy as "—" despite real closed trades.
+      (Array.isArray(rows) ? rows : []).map((r) => ({
+        ...r,
+        pnl: r.pnl ?? r.realizedPnl ?? null,
+        strategy: r.strategy ?? r.pattern ?? null,
+      })),
+    );
   },
   // /api/bot/strategies returns per-strategy config + a top-level runtime block;
   // shape varies, so fetch loosely and normalize in the view.
