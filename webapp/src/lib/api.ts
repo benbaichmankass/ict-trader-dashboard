@@ -135,6 +135,8 @@ export const api = {
     get<any>(`/api/bot/reports/${encodeURIComponent(id)}`, signal),
   news: (limit = 50, signal?: AbortSignal) =>
     get<any>(`/api/bot/news/recent?limit=${limit}`, signal),
+  pnlHistory: (days = 30, signal?: AbortSignal) =>
+    get<Array<{ date?: string; pnl?: number | null }>>(`/api/pnl/history?days=${days}`, signal),
   signals: (signal?: AbortSignal) => get<any>("/api/bot/signals", signal),
   orderPackages: (opts: { since?: string; includePaper?: boolean; limit?: number } = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams();
