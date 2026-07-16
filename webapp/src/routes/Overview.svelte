@@ -3,10 +3,11 @@
   import { api, type BotStats, type Performance, type Position, type Candle, type ClosedTrade } from "../lib/api";
   import { MarketStream, type MarketStatus } from "../lib/ws";
   import { FUNDING_OPTIONS, WINDOW_OPTIONS } from "../lib/nav";
-  import { money, signClass, DASH } from "../lib/format";
+  import { money, signClass, DASH, agoFromIso } from "../lib/format";
   import ExecSummary from "../components/ExecSummary.svelte";
   import PositionsTable from "../components/PositionsTable.svelte";
   import LiveChart from "../components/LiveChart.svelte";
+  import EquityChart from "../components/EquityChart.svelte";
   import StatusDot from "../components/StatusDot.svelte";
   import Segmented from "../components/Segmented.svelte";
 
@@ -23,6 +24,9 @@
   let strategies = $state<any>(null);
   let signals = $state<any[]>([]);
   let closedTrades = $state<ClosedTrade[]>([]);
+  let news = $state<any>(null);
+  let reports = $state<any>(null);
+  let pnl30 = $state<Array<{ date?: string; pnl?: number | null }>>([]);
   let candlesBySymbol = $state<Record<string, Candle[]>>({});
   let wsStatus = $state<MarketStatus>("connecting");
   let apiError = $state<string | null>(null);
@@ -58,6 +62,29 @@
   const symSignals = $derived(signals.filter((g) => g?.symbol === selected).slice(0, 40));
   const symClosed = $derived(closedTrades.filter((c) => c.symbol === selected).slice(0, 30));
 
+  // News glance — top clickable source headlines across recent decisions.
+  const headlines = $derived.by(() => {
+    const items: Array<{ headline: string; url?: string; score?: number }> = [];
+    const seen = new Set<string>();
+    for (const rec of news?.records ?? []) {
+      for (const it of rec?.top_items ?? []) {
+        if (it?.headline && !seen.has(it.headline)) { seen.add(it.headline); items.push(it); }
+      }
+    }
+    return items.sort((a, b) => Math.abs(b.score ?? 0) - Math.abs(a.score ?? 0)).slice(0, 4);
+  });
+
+  // Latest system report (newest-first index).
+  const latestReport = $derived((reports?.reports ?? [])[0] ?? null);
+
+  // 30-day realised-P&L → cumulative points for the sparkline.
+  const pnlPoints = $derived.by(() => {
+    let cum = 0;
+    return pnl30
+      .filter((d) => d?.date)
+      .map((d) => ({ t: d.date as string, cum: (cum += Number(d.pnl ?? 0)) }));
+  });
+
   let stream: MarketStream | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -79,6 +106,13 @@
         api.signals(),
         api.closedTrades({ includePaper: true, limit: 100 }),
       ]);
+      // Glance-card + sparkline data — non-blocking: a failure here must not
+      // blank the core overview (each degrades to its own empty state).
+      Promise.all([
+        api.news(8).catch(() => null),
+        api.reports().catch(() => null),
+        api.pnlHistory(30).catch(() => []),
+      ]).then(([n, r, h]) => { news = n; reports = r; pnl30 = Array.isArray(h) ? h : []; });
       stats = s;
       perf = p;
       positions = pos; // REST is authoritative — the WS only refreshes uPnL below
@@ -194,6 +228,26 @@
 
   <ExecSummary {stats} {perf} {positions} {balances} {config} {strategies} {funding} {win} />
 
+  <div class="glances">
+    {#if latestReport}
+      <a class="glance panel" href="#/Performance/Reports">
+        <div class="gh">📄 Latest report<span class="muted"> · {latestReport.window ?? ""}</span></div>
+        <div class="gbody">{latestReport.headline ?? latestReport.id}</div>
+        <div class="muted gsub">{latestReport.roll_up_grade ?? ""} · {latestReport.generated_at ? agoFromIso(latestReport.generated_at) : ""}</div>
+      </a>
+    {/if}
+    {#if headlines.length}
+      <div class="glance panel">
+        <div class="gh">📰 News</div>
+        <ul class="hl">
+          {#each headlines as h (h.headline)}
+            <li>{#if h.url}<a href={h.url} target="_blank" rel="noopener">{h.headline}</a>{:else}{h.headline}{/if}</li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
+  </div>
+
   <div class="chartcard panel">
     <div class="picker">
       {#each symbols as sym (sym)}
@@ -240,6 +294,13 @@
     <div class="ph">Open positions · {FUNDING_OPTIONS.find((f) => f.value === funding)?.label}</div>
     <PositionsTable positions={shownPositions} />
   </div>
+
+  {#if pnlPoints.length > 1}
+    <div class="panel spark">
+      <div class="ph">30-day realised P&amp;L (cumulative) · real money</div>
+      <EquityChart points={pnlPoints} height={180} />
+    </div>
+  {/if}
 </section>
 
 <style>
@@ -293,6 +354,21 @@
     color: var(--text);
     border-color: var(--accent);
   }
+  .glances {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  @media (max-width: 560px) { .glances { grid-template-columns: 1fr; } }
+  .glance { padding: 12px; text-decoration: none; color: inherit; display: block; }
+  .gh { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+  .gbody { font-size: 13px; line-height: 1.35; }
+  .gsub { font-size: 11.5px; margin-top: 6px; }
+  .hl { margin: 0; padding-left: 16px; font-size: 12.5px; line-height: 1.5; }
+  .hl a { color: var(--accent); text-decoration: none; }
+  .hl a:hover { text-decoration: underline; }
+  .spark { padding: 4px 12px 12px; }
+  .spark .ph { padding: 12px 0 6px; }
   .positions {
     padding: 4px 4px 8px;
   }
