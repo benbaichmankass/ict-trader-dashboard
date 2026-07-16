@@ -128,4 +128,12 @@ export const api = {
   // /api/bot/strategies returns per-strategy config + a top-level runtime block;
   // shape varies, so fetch loosely and normalize in the view.
   strategies: (signal?: AbortSignal) => get<any>("/api/bot/strategies", signal),
+  balances: (signal?: AbortSignal) => get<any>("/api/bot/accounts/balances", signal),
+  config: (signal?: AbortSignal) => get<any>("/api/bot/config", signal),
+  reports: (signal?: AbortSignal) => get<any>("/api/bot/reports?limit=50", signal),
+  report: (id: string, signal?: AbortSignal) =>
+    get<any>(`/api/bot/reports/${encodeURIComponent(id)}`, signal),
+  news: (limit = 50, signal?: AbortSignal) =>
+    get<any>(`/api/bot/news/recent?limit=${limit}`, signal),
+  signals: (signal?: AbortSignal) => get<any>("/api/bot/signals", signal),
 };

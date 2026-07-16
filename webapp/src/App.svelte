@@ -4,6 +4,10 @@
   import Performance from "./routes/Performance.svelte";
   import Positions from "./routes/Positions.svelte";
   import Strategies from "./routes/Strategies.svelte";
+  import Accounts from "./routes/Accounts.svelte";
+  import Signals from "./routes/Signals.svelte";
+  import News from "./routes/News.svelte";
+  import Reports from "./routes/Reports.svelte";
   import { view, goto, VIEWS } from "./lib/nav";
   import { getBotApiUrl, setBotApiUrl } from "./lib/config";
 
@@ -52,6 +56,14 @@
       <Positions />
     {:else if $view === "strategies"}
       <Strategies />
+    {:else if $view === "accounts"}
+      <Accounts />
+    {:else if $view === "signals"}
+      <Signals />
+    {:else if $view === "news"}
+      <News />
+    {:else if $view === "reports"}
+      <Reports />
     {/if}
   </main>
 
