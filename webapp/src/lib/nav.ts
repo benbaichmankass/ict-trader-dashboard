@@ -55,6 +55,8 @@ export const IMPLEMENTED_PAGES = new Set<string>([
   "Positions",
   "Trades",
   "Signals",
+  "Order Packages",
+  "Insights",
 ]);
 
 const SPECIAL_SECTIONS = new Set(["Overview", "Roadmap", "Learning"]);
