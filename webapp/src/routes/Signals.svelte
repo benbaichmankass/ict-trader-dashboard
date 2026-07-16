@@ -13,8 +13,11 @@
     try {
       const raw = await api.signals();
       const list: any[] = Array.isArray(raw) ? raw : (raw?.signals ?? raw?.records ?? []);
-      // Contract: skip rows with a null pattern (never aggregate under "unknown").
-      rows = list.filter((s) => s?.pattern != null && String(s.pattern).trim() !== "");
+      // Keep any signal that identifies an instrument. (The "skip null pattern"
+      // rule is only for the Overview chart's per-strategy toggle — live signals
+      // normally carry a `strategy` with a null `pattern`, so filtering on
+      // pattern here wrongly hid every signal. Render a null pattern as "—".)
+      rows = list.filter((s) => s?.symbol);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       rows = [];
@@ -50,7 +53,7 @@
           {#each rows as s, i (s.id ?? `${s.symbol}-${s.timestamp ?? i}`)}
             <tr>
               <td class="sym">{s.symbol ?? DASH}</td>
-              <td>{s.pattern}</td>
+              <td>{s.pattern ?? DASH}</td>
               <td class="muted">{s.strategy ?? DASH}</td>
               <td class={sideClass(s)}>{(s.side ?? s.direction ?? DASH).toString().toUpperCase()}</td>
               <td class="r mono">{money(s.price)}</td>
