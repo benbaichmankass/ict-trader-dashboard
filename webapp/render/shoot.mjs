@@ -42,11 +42,23 @@ function serve() {
   });
 }
 
-const ROUTES = process.argv[2]
-  ? [process.argv[2]]
-  : ["#/Overview", "#/Activity/Positions", "#/Activity/Trades", "#/Performance/Performance", "#/Accounts/Accounts", "#/Accounts/Prop", "#/Admin/Health"];
+const ALL_ROUTES = [
+  "#/Overview",
+  "#/Performance/Performance", "#/Performance/Insights", "#/Performance/Reports",
+  "#/Strategies & Models/Strategies", "#/Strategies & Models/Models",
+  "#/Strategies & Models/GPU Spend", "#/Strategies & Models/Exit Ladder",
+  "#/Strategies & Models/Backtesting", "#/Strategies & Models/Promotion",
+  "#/Strategies & Models/News",
+  "#/Accounts/Accounts", "#/Accounts/Prop",
+  "#/Activity/Positions", "#/Activity/Trades", "#/Activity/Order Packages", "#/Activity/Signals",
+  "#/Roadmap", "#/Learning",
+  "#/Admin/Data Explorer", "#/Admin/Logs", "#/Admin/Health",
+];
+const ROUTES = process.argv[2] ? [process.argv[2]] : ALL_ROUTES;
 
-function slug(r) { return r.replace(/[#/]+/g, "_").replace(/^_+|_+$/g, "") || "root"; }
+function slug(r) { return r.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "root"; }
+// Encode a hash route so spaces/& survive the URL (parseHash decodeURIComponent's it back).
+function encHash(r) { return "#/" + r.replace(/^#\/?/, "").split("/").map(encodeURIComponent).join("/"); }
 
 const srv = await serve();
 await mkdir(OUT, { recursive: true });
@@ -71,7 +83,7 @@ page.on("pageerror", (e) => errors.push("PAGEERROR: " + e.message));
 
 for (const r of ROUTES) {
   errors.length = 0;
-  await page.goto(`http://localhost:${PORT}${BASE}${r}`, { waitUntil: "networkidle" });
+  await page.goto(`http://localhost:${PORT}${BASE}${encHash(r)}`, { waitUntil: "networkidle" });
   await page.waitForTimeout(700);
   const shot = join(OUT, `${slug(r)}.png`);
   await page.screenshot({ path: shot, fullPage: true });
