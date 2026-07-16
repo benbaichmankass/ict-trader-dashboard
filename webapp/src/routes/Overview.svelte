@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { api, type BotStats, type Performance, type Position, type Candle } from "../lib/api";
+  import { api, type BotStats, type Performance, type Position, type Candle, type ClosedTrade } from "../lib/api";
   import { MarketStream, type MarketStatus } from "../lib/ws";
   import { FUNDING_OPTIONS, WINDOW_OPTIONS } from "../lib/nav";
+  import { money, signClass, DASH } from "../lib/format";
   import ExecSummary from "../components/ExecSummary.svelte";
   import PositionsTable from "../components/PositionsTable.svelte";
   import LiveChart from "../components/LiveChart.svelte";
@@ -20,20 +21,42 @@
   let balances = $state<any>(null);
   let config = $state<any>(null);
   let strategies = $state<any>(null);
+  let signals = $state<any[]>([]);
+  let closedTrades = $state<ClosedTrade[]>([]);
   let candlesBySymbol = $state<Record<string, Candle[]>>({});
   let wsStatus = $state<MarketStatus>("connecting");
   let apiError = $state<string | null>(null);
 
   const interval = "15m";
-  // Seed symbols; open-position symbols are merged in as they arrive.
-  let baseSymbols = $state<string[]>(["BTCUSDT"]);
   let selected = $state("BTCUSDT");
+  let userPicked = false; // once the user taps, stop auto-retargeting `selected`
 
+  // Discover the traded-symbol universe the way Streamlit's _discover_symbols does:
+  // union of every account's configured `symbols` + strategy symbols + any symbol
+  // with an open position / recent signal — never a hardcoded list, so a newly
+  // wired instrument appears with no code change. Symbols holding an open position
+  // float to the front.
   const symbols = $derived.by(() => {
-    const s = new Set(baseSymbols);
+    const s = new Set<string>();
+    for (const a of config?.accounts ?? []) for (const sym of a?.symbols ?? []) s.add(sym);
+    for (const st of Object.values<any>(config?.strategies ?? {})) {
+      for (const sym of st?.symbols ?? []) s.add(sym);
+    }
     for (const p of positions) if (p.symbol) s.add(p.symbol);
-    return [...s];
+    for (const g of signals) if (g?.symbol) s.add(g.symbol);
+    if (s.size === 0) s.add("BTCUSDT"); // never render an empty picker
+    // Float symbols held IN THE CURRENT FUNDING CLASS to the front so the chart
+    // defaults to one you actually hold under this toggle (e.g. a real-money
+    // symbol under "Real money", not a paper one).
+    const held = new Set(
+      positions.filter((p) => p.symbol && fundingOf(p) === funding).map((p) => p.symbol as string));
+    return [...s].sort((a, b) =>
+      (held.has(b) ? 1 : 0) - (held.has(a) ? 1 : 0) || a.localeCompare(b));
   });
+
+  // Symbol-scoped overlays for the charted symbol (Streamlit's per-symbol monitor).
+  const symSignals = $derived(signals.filter((g) => g?.symbol === selected).slice(0, 40));
+  const symClosed = $derived(closedTrades.filter((c) => c.symbol === selected).slice(0, 30));
 
   let stream: MarketStream | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -46,20 +69,24 @@
   // onPositions still overwrites this with the live snapshot when it's up.
   async function poll() {
     try {
-      const [s, p, pos, bal, cfg, strat] = await Promise.all([
+      const [s, p, pos, bal, cfg, strat, sig, closed] = await Promise.all([
         api.stats(),
         api.performance(win),
         api.positions(),
         api.balances(),
         api.config(),
         api.strategies(),
+        api.signals(),
+        api.closedTrades({ includePaper: true, limit: 100 }),
       ]);
       stats = s;
       perf = p;
-      if (wsStatus !== "open") positions = pos; // don't clobber a live WS snapshot
+      positions = pos; // REST is authoritative — the WS only refreshes uPnL below
       balances = bal;
       config = cfg;
       strategies = strat;
+      signals = Array.isArray(sig) ? sig : (sig?.signals ?? sig?.records ?? []);
+      closedTrades = Array.isArray(closed) ? closed : [];
       apiError = null;
     } catch (e) {
       apiError = e instanceof Error ? e.message : String(e);
@@ -80,6 +107,7 @@
   }
   // Positions scoped to the selected funding class (never blended).
   const shownPositions = $derived(positions.filter((p) => fundingOf(p) === funding));
+  const symOpen = $derived(shownPositions.filter((p) => p.symbol === selected));
 
   // REST candle fallback so the chart renders even when the market WebSocket
   // can't connect (sandbox / flaky mobile). The WS's onCandles overwrites this
@@ -101,7 +129,12 @@
         candlesBySymbol = { ...candlesBySymbol, [sym]: cs };
       },
       onPositions: (ps) => {
-        positions = ps;
+        // Only let a NON-EMPTY WS snapshot refresh positions (for ~2s uPnL
+        // freshness). An empty/paper-excluded WS frame must never blank the
+        // REST-populated tables — that was the "Open trades: N but no
+        // positions shown" bug on mobile where the WS connects but delivers
+        // an empty positions frame.
+        if (ps && ps.length) positions = ps;
       },
       onStatus: (st) => {
         wsStatus = st;
@@ -121,10 +154,23 @@
   });
 
   function pick(sym: string) {
+    userPicked = true;
     if (sym === selected) return;
     selected = sym;
     startStream(); // re-subscribe so the picked symbol streams
   }
+
+  // Until the user taps a symbol, keep the chart on a sensible default: a symbol
+  // holding an open position (they sort to the front), else the first discovered
+  // one. Re-seeds the stream/candles when the target changes.
+  $effect(() => {
+    if (userPicked || symbols.length === 0) return;
+    const want = symbols[0];
+    if (want && want !== selected) {
+      selected = want;
+      startStream();
+    }
+  });
 
   const wsLabel = $derived(wsStatus === "open" ? "live" : wsStatus === "connecting" ? "connecting" : "reconnecting");
 </script>
@@ -151,10 +197,43 @@
   <div class="chartcard panel">
     <div class="picker">
       {#each symbols as sym (sym)}
-        <button class:active={sym === selected} onclick={() => pick(sym)}>{sym}</button>
+        {@const held = positions.some((p) => p.symbol === sym && fundingOf(p) === funding)}
+        <button class:active={sym === selected} onclick={() => pick(sym)}>
+          {held ? "🟢 " : ""}{sym}
+        </button>
       {/each}
     </div>
-    <LiveChart candles={candlesBySymbol[selected] ?? []} />
+    <div class="monh">
+      <b>{selected}</b>
+      <span class="muted">· {symSignals.length} signal{symSignals.length === 1 ? "" : "s"} · {symClosed.length} recent closed{symOpen.length ? ` · ${symOpen.length} open` : ""}</span>
+    </div>
+    <LiveChart
+      candles={candlesBySymbol[selected] ?? []}
+      positions={symOpen}
+      signals={symSignals}
+      closedTrades={symClosed}
+    />
+    <div class="legend muted">▬ entry · ┄ SL/TP · ▲▼ signals · ● closed</div>
+
+    {#if symOpen.length}
+      <div class="cards">
+        {#each symOpen as p (p.id)}
+          <div class="tcard">
+            <div class="tr1">
+              <span class={String(p.side).toLowerCase().startsWith("s") ? "neg" : "pos"}>
+                {(p.side ?? "").toString().toUpperCase().startsWith("S") ? "SHORT" : "LONG"}
+              </span>
+              <span class="mono">{p.qty ?? DASH}</span> @ <span class="mono">{money(p.entryPrice)}</span>
+              <span class="grow"></span>
+              <span class="mono {signClass(p.unrealizedPnl)}">{p.unrealizedPnl == null ? DASH : money(p.unrealizedPnl, { sign: true })}</span>
+            </div>
+            <div class="tr2 muted">
+              SL {money(p.stopLoss)} · TP {money(p.takeProfit)} · {p.pattern ?? DASH} · {p.account ?? DASH}
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
   </div>
 
   <div class="panel positions">
@@ -186,6 +265,15 @@
   .chartcard {
     padding: 12px;
   }
+  .monh { font-size: 14px; margin: 8px 2px 4px; }
+  .legend { font-size: 11px; margin: 6px 2px 0; }
+  .cards { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .tcard { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+  .tr1 { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+  .tr1 .grow { flex: 1; }
+  .tr2 { font-size: 11.5px; margin-top: 3px; }
+  .mono { font-variant-numeric: tabular-nums; }
+  .pos { color: var(--pos); } .neg { color: var(--neg); } .muted { color: var(--muted); }
   .picker {
     display: flex;
     gap: 6px;
