@@ -273,6 +273,28 @@ subdivided by its constituent symbols (`build_asset_class_symbol_bar` over the
 per-symbol closed rows), with the authoritative `/performance` `perAssetClass`
 per-class bar as a fallback so it can never render blank.
 
+### "Paper" means the live-portfolio mirror (2026-07-16, S-PAPER-PORTFOLIO)
+
+Operator directive: on the UIs **"Paper" means the *paper-portfolio* books** —
+the two accounts that mirror the actual live-traded portfolio on paper money
+(`bybit_portfolio` mirrors `bybit_2`; `alpaca_portfolio` mirrors `alpaca_live`).
+The data-only **soak** paper accounts (which trade the full instrument roster to
+accrue ML data) are **visible on the Accounts page only** — they no longer show
+under the "Paper" funding toggle on any other tab.
+
+Driven **data-driven off the bot's `paper_role` field** (`/api/bot/config`,
+`portfolio | soak`) — **never a hardcoded id list**, so a roster change needs no
+dashboard edit. Helpers: `_portfolio_paper_ids()` (paper accounts with
+`paper_role: portfolio`) + `_row_is_portfolio_paper(row)`. When no portfolio
+books are declared (a bot predating the field) OR the config read fails, the
+helpers **fall back to all-paper** so the view is never stranded pre-deploy. A
+row with no per-account attribution (e.g. `/order-packages` rows carry no
+`account`) is **included** rather than dropped. The "Paper" segment of
+`_segment_filter_rows` / `_segment_filter_frame` / `_segment_equity` and the
+`_perf_for_segment` paper branch (which prefers the bot's `paperPortfolio`
+`/performance` sub-block, itself falling back to `paper`) all scope this way; the
+**Accounts page is deliberately unchanged** — it shows every account incl. soak.
+
 ## Sub-pages (endpoint reference)
 
 The list/registry pages — **Strategies, Models, Accounts** — share a

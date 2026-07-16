@@ -1744,6 +1744,60 @@ def _is_real_money(d: dict) -> bool:
     return _row_account_class(d) not in _NON_REAL_CLASSES
 
 
+def _portfolio_paper_ids() -> frozenset[str]:
+    """Account ids of the live-portfolio-mirror PAPER books (``paper_role:
+    portfolio``) read from ``/api/bot/config`` (S-PAPER-PORTFOLIO, 2026-07-16).
+
+    These are the paper accounts that mirror the *actual* live-traded portfolio
+    (``bybit_portfolio`` mirrors ``bybit_2``; ``alpaca_portfolio`` mirrors
+    ``alpaca_live``) — the ones the "Paper" funding view scopes to, so the
+    data-only SOAK books (which trade the full instrument roster for ML data)
+    stay OFF every tab except the Accounts page.
+
+    Data-driven off the bot's ``paper_role`` field — **never a hardcoded id
+    list** — so a roster change needs no dashboard edit. Returns an **empty
+    set** when the field is absent (a bot that predates it) OR the config read
+    fails; callers treat empty as "fall back to ALL paper", so the paper view
+    is never stranded pre-deploy — it just shows every paper account until the
+    portfolio books are declared.
+    """
+    cfg, _err = _fetch("/api/bot/config")
+    if not isinstance(cfg, dict):
+        return frozenset()
+    ids: set[str] = set()
+    for a in cfg.get("accounts") or []:
+        if not isinstance(a, dict):
+            continue
+        if (str(a.get("account_class") or "").lower() == "paper"
+                and str(a.get("paper_role") or "").lower() == "portfolio"):
+            aid = a.get("id") or a.get("account_id")
+            if aid:
+                ids.add(str(aid))
+    return frozenset(ids)
+
+
+def _row_is_portfolio_paper(d: dict) -> bool:
+    """True for a paper row that belongs to a live-portfolio-mirror book.
+
+    A row qualifies when it is paper-class AND (its account is in the declared
+    portfolio set, OR no portfolio accounts are declared yet — the graceful
+    all-paper fallback). Non-paper rows never qualify. Used to scope the
+    "Paper" funding view to the portfolio, keeping soak books out of it.
+    """
+    if _row_account_class(d) != "paper":
+        return False
+    ids = _portfolio_paper_ids()
+    if not ids:
+        return True  # fallback: no portfolio books declared → treat all paper as portfolio
+    acct = str(d.get("account") or d.get("account_id") or "")
+    if not acct:
+        # The row carries no per-account attribution (e.g. `/order-packages`
+        # rows have no `account` field). We can't tell soak from portfolio, so
+        # include it rather than blank the view — over-include beats dropping.
+        return True
+    return acct in ids
+
+
 def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
     """One row per closed trade — strategy, pnl, ts (UTC), outcome, accountClass, isDemo.
 
@@ -1756,7 +1810,7 @@ def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
     """
     import math
 
-    cols = ["strategy", "pnl", "pnl_pct", "ts", "outcome", "accountClass", "isDemo"]
+    cols = ["strategy", "pnl", "pnl_pct", "ts", "outcome", "accountClass", "isDemo", "account"]
     records = []
     for t in trades or []:
         ts = _parse_trade_ts(t.get("closedAt") or t.get("openedAt"))
@@ -1792,6 +1846,7 @@ def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
             "outcome": outcome,
             "accountClass": _row_account_class(t),
             "isDemo": bool(t.get("isDemo", False)),
+            "account": str(t.get("account") or t.get("account_id") or ""),
         })
     if not records:
         return pd.DataFrame(columns=cols)
@@ -1864,7 +1919,11 @@ def _segment_filter_rows(rows: list[dict], segment: str) -> list[dict]:
     if segment == "all":
         return rows
     if segment == "paper":
-        return [r for r in (rows or []) if _row_account_class(r) == "paper"]
+        # "Paper" scopes to the live-portfolio-mirror books (`paper_role:
+        # portfolio`); the data-only soak books stay off this view (they're
+        # visible on the Accounts page only). Falls back to all-paper when no
+        # portfolio books are declared. S-PAPER-PORTFOLIO 2026-07-16.
+        return [r for r in (rows or []) if _row_is_portfolio_paper(r)]
     if segment == "prop":
         return [r for r in (rows or []) if _row_account_class(r) == "prop"]
     # real money: prop and paper both excluded
@@ -1878,7 +1937,15 @@ def _segment_filter_frame(df: pd.DataFrame, segment: str) -> pd.DataFrame:
         return df
     classes = df["accountClass"].astype(str).str.lower()
     if segment == "paper":
-        return df[classes == "paper"].reset_index(drop=True)
+        paper = df[classes == "paper"]
+        # Scope "Paper" to the live-portfolio-mirror books; soak books drop out
+        # (visible on the Accounts page only). Fall back to ALL paper when no
+        # portfolio books are declared OR the frame lacks an `account` column.
+        ids = _portfolio_paper_ids()
+        if ids and "account" in paper.columns:
+            accts = paper["account"].astype(str)
+            paper = paper[accts.isin(ids)]
+        return paper.reset_index(drop=True)
     if segment == "prop":
         return df[classes == "prop"].reset_index(drop=True)
     return df[~classes.isin(_NON_REAL_CLASSES)].reset_index(drop=True)
@@ -2221,7 +2288,13 @@ def _perf_for_segment(window: str, segment: str) -> tuple[dict, bool]:
         return {}, False
     paper = d.get("paper") or {}
     if segment == "paper":
-        return paper, False
+        # Prefer the portfolio-scoped sub-block (`paper_role: portfolio` books
+        # only); the bot already falls it back to the all-paper `paper` block
+        # server-side when no portfolio accounts are declared, and we fall it
+        # back client-side too for a bot that predates the field. So the "Paper"
+        # analytics view shows the live-portfolio mirror, not the soak roster.
+        # S-PAPER-PORTFOLIO 2026-07-16.
+        return (d.get("paperPortfolio") or paper), False
     if segment == "all":
         return _combine_perf_blocks(d, paper), True
     # real: the top-level block IS real-money only (paper sub-block excluded).
@@ -2538,7 +2611,7 @@ def _prop_closed_frame() -> pd.DataFrame:
     (strategy/pnl/pnl_pct/ts/outcome/accountClass/isDemo), for the PROP funding
     class on the P&L calendar. Prop lives in a separate store (`/api/bot/prop/fills`),
     never `/trades/closed`; keyed by `reported_at`."""
-    cols = ["strategy", "pnl", "pnl_pct", "ts", "outcome", "accountClass", "isDemo"]
+    cols = ["strategy", "pnl", "pnl_pct", "ts", "outcome", "accountClass", "isDemo", "account"]
     data, err = _fetch("/api/bot/prop/fills?limit=400")
     fills = (data or {}).get("fills") or [] if not err else []
     records = []
@@ -2563,6 +2636,7 @@ def _prop_closed_frame() -> pd.DataFrame:
             "strategy": "prop", "pnl": pnl, "pnl_pct": pct, "ts": ts,
             "outcome": "win" if pnl > 0 else "loss" if pnl < 0 else "breakeven",
             "accountClass": "prop", "isDemo": False,
+            "account": str(f.get("account_id") or ""),
         })
     return pd.DataFrame.from_records(records)[cols] if records else pd.DataFrame(columns=cols)
 
@@ -3398,7 +3472,12 @@ def _segment_equity(segment: str) -> tuple[float | None, int]:
         return str(a.get("account_class") or "real_money").lower()
 
     if segment == "paper":
-        ids = {a.get("id") for a in accounts if _cls(a) == "paper"}
+        # Paper equity scopes to the live-portfolio-mirror books (soak books
+        # excluded — they're on the Accounts page only); fall back to all paper
+        # when no portfolio books are declared. S-PAPER-PORTFOLIO 2026-07-16.
+        portfolio = _portfolio_paper_ids()
+        ids = {a.get("id") for a in accounts if _cls(a) == "paper"
+               and (not portfolio or str(a.get("id")) in portfolio)}
     elif segment == "prop":
         ids = {a.get("id") for a in accounts if _cls(a) == "prop"}
     elif segment == "all":
@@ -3466,7 +3545,7 @@ def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str)
         pos_all, _ = _fetch("/api/bot/positions?include_paper=true")
         pos_all = pos_all or []
         if segment == "paper":
-            seg_open = [p for p in pos_all if _row_account_class(p) == "paper"]
+            seg_open = [p for p in pos_all if _row_is_portfolio_paper(p)]
         else:  # real
             seg_open = [p for p in pos_all if _is_real_money(p)]
     open_upnl, open_unk = _sum_upnl(seg_open)
@@ -4922,7 +5001,9 @@ def page_positions() -> None:
     # Prop is NOT real money — exclude it from the real headline (it rides the
     # prop caption below). paper / prop both kept separate from real.
     _real_open = [p for p in _open_all if _is_real_money(p)]
-    _paper_open = [p for p in _open_all if _row_account_class(p) == "paper"]
+    # "Paper" here means the live-portfolio mirror (soak books show on the
+    # Accounts page only), per the operator UI directive. S-PAPER-PORTFOLIO.
+    _paper_open = [p for p in _open_all if _row_is_portfolio_paper(p)]
     _prop_open = [p for p in _open_all if _row_account_class(p) == "prop"]
     _real_upnl, _real_unk = _sum_upnl(_real_open)
     _paper_upnl, _paper_unk = _sum_upnl(_paper_open)
