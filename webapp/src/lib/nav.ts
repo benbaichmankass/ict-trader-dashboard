@@ -9,6 +9,10 @@ export const VIEWS = [
   { id: "performance", label: "Performance" },
   { id: "positions", label: "Positions" },
   { id: "strategies", label: "Strategies" },
+  { id: "accounts", label: "Accounts" },
+  { id: "signals", label: "Signals" },
+  { id: "news", label: "News" },
+  { id: "reports", label: "Reports" },
 ] as const;
 
 export type ViewId = (typeof VIEWS)[number]["id"];
