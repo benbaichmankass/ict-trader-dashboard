@@ -145,4 +145,36 @@ export const api = {
   },
   insight: (endpoint: string, signal?: AbortSignal) => get<any>(`/api/bot/insights/${endpoint}`, signal),
   roadmap: (signal?: AbortSignal) => get<any>("/api/bot/roadmap", signal),
+
+  // Prop (Breakout manual-bridge) — isolated journal, never blended into real/paper.
+  propStatus: (accountId = "breakout_1", signal?: AbortSignal) =>
+    get<any>(`/api/bot/prop/status?account_id=${encodeURIComponent(accountId)}`, signal),
+  propFills: (limit = 50, signal?: AbortSignal) => get<any>(`/api/bot/prop/fills?limit=${limit}`, signal),
+  propTickets: (limit = 50, signal?: AbortSignal) => get<any>(`/api/bot/prop/tickets?limit=${limit}`, signal),
+  propReconcile: (accountId = "breakout_1", signal?: AbortSignal) =>
+    get<any>(`/api/bot/prop/reconcile?account_id=${encodeURIComponent(accountId)}`, signal),
+
+  // Admin — health / logs / data explorer.
+  healthServices: (signal?: AbortSignal) => get<any>("/api/bot/health/services", signal),
+  healthLatest: (signal?: AbortSignal) => get<any>("/api/bot/health/latest", signal),
+  notifications: (signal?: AbortSignal) => get<any>("/api/bot/notifications", signal),
+  logs: (opts: { limit?: number; level?: string } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams();
+    q.set("limit", String(opts.limit ?? 200));
+    if (opts.level) q.set("level", opts.level);
+    return get<any>(`/api/bot/logs?${q.toString()}`, signal);
+  },
+  dbTables: (signal?: AbortSignal) => get<any>("/api/bot/db/tables", signal),
+  dbTable: (name: string, opts: { db?: string; limit?: number; offset?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams();
+    if (opts.db) q.set("db", opts.db);
+    q.set("limit", String(opts.limit ?? 50));
+    if (opts.offset) q.set("offset", String(opts.offset));
+    return get<any>(`/api/bot/db/table/${encodeURIComponent(name)}?${q.toString()}`, signal);
+  },
+
+  // Strategies & Models.
+  gpuSpend: (signal?: AbortSignal) => get<any>("/api/bot/gpu/spend", signal),
+  mlRegistry: (signal?: AbortSignal) => get<any>("/api/bot/ml/registry", signal),
+  mlStatus: (signal?: AbortSignal) => get<any>("/api/bot/ml/status", signal),
 };
