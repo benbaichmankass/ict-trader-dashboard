@@ -11,6 +11,12 @@
   import OrderPackages from "./routes/OrderPackages.svelte";
   import Insights from "./routes/Insights.svelte";
   import Roadmap from "./routes/Roadmap.svelte";
+  import Prop from "./routes/Prop.svelte";
+  import Health from "./routes/Health.svelte";
+  import Logs from "./routes/Logs.svelte";
+  import DataExplorer from "./routes/DataExplorer.svelte";
+  import GPUSpend from "./routes/GPUSpend.svelte";
+  import Models from "./routes/Models.svelte";
   import SectionLanding from "./components/SectionLanding.svelte";
   import Placeholder from "./components/Placeholder.svelte";
   import { nav, gotoSection, gotoDetail, SECTION_NAMES, SECTIONS, isSpecial, IMPLEMENTED_PAGES } from "./lib/nav";
@@ -37,6 +43,12 @@
     Signals,
     "Order Packages": OrderPackages,
     Insights,
+    Prop,
+    Health,
+    Logs,
+    "Data Explorer": DataExplorer,
+    "GPU Spend": GPUSpend,
+    Models,
   };
 
   function pickSection(s: string) {
