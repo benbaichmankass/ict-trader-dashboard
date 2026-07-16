@@ -2,10 +2,17 @@
   import { onMount, onDestroy } from "svelte";
   import { api, type BotStats, type Performance, type Position, type Candle } from "../lib/api";
   import { MarketStream, type MarketStatus } from "../lib/ws";
+  import { FUNDING_OPTIONS, WINDOW_OPTIONS } from "../lib/nav";
   import ExecSummary from "../components/ExecSummary.svelte";
   import PositionsTable from "../components/PositionsTable.svelte";
   import LiveChart from "../components/LiveChart.svelte";
   import StatusDot from "../components/StatusDot.svelte";
+  import Segmented from "../components/Segmented.svelte";
+
+  // One funding toggle per tab (Real money / Paper / Prop — never blended) + the
+  // 24h/7d/30d/All window, at the top — mirrors the Streamlit UI.
+  let funding = $state("real");
+  let win = $state("7d");
 
   let stats = $state<BotStats | null>(null);
   let perf = $state<Performance | null>(null);
@@ -30,7 +37,7 @@
 
   async function poll() {
     try {
-      const [s, p] = await Promise.all([api.stats(), api.performance("7d")]);
+      const [s, p] = await Promise.all([api.stats(), api.performance(win)]);
       stats = s;
       perf = p;
       apiError = null;
@@ -38,6 +45,21 @@
       apiError = e instanceof Error ? e.message : String(e);
     }
   }
+
+  // Re-poll performance when the window changes (control tap → fresh window).
+  $effect(() => {
+    win;
+    poll();
+  });
+
+  function fundingOf(p: Position): string {
+    const c = (p.accountClass ?? "").toLowerCase();
+    if (c === "prop") return "prop";
+    if (c === "paper") return "paper";
+    return "real";
+  }
+  // Positions scoped to the selected funding class (never blended).
+  const shownPositions = $derived(positions.filter((p) => fundingOf(p) === funding));
 
   function startStream() {
     stream?.stop();
@@ -82,11 +104,16 @@
     </div>
   </div>
 
+  <div class="controls">
+    <Segmented options={FUNDING_OPTIONS} bind:value={funding} />
+    <Segmented options={WINDOW_OPTIONS} bind:value={win} />
+  </div>
+
   {#if apiError}
     <div class="err panel">Couldn't reach the bot API: <span class="mono">{apiError}</span></div>
   {/if}
 
-  <ExecSummary {stats} {perf} />
+  <ExecSummary {stats} {perf} {funding} />
 
   <div class="chartcard panel">
     <div class="picker">
@@ -98,8 +125,8 @@
   </div>
 
   <div class="panel positions">
-    <div class="ph">Open positions</div>
-    <PositionsTable {positions} />
+    <div class="ph">Open positions · {FUNDING_OPTIONS.find((f) => f.value === funding)?.label}</div>
+    <PositionsTable positions={shownPositions} />
   </div>
 </section>
 
@@ -113,6 +140,11 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+  }
+  .controls {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
   }
   h2 {
     margin: 0;

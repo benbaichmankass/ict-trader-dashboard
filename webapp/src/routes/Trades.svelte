@@ -11,16 +11,26 @@
   let loading = $state(true);
   let error = $state<string | null>(null);
 
-  function isPaper(t: ClosedTrade): boolean {
-    return (t.accountClass ?? "").toLowerCase() === "paper";
+  function classOf(t: ClosedTrade): string {
+    const c = (t.accountClass ?? "").toLowerCase();
+    if (c === "prop") return "prop";
+    if (c === "paper") return "paper";
+    return "real";
   }
 
   async function load() {
     loading = true;
     error = null;
     try {
+      // Prop closed trades come from the prop journal, not /trades/closed — not
+      // wired into this SPA screen yet, so show an empty-with-note rather than
+      // mislabel real-money rows as prop.
+      if (funding === "prop") {
+        rows = [];
+        return;
+      }
       const raw = await api.closedTrades({ since: sinceFor(win), includePaper: funding === "paper", limit: 300 });
-      rows = (raw ?? []).filter((t) => (funding === "paper" ? isPaper(t) : !isPaper(t)));
+      rows = (raw ?? []).filter((t) => classOf(t) === funding);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       rows = [];
@@ -77,7 +87,9 @@
   {:else if loading}
     <div class="muted pad">Loading…</div>
   {:else if rows.length === 0}
-    <div class="muted pad">No closed trades in this window.</div>
+    <div class="muted pad">
+      {funding === "prop" ? "Prop closed trades come from the prop journal (Prop tab) — not on this screen yet." : "No closed trades in this window."}
+    </div>
   {:else}
     <div class="panel scroll">
       <table>

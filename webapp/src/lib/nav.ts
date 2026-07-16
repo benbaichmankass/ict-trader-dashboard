@@ -1,41 +1,115 @@
-// Minimal client-side routing — a hash-backed current-view store. No router
-// dependency: the app is small and every "route" is a top-level view.
+// Navigation model — mirrors streamlit_app.py's SECTIONS / PAGE_DESC exactly so
+// the SPA matches the production Streamlit UI: a left sidebar of 8 sections,
+// each a landing of summary cards that drill into detail sub-pages (except
+// Overview / Roadmap / Learning, which render directly).
 
 import { writable } from "svelte/store";
 
-export const VIEWS = [
-  { id: "overview", label: "Overview" },
-  { id: "trades", label: "Trades" },
-  { id: "performance", label: "Performance" },
-  { id: "positions", label: "Positions" },
-  { id: "strategies", label: "Strategies" },
-  { id: "accounts", label: "Accounts" },
-  { id: "signals", label: "Signals" },
-  { id: "news", label: "News" },
-  { id: "reports", label: "Reports" },
-] as const;
+// Section → sub-pages. Empty list = special-cased view rendered directly.
+export const SECTIONS: Record<string, string[]> = {
+  Overview: [],
+  Performance: ["Performance", "Insights", "Reports"],
+  "Strategies & Models": ["Strategies", "Models", "GPU Spend", "Exit Ladder", "Backtesting", "Promotion", "News"],
+  Accounts: ["Accounts", "Prop"],
+  Activity: ["Positions", "Trades", "Order Packages", "Signals"],
+  Roadmap: [],
+  Learning: [],
+  Admin: ["Data Explorer", "Logs", "Health"],
+};
+export const SECTION_NAMES = Object.keys(SECTIONS);
 
-export type ViewId = (typeof VIEWS)[number]["id"];
+// One-line blurb per sub-page (mirrors PAGE_DESC).
+export const PAGE_DESC: Record<string, string> = {
+  Performance: "Analytics deep-dive: equity curve, win-rate, expectancy, per-strategy + per-symbol.",
+  Insights: "AI-analyst narrative + grade for the book and each strategy.",
+  Reports: "Consolidated /system-report executive reports (health + trading + ML).",
+  Strategies: "Live-runtime per-strategy status, routing, P&L curve, review packet.",
+  Models: "ML fleet — per-model stage, training metric, drift.",
+  "GPU Spend": "Spot-GPU training cost — per-session + monthly total vs the $10 cap.",
+  "Exit Ladder": "ExitPlan laddered-vs-single-target soak (observe-only).",
+  Backtesting: "Trainer-VM sweeps + on-demand /test runs.",
+  Promotion: "Shadow-model promotion-readiness tracker.",
+  News: "News-layer decisions (veto / boost / reduce) per actionable signal.",
+  Accounts: "Per-account balance, realised/unrealised P&L, trade log.",
+  Prop: "Breakout rule-distance cushion, report-back, journal.",
+  Positions: "Open positions — full detail cards (entry/SL/TP/uPnL + decision).",
+  Trades: "Closed-trade history (real / paper / prop).",
+  "Order Packages": "Decision-level table with model scores + Claude grade.",
+  Signals: "Recent ICT detections.",
+  "Data Explorer": "Read-only browse of the federated canonical store.",
+  Logs: "Merged pipeline + outcome log feed.",
+  Health: "VM / service health + last-tick + snapshot checks.",
+  Roadmap: "Product-roadmap progress — milestones → sprints → work-session notes.",
+  Learning: "Trading + AI curriculum with per-resource progress.",
+};
 
-const VALID = new Set(VIEWS.map((v) => v.id));
+// Which detail sub-pages are actually implemented as SPA routes today. A card
+// for an unimplemented page opens a "coming soon" placeholder — the section
+// structure stays complete and pages fill in over time.
+export const IMPLEMENTED_PAGES = new Set<string>([
+  "Performance",
+  "Reports",
+  "Strategies",
+  "News",
+  "Accounts",
+  "Positions",
+  "Trades",
+  "Signals",
+]);
 
-function fromHash(): ViewId {
-  const h = (typeof location !== "undefined" ? location.hash.replace(/^#\/?/, "") : "") as ViewId;
-  return VALID.has(h) ? h : "overview";
+const SPECIAL_SECTIONS = new Set(["Overview", "Roadmap", "Learning"]);
+export function isSpecial(section: string): boolean {
+  return SPECIAL_SECTIONS.has(section);
 }
 
-export const view = writable<ViewId>(fromHash());
+// Nav state: the current section, and (for card sections) the open detail page
+// or null (= showing the card landing).
+export interface Nav {
+  section: string;
+  detail: string | null;
+}
 
-export function goto(id: ViewId): void {
-  if (typeof location !== "undefined") location.hash = `#/${id}`;
-  view.set(id);
+function parseHash(): Nav {
+  const raw = typeof location !== "undefined" ? decodeURIComponent(location.hash.replace(/^#\/?/, "")) : "";
+  const [sec, det] = raw.split("/");
+  const section = SECTION_NAMES.includes(sec) ? sec : "Overview";
+  const detail = det && SECTIONS[section]?.includes(det) ? det : null;
+  return { section, detail };
+}
+
+export const nav = writable<Nav>(parseHash());
+
+export function gotoSection(section: string): void {
+  const next: Nav = { section, detail: null };
+  if (typeof location !== "undefined") location.hash = `#/${section}`;
+  nav.set(next);
+}
+
+export function gotoDetail(section: string, detail: string): void {
+  if (typeof location !== "undefined") location.hash = `#/${section}/${detail}`;
+  nav.set({ section, detail });
 }
 
 if (typeof window !== "undefined") {
-  window.addEventListener("hashchange", () => view.set(fromHash()));
+  window.addEventListener("hashchange", () => nav.set(parseHash()));
 }
 
-/** Windowed `since=` ISO timestamp for the standard 24h/7d/30d/All axis. */
+// ── Shared control axes (mirror _WINDOW_CHOICES / _FUNDING_CHOICES) ──────────
+
+export const WINDOW_OPTIONS = [
+  { value: "24h", label: "24h" },
+  { value: "7d", label: "7d" },
+  { value: "30d", label: "30d" },
+  { value: "all", label: "All" },
+];
+
+// One funding toggle per tab: Real money / Paper / Prop — the three are never blended.
+export const FUNDING_OPTIONS = [
+  { value: "real", label: "Real money" },
+  { value: "paper", label: "Paper" },
+  { value: "prop", label: "Prop" },
+];
+
 export function sinceFor(window: string): string | undefined {
   const now = Date.now();
   const day = 86400_000;
@@ -50,15 +124,3 @@ export function sinceFor(window: string): string | undefined {
       return undefined; // "all"
   }
 }
-
-export const WINDOW_OPTIONS = [
-  { value: "24h", label: "24h" },
-  { value: "7d", label: "7d" },
-  { value: "30d", label: "30d" },
-  { value: "all", label: "All" },
-];
-
-export const FUNDING_OPTIONS = [
-  { value: "real", label: "Real" },
-  { value: "paper", label: "Paper" },
-];
