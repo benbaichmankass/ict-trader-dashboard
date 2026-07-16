@@ -8,6 +8,9 @@
   import Signals from "./routes/Signals.svelte";
   import News from "./routes/News.svelte";
   import Reports from "./routes/Reports.svelte";
+  import OrderPackages from "./routes/OrderPackages.svelte";
+  import Insights from "./routes/Insights.svelte";
+  import Roadmap from "./routes/Roadmap.svelte";
   import SectionLanding from "./components/SectionLanding.svelte";
   import Placeholder from "./components/Placeholder.svelte";
   import { nav, gotoSection, gotoDetail, SECTION_NAMES, SECTIONS, isSpecial, IMPLEMENTED_PAGES } from "./lib/nav";
@@ -32,6 +35,8 @@
     Positions,
     Trades,
     Signals,
+    "Order Packages": OrderPackages,
+    Insights,
   };
 
   function pickSection(s: string) {
@@ -90,6 +95,8 @@
     <main>
       {#if $nav.section === "Overview"}
         <Overview />
+      {:else if $nav.section === "Roadmap"}
+        <Roadmap />
       {:else if isSpecial($nav.section)}
         <Placeholder page={$nav.section} />
       {:else if $nav.detail == null}

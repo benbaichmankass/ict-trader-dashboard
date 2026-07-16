@@ -136,4 +136,13 @@ export const api = {
   news: (limit = 50, signal?: AbortSignal) =>
     get<any>(`/api/bot/news/recent?limit=${limit}`, signal),
   signals: (signal?: AbortSignal) => get<any>("/api/bot/signals", signal),
+  orderPackages: (opts: { since?: string; includePaper?: boolean; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams();
+    if (opts.since) q.set("since", opts.since);
+    if (opts.includePaper) q.set("include_paper", "true");
+    q.set("limit", String(opts.limit ?? 100));
+    return get<any>(`/api/bot/order-packages?${q.toString()}`, signal);
+  },
+  insight: (endpoint: string, signal?: AbortSignal) => get<any>(`/api/bot/insights/${endpoint}`, signal),
+  roadmap: (signal?: AbortSignal) => get<any>("/api/bot/roadmap", signal),
 };
