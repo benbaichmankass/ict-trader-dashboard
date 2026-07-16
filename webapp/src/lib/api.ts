@@ -177,4 +177,9 @@ export const api = {
   gpuSpend: (signal?: AbortSignal) => get<any>("/api/bot/gpu/spend", signal),
   mlRegistry: (signal?: AbortSignal) => get<any>("/api/bot/ml/registry", signal),
   mlStatus: (signal?: AbortSignal) => get<any>("/api/bot/ml/status", signal),
+  exitLadderSoak: (limit = 100, signal?: AbortSignal) =>
+    get<any>(`/api/bot/exit-ladder/soak?limit=${limit}`, signal),
+  backtestSweeps: (limit = 10, signal?: AbortSignal) =>
+    get<any>(`/api/bot/backtests/sweeps?limit=${limit}`, signal),
+  shadowStats: (signal?: AbortSignal) => get<any>("/api/bot/shadow/stats", signal),
 };

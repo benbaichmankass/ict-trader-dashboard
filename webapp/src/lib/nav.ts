@@ -63,6 +63,9 @@ export const IMPLEMENTED_PAGES = new Set<string>([
   "Data Explorer",
   "GPU Spend",
   "Models",
+  "Exit Ladder",
+  "Backtesting",
+  "Promotion",
 ]);
 
 const SPECIAL_SECTIONS = new Set(["Overview", "Roadmap", "Learning"]);
@@ -85,7 +88,31 @@ function parseHash(): Nav {
   return { section, detail };
 }
 
-export const nav = writable<Nav>(parseHash());
+// Report deep-link (`…/?report=<id>`) — the URL the bot's Telegram system-report
+// ping points at. Parsed once from the query string on load; Reports.svelte
+// consumes it to pre-select that report. Same `?report=` scheme the Streamlit
+// app used, so the bot only had to swap the base URL to this SPA.
+export function parseReportParam(): string | null {
+  if (typeof location === "undefined") return null;
+  try {
+    return new URLSearchParams(location.search).get("report");
+  } catch {
+    return null;
+  }
+}
+export const reportDeepLink = writable<string | null>(parseReportParam());
+
+// When a ?report= deep-link is present and the hash didn't already target a
+// page, land directly on the Reports detail page so the ping opens the report.
+function initialNav(): Nav {
+  const fromHash = parseHash();
+  if (parseReportParam() && fromHash.section === "Overview" && fromHash.detail == null) {
+    return { section: "Performance", detail: "Reports" };
+  }
+  return fromHash;
+}
+
+export const nav = writable<Nav>(initialNav());
 
 export function gotoSection(section: string): void {
   const next: Nav = { section, detail: null };

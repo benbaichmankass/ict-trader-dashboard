@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { get } from "svelte/store";
   import { api } from "../lib/api";
+  import { reportDeepLink } from "../lib/nav";
   import { agoFromIso, DASH } from "../lib/format";
 
   let reports = $state<any[]>([]);
@@ -16,7 +18,12 @@
     try {
       const raw = await api.reports();
       reports = raw?.reports ?? [];
-      if (reports.length) open(reports[0].id);
+      // A `?report=<id>` deep-link (the ping target) wins over the newest; the
+      // report(id) endpoint fetches it directly even if it's beyond the index
+      // page. Otherwise default to the newest report.
+      const deepId = get(reportDeepLink);
+      if (deepId) open(deepId);
+      else if (reports.length) open(reports[0].id);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
