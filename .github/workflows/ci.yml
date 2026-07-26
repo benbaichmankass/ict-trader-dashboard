@@ -29,6 +29,14 @@ jobs:
     # flood of pre-existing style hits, narrow this to
     # `ruff check --select E9,F63,F7,F82 .` to keep it green while still
     # catching syntax/undefined-name errors.
+    #
+    # RUFF IS PINNED. `pip install ruff` (unpinned) pulled ruff 0.16.0 on
+    # 2026-07-26, whose EXPANDED default ruleset floods 77 pre-existing style
+    # hits (DTZ/UP045/C408/SIM117/BLE001/… — none crash-class) across
+    # streamlit_app.py, reddening every PR with no code change. Pinning to the
+    # last clean minor (0.15.x) restores a reproducible gate; bumping the pin +
+    # absorbing 0.16's stricter defaults is a separate, deliberate cleanup PR,
+    # not a silent drift that breaks unrelated PRs.
     name: ruff-lint
     runs-on: ubuntu-latest
     steps:
@@ -36,7 +44,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install ruff
+      - run: pip install "ruff==0.15.8"
       - run: ruff check .
 
   import-smoke:
