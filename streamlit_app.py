@@ -870,15 +870,33 @@ def render_sidebar() -> str:
 
 # ── Lightweight Charts helpers ────────────────────────────────────────────────────
 
+def _lc_epoch(ts) -> int:
+    """Epoch seconds for a Lightweight-Charts ``time`` field, tz-safe.
+
+    The candle/EMA/volume ``timestamp`` column is built tz-NAIVE (from epoch
+    seconds via ``pd.to_datetime(..., unit="s")`` with no ``utc=True``), and its
+    wall-clock is UTC. A bare ``ts.timestamp()`` on a naive Timestamp interprets
+    that wall-clock in the HOST's local zone — so on a UTC host (Streamlit Cloud
+    prod) it agrees with the tz-aware UTC signal/trade markers, but on any
+    non-UTC host it shifts candles/EMA/volume vs the markers by the host offset
+    (BL-20260617-DASH-CHART-TZ). Localizing a naive Timestamp to UTC is a relabel
+    (not a shift) that recovers the original epoch on any host, so every series
+    shares one epoch basis. Already-aware timestamps pass through unchanged.
+    """
+    if not isinstance(ts, pd.Timestamp):
+        ts = pd.Timestamp(ts)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    return int(ts.timestamp())
+
+
 def _lc_candle_data(df: pd.DataFrame) -> list[dict]:
     """Convert OHLCV DataFrame to Lightweight Charts candlestick format (unix seconds)."""
     records = []
     for _, row in df.iterrows():
         ts = row["timestamp"]
-        if not isinstance(ts, pd.Timestamp):
-            ts = pd.Timestamp(ts)
         records.append({
-            "time":  int(ts.timestamp()),
+            "time":  _lc_epoch(ts),
             "open":  float(row["open"]),
             "high":  float(row["high"]),
             "low":   float(row["low"]),
@@ -1123,8 +1141,7 @@ def _lc_ema_data(df: pd.DataFrame, period: int) -> list[dict]:
     ema = df["close"].astype(float).ewm(span=period, adjust=False).mean()
     out = []
     for ts, v in zip(df["timestamp"], ema):
-        t = ts if isinstance(ts, pd.Timestamp) else pd.Timestamp(ts)
-        out.append({"time": int(t.timestamp()), "value": float(v)})
+        out.append({"time": _lc_epoch(ts), "value": float(v)})
     return out
 
 
@@ -1133,10 +1150,9 @@ def _lc_volume_data(df: pd.DataFrame) -> list[dict]:
     out = []
     for _, row in df.iterrows():
         ts = row["timestamp"]
-        t = ts if isinstance(ts, pd.Timestamp) else pd.Timestamp(ts)
         up = float(row["close"]) >= float(row["open"])
         out.append({
-            "time": int(t.timestamp()),
+            "time": _lc_epoch(ts),
             "value": float(row.get("volume") or 0.0),
             "color": "rgba(38,166,154,0.5)" if up else "rgba(239,83,80,0.5)",
         })
@@ -9368,11 +9384,16 @@ def main() -> None:
         _render_notification_banner(alerts_only=True)
         _render_section_landing(section)
 
-    # Legacy fallback: no fragments AND no autorefresh component — blocking
-    # sleep+rerun is the only way to poll at all.
-    if live and not _AUTOREFRESH_AVAILABLE and not _FRAGMENT_OK:
-        time.sleep(POLL_INTERVAL_S)
-        st.rerun()
+    # No auto-poll fallback on ancient Streamlit (no fragments AND no
+    # autorefresh component): the old `time.sleep(POLL_INTERVAL_S) + st.rerun()`
+    # path FROZE nav for up to POLL_INTERVAL_S, directly contradicting this
+    # module's "non-blocking, nav takes effect immediately" refresh model
+    # (BL-20260610-AUDIT-3). A page that simply doesn't auto-refresh — the user
+    # taps the sidebar **↻ Refresh now** button (which clears `_fetch_cached`) —
+    # is strictly better than one that blocks interaction. Both fragments and
+    # streamlit-autorefresh are present in prod, so this only ever affected a
+    # degraded environment, and the correct degradation is no-auto-refresh, not
+    # freeze-the-UI.
 
 
 if __name__ == "__main__":
