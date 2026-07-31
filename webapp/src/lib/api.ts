@@ -63,6 +63,13 @@ export interface Performance {
   expectancy?: number | null;
   profitFactor?: number | null;
   maxDrawdown?: number | null;
+  // PnL provenance (bot P0.3, 2026-07-31): how much of the window's realized
+  // PnL rests on a broker-measured exit. Absent on an older bot.
+  pnlCoverage?: number | null;
+  pnlMeasuredCount?: number | null;
+  pnlEstimatedCount?: number | null;
+  pnlFabricatedCount?: number | null;
+  pnlUnverifiedCount?: number | null;
   perAssetClass?: Array<{ assetClass: string; trades: number; winRate?: number | null; totalPnl?: number | null }>;
   perStrategy?: PerfStrategy[];
   equity?: Array<{ t: number | string; cum: number }>;
@@ -90,6 +97,9 @@ export interface ClosedTrade {
   closeReason?: string | null;
   closedAt?: string | null;
   openedAt?: string | null;
+  // "measured" | "estimated" | "fabricated" | "unverified" — is realizedPnl a
+  // broker measurement or a manufacture? Null when pnl is null / older bot.
+  pnlProvenance?: string | null;
 }
 
 export interface Strategy {

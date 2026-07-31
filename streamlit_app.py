@@ -1881,7 +1881,47 @@ def _format_closed_trades_df(df: pd.DataFrame) -> pd.DataFrame:
         out["realizedPnl"] = out["realizedPnl"].apply(fmt_usd)
     if "realizedPnlPct" in out.columns:
         out["realizedPnlPct"] = out["realizedPnlPct"].apply(fmt_pct)
+    if "pnlProvenance" in out.columns:
+        out["pnlProvenance"] = out["pnlProvenance"].apply(_pnl_provenance_glyph)
     return out
+
+
+# PnL provenance (bot P0.3, 2026-07-31): each /trades/closed row carries
+# ``pnlProvenance`` — is realizedPnl a broker MEASUREMENT or a manufacture?
+# Rendered as a compact glyph so fabricated/unverified money never reads
+# identically to measured money. Missing/null (older bot, prop journal rows,
+# null PnL) → em-dash, never a fabricated "measured".
+_PNL_PROVENANCE_GLYPHS: dict = {
+    "measured": "✓ measured",
+    "estimated": "≈ estimated",
+    "fabricated": "⚠ fabricated",
+    "unverified": "? unverified",
+}
+# The buckets whose PnL must carry a caveat (a mark read at an arbitrary later
+# time, or no provenance recorded at all — never silently blended with truth).
+_PNL_UNTRUSTED_BUCKETS = ("fabricated", "unverified")
+
+
+def _pnl_provenance_glyph(v: Any) -> str:
+    return _PNL_PROVENANCE_GLYPHS.get(str(v).lower(), "—") if v else "—"
+
+
+def _pnl_provenance_caveat(rows: list[dict]) -> str | None:
+    """One-line caveat when any row's realized PnL is not a measurement.
+
+    Returns None when every graded row is measured/estimated (or the bot
+    predates the field — no grades at all means nothing to claim, so no
+    banner is shown rather than a false all-clear)."""
+    graded = [str(r.get("pnlProvenance") or "").lower()
+              for r in rows if r.get("pnlProvenance")]
+    if not graded:
+        return None
+    bad = sum(1 for g in graded if g in _PNL_UNTRUSTED_BUCKETS)
+    if not bad:
+        return None
+    return (f"⚠ {bad} of {len(graded)} graded trade(s) carry an UNMEASURED "
+            "realized P&L (⚠ mark-substituted or ? unrecorded provenance) — "
+            "treat those figures as estimates, not broker truth.")
 
 
 # 2026-06-04 reporting-cleanup — paper/real-money segment helpers.
@@ -3614,6 +3654,24 @@ def _render_exec_summary(stats: dict, segment: str, win_label: str, window: str)
     if combined:
         st.caption("Profit factor may be — for the combined (All) view "
                    "(not reconstructable from the real + paper sub-blocks).")
+    # PnL measurement coverage (bot P0.3): how much of the windowed realized
+    # P&L above rests on a broker-measured exit vs a manufactured one. Shown
+    # only when the bot reports the field AND coverage is incomplete — full
+    # coverage needs no banner, and an older bot (field absent) makes no claim.
+    _cov = block.get("pnlCoverage")
+    if _cov is not None:
+        try:
+            _covf = float(_cov)
+        except (TypeError, ValueError):
+            _covf = None
+        if _covf is not None and _covf < 1.0:
+            _fab = block.get("pnlFabricatedCount") or 0
+            _unv = block.get("pnlUnverifiedCount") or 0
+            st.caption(
+                f"⚠ Realized P&L is broker-measured for {_covf * 100.0:.0f}% "
+                f"of trades in this window ({_fab} mark-substituted, {_unv} "
+                "unrecorded) — the remainder is estimated, not broker truth."
+            )
 
     # Contextual secondary line so the OTHER funding class is never invisible.
     if segment == "real":
@@ -5192,12 +5250,16 @@ def page_trades() -> None:
         cdf = _format_closed_trades_df(pd.DataFrame(closed))
         if dim != "none":
             cdf["__group"] = [_group_label(_row_group_key(r, dim), dim) for r in closed]
+        _prov_note = _pnl_provenance_caveat(closed)
+        if _prov_note:
+            st.caption(_prov_note)
         col_map = {
             "__group": "Group",
             "closedAt": "Closed", "openedAt": "Opened", "account": "Account",
             "symbol": "Symbol", "side": "Side", "pattern": "Strategy",
             "qty": "Qty", "entryPrice": "Entry", "exitPrice": "Exit",
-            "realizedPnl": "PnL", "realizedPnlPct": "PnL %", "closeReason": "Close",
+            "realizedPnl": "PnL", "realizedPnlPct": "PnL %",
+            "pnlProvenance": "PnL source", "closeReason": "Close",
         }
         cols = [c for c in col_map if c in cdf.columns]
         disp = cdf[cols].rename(columns=col_map) if cols else cdf

@@ -59,6 +59,19 @@
     };
   });
 
+  // PnL provenance (bot P0.3): flag rows whose realized P&L is NOT a broker
+  // measurement so manufactured money never reads identically to truth.
+  function provMark(t: ClosedTrade): string {
+    const p = (t.pnlProvenance ?? "").toLowerCase();
+    if (p === "fabricated") return "⚠";
+    if (p === "unverified") return "?";
+    return "";
+  }
+  const untrusted = $derived(
+    rows.filter((r) => ["fabricated", "unverified"].includes((r.pnlProvenance ?? "").toLowerCase())).length,
+  );
+  const graded = $derived(rows.filter((r) => r.pnlProvenance != null).length);
+
   function dirLabel(t: ClosedTrade): string {
     const d = (t.direction ?? t.side ?? "").toLowerCase();
     if (d === "sell" || d === "short") return "SHORT";
@@ -81,6 +94,10 @@
     <div class="s"><span class="muted">Win rate</span> <b class="mono">{pct(stats.winRate)}</b></div>
     <div class="s"><span class="muted">Net P&L</span> <b class="mono {signClass(stats.total)}">{money(stats.total, { sign: true })}</b></div>
   </div>
+
+  {#if untrusted > 0}
+    <div class="muted caveat">⚠ {untrusted} of {graded} graded trade(s) carry an unmeasured realized P&L (⚠ mark-substituted / ? unrecorded) — estimates, not broker truth.</div>
+  {/if}
 
   {#if error}
     <div class="err panel">Couldn't load trades: <span class="mono">{error}</span></div>
@@ -106,7 +123,7 @@
               <td class="muted">{t.strategy ?? DASH}</td>
               <td class="r mono">{money(t.entryPrice)}</td>
               <td class="r mono">{money(t.exitPrice)}</td>
-              <td class="r mono {signClass(t.pnl)}">{money(t.pnl, { sign: true })}</td>
+              <td class="r mono {signClass(t.pnl)}" title={t.pnlProvenance ? `PnL provenance: ${t.pnlProvenance}` : undefined}>{money(t.pnl, { sign: true })}{#if provMark(t)}<sup class="prov">{provMark(t)}</sup>{/if}</td>
               <td class="muted">{agoFromIso(t.closedAt)}</td>
             </tr>
           {/each}
@@ -126,6 +143,8 @@
   .s b { font-size: 16px; margin-left: 4px; }
   .scroll { overflow-x: auto; padding: 4px; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .prov { color: var(--warn, #d97706); margin-left: 2px; }
+  .caveat { font-size: 12px; margin: 4px 0 8px; }
   th, td { padding: 8px 10px; text-align: left; white-space: nowrap; }
   th { color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); font-size: 12px; }
   tbody tr { border-bottom: 1px solid var(--border); }
