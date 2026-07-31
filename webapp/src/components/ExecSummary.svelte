@@ -57,6 +57,9 @@
   const realized = $derived(segPerf?.totalPnl ?? null);
   const winRate = $derived(segPerf?.winRate ?? null);
   const profitFactor = $derived(segPerf?.profitFactor ?? null);
+  // PnL measurement coverage (bot P0.3): shown only when the bot reports the
+  // field AND coverage is incomplete — an older bot makes no claim.
+  const pnlCoverage = $derived(segPerf?.pnlCoverage ?? null);
 
   function pctOfEquity(v: number | null | undefined): string | null {
     if (v == null || !equity) return null;
@@ -130,6 +133,10 @@
 
   {#if equity}
     <div class="cap">P&amp;L % = return on the tracked equity above ({money(equity)}).</div>
+  {/if}
+
+  {#if pnlCoverage != null && pnlCoverage < 1}
+    <div class="cap warn">⚠ Realized P&amp;L is broker-measured for {Math.round(pnlCoverage * 100)}% of trades in this window ({segPerf?.pnlFabricatedCount ?? 0} mark-substituted, {segPerf?.pnlUnverifiedCount ?? 0} unrecorded) — the remainder is estimated, not broker truth.</div>
   {/if}
 
   {#if perAsset.length}
@@ -206,6 +213,7 @@
   .v { font-size: 20px; font-weight: 600; }
   .v.pos, .d.pos { color: var(--pos); } .v.neg, .d.neg { color: var(--neg); }
   .d { font-size: 12px; margin-top: 2px; }
+  .cap.warn { color: var(--warn, #d97706); }
   .cap { color: var(--muted); font-size: 12px; }
   .other { font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--border); padding-top: 8px; }
   .sech { font-weight: 600; font-size: 12.5px; margin-bottom: 6px; }
