@@ -35,18 +35,31 @@ Read-only — polls the bot's REST API and renders stats, positions,
 signals, closed trades, logs, and health. Hosted on Streamlit Community
 Cloud (free), auto-redeploys from `main`.
 
-**Public URL (canonical):**
-`https://ict-trader-dashboard-z67ryan2ttrxjdvk6ozcjc.streamlit.app/` — this is
-the URL the bot's Telegram system-report ping deep-links into
-(`…/?report=<report_id>` opens that report on the Reports page; see
-`_consume_report_deeplink`). Mirrored in the bot repo's `CLAUDE.md` §
-"Dashboard consumer".
+**Two production frontends serve this repo (correction 2026-08-04):** the
+**Streamlit app** (this file's subject — `streamlit_app.py`, Streamlit Community
+Cloud, auto-redeploys from `main`) at
+`https://ict-trader-dashboard-z67ryan2ttrxjdvk6ozcjc.streamlit.app/`, **and** the
+newer **Svelte SPA** under `webapp/` hosted on **GitHub Pages**
+(`https://benbaichmankass.github.io/ict-trader-dashboard/`, browser-direct to the
+bot API over HTTPS, auto-deployed on every push to `main` by
+`.github/workflows/pages.yml`). **The bot's Telegram system-report ping now
+deep-links into the SPA** — `…github.io/ict-trader-dashboard/?report=<id>` — per
+the bot repo's authoritative `CLAUDE.md` § "Dashboard consumer" (which is the
+source of truth). Both frontends read the same `?report=` scheme, so the
+Streamlit app (`_consume_report_deeplink`) still resolves a report deep-link too.
+The `webapp/` SPA carries its own `webapp/README.md`; sections below describe the
+Streamlit app specifically unless noted.
 
 - Entry point: [`streamlit_app.py`](./streamlit_app.py)
 - Deploy + local-dev steps: [`README.md`](./README.md)
 - Migration history: [PR #32](https://github.com/benbaichmankass/ict-trader-dashboard/pull/32)
 
-## Single app — `main` only (adopted 2026-06-22) — READ BEFORE BUILDING UI
+## One Streamlit *Community-Cloud* app — `main` only (adopted 2026-06-22) — READ BEFORE BUILDING UI
+
+> **Scope note (2026-08-04):** "one app" here means the **Streamlit** deploy has a
+> single Community-Cloud instance (no preview app). It is NOT the only frontend —
+> the `webapp/` Svelte SPA is a second production frontend on GitHub Pages (see the
+> two-frontends note above). This section governs Streamlit-app UI changes.
 
 There is **one** Streamlit Community Cloud app, tracking **`main`**. It
 auto-redeploys on every merge to `main`. The earlier two-app setup (a separate
@@ -172,7 +185,8 @@ The dashboard PR is autonomous; the bot-side endpoint is Tier-3 per
 ## What's in this repo
 
 ```
-streamlit_app.py       — the dashboard (single file, ~6500 lines)
+streamlit_app.py       — the Streamlit dashboard (single file, ~9500 lines)
+webapp/                — the Svelte 5 + Vite SPA (2nd production frontend; GitHub Pages, see .github/workflows/pages.yml)
 requirements.txt       — Python deps (streamlit, streamlit-autorefresh, requests, pandas, plotly, yfinance)
 .streamlit/config.toml — theme + privacy
 README.md              — deploy + dev steps
