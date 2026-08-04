@@ -1924,6 +1924,36 @@ def _pnl_provenance_caveat(rows: list[dict]) -> str | None:
             "treat those figures as estimates, not broker truth.")
 
 
+def _pnl_coverage_caption(block: dict | None) -> str | None:
+    """Muted 'includes best-estimate values' caveat for a ``/performance`` block.
+
+    Returns a one-line caption when the segment/window's realized P&L is NOT
+    100% broker-measured (``pnlFabricatedCount + pnlUnverifiedCount > 0`` ⇔
+    ``pnlCoverage < 1.0``), else ``None`` so a fully-measured surface (typically
+    real money) stays clean. Label-only — the numbers themselves are never
+    changed (operator directive: mark what's fabricated, don't renumber). Shared
+    by the calendar / equity / per-asset surfaces; the exec-summary card carries
+    its own richer version of the same claim."""
+    if not isinstance(block, dict):
+        return None
+    cov = block.get("pnlCoverage")
+    if cov is None:
+        return None
+    try:
+        covf = float(cov)
+    except (TypeError, ValueError):
+        return None
+    if covf >= 1.0:
+        return None
+    fab = int(block.get("pnlFabricatedCount") or 0)
+    unv = int(block.get("pnlUnverifiedCount") or 0)
+    if fab + unv <= 0:
+        return None
+    return ("⚠ Includes best-estimate (non-broker) values — "
+            f"{covf * 100.0:.0f}% of trades here are broker-measured; "
+            "see the exec summary's coverage line.")
+
+
 # 2026-06-04 reporting-cleanup — paper/real-money segment helpers.
 #
 # Every reporting surface that mixes paper + real-money accounts now
@@ -2768,6 +2798,13 @@ def _render_overview_calendar(segment: str) -> None:
     )
     st.caption("Daily realised P&L ($ + summed return %) · green profit / red "
                "loss · full history, pick the month above.")
+    # Provenance caveat (label-only): the calendar is full-history, so grade its
+    # coverage off the "all"-window /performance block for this segment. Hidden
+    # at 100% coverage (real-money surfaces stay clean); prop has no grading.
+    if segment != "prop":
+        _cov_note = _pnl_coverage_caption(_perf_for_segment("all", segment)[0])
+        if _cov_note:
+            st.caption(_cov_note)
 
 
 def render_trade_analytics(segment: str) -> None:
@@ -2835,12 +2872,19 @@ def render_trade_analytics(segment: str) -> None:
             "(bot endpoint cap) — older trades in the window are not included."
         )
 
+    # Provenance caveat (label-only) for the equity curve + calendar below: grade
+    # coverage off this segment/window's /performance block. Hidden at 100%
+    # coverage so real-money surfaces stay clean; prop has no grading (→ None).
+    _cov_note = _pnl_coverage_caption(_perf_for_segment(dd_wslug, segment)[0])
+
     st.markdown("**Equity curve · cumulative realised P&L**")
     eq = build_cumulative_pnl_fig(fdf, height=260)
     if eq is not None:
         st.plotly_chart(eq, use_container_width=True, config={"displayModeBar": False})
     else:
         st.caption("No trades for the selected strategy.")
+    if _cov_note:
+        st.caption(_cov_note)
 
     cal_col, bar_col = st.columns(2)
     with cal_col:
@@ -2856,6 +2900,8 @@ def render_trade_analytics(segment: str) -> None:
         )
         st.caption("Green = net-profit day · red = net-loss day · "
                    "darker = closer to flat.")
+        if _cov_note:
+            st.caption(_cov_note)
     with bar_col:
         st.markdown("**Wins vs losses per day**")
         win = st.selectbox("Window (days)", [7, 14, 30, 60, 90], index=0,
@@ -3353,6 +3399,7 @@ def _render_asset_class_symbol_breakdown(
 
     agg: dict[str, dict[str, float]] = {}
     approx = False
+    cov_note: str | None = None  # label-only provenance caveat (set for non-prop)
     if segment == "prop":
         # Prop isn't in /performance — per-symbol from the prop journal.
         per_class = [r for r in _prop_per_asset_class(window)
@@ -3363,6 +3410,7 @@ def _render_asset_class_symbol_breakdown(
             approx = bool(agg)
     else:
         block, _combined = _perf_for_segment(window, segment)
+        cov_note = _pnl_coverage_caption(block)
         per_class = [r for r in ((block or {}).get("perAssetClass") or [])
                      if r.get("totalPnl") is not None]
         # AUTHORITATIVE per-symbol split from /performance `perSymbol` — computed
@@ -3410,6 +3458,8 @@ def _render_asset_class_symbol_breakdown(
                         config={"displayModeBar": False})
         st.caption("Per-class totals shown; per-symbol split unavailable.")
         _render_per_class_caption(per_class)
+        if cov_note:
+            st.caption(cov_note)
         return
 
     st.plotly_chart(fig, use_container_width=True,
@@ -3419,6 +3469,8 @@ def _render_asset_class_symbol_breakdown(
                    "(the window's close-time data was incomplete); the per-class "
                    "totals below follow the window.")
     _render_per_class_caption(per_class)
+    if cov_note:
+        st.caption(cov_note)
 
 
 def _render_per_class_caption(per_class: list[dict]) -> None:

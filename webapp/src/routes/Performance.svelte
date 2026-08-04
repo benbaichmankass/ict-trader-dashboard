@@ -25,6 +25,20 @@
   }
   $effect(() => { win; load(); });
   onMount(load);
+
+  // PnL provenance caveat (label-only, bot P0.3): mark the equity curve + asset
+  // breakdown when this window's realized P&L is NOT 100% broker-measured
+  // (pnlFabricatedCount + pnlUnverifiedCount > 0 ⇔ pnlCoverage < 1). Hidden at
+  // full coverage so real-money surfaces stay clean; the numbers are never
+  // changed (operator directive: mark what's fabricated, don't renumber).
+  // Mirrors ExecSummary's coverage line + Streamlit's _pnl_coverage_caption.
+  const covNote = $derived.by(() => {
+    const cov = perf?.pnlCoverage;
+    if (cov == null || cov >= 1) return null;
+    const bad = (perf?.pnlFabricatedCount ?? 0) + (perf?.pnlUnverifiedCount ?? 0);
+    if (bad <= 0) return null;
+    return `⚠ Includes best-estimate (non-broker) values — ${Math.round(cov * 100)}% of trades here are broker-measured.`;
+  });
 </script>
 
 <section>
@@ -51,6 +65,7 @@
       <div class="panel card">
         <div class="ph">Equity curve — cumulative realised P&L</div>
         <EquityChart points={perf.equity} />
+        {#if covNote}<div class="caveat">{covNote}</div>{/if}
       </div>
     {/if}
 
@@ -94,6 +109,7 @@
             </tbody>
           </table>
         </div>
+        {#if covNote}<div class="caveat">{covNote}</div>{/if}
       </div>
     {/if}
   {/if}
@@ -109,6 +125,7 @@
   .v { font-size: 20px; font-weight: 600; }
   .card { padding: 12px; }
   .ph { font-weight: 600; margin-bottom: 10px; }
+  .caveat { color: var(--warn, #d97706); font-size: 12px; margin-top: 8px; }
   .scroll { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { padding: 8px 10px; text-align: left; white-space: nowrap; }

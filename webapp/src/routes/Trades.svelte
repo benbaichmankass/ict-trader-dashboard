@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api, type ClosedTrade } from "../lib/api";
   import { sinceFor, WINDOW_OPTIONS, FUNDING_OPTIONS } from "../lib/nav";
+  import { portfolioPaperIds, isPortfolioPaperRow } from "../lib/funding";
   import { money, num, pct, signClass, DASH, agoFromIso } from "../lib/format";
   import Segmented from "../components/Segmented.svelte";
 
@@ -29,8 +30,20 @@
         rows = [];
         return;
       }
-      const raw = await api.closedTrades({ since: sinceFor(win), includePaper: funding === "paper", limit: 300 });
-      rows = (raw ?? []).filter((t) => classOf(t) === funding);
+      // "Paper" scopes to the live-portfolio-mirror books (paper_role: portfolio)
+      // — the soak roster stays on the Accounts page only. Resolve the portfolio
+      // ids from /config; a config read failure falls back to ALL paper so the
+      // view is never stranded. S-PAPER-PORTFOLIO.
+      const [raw, cfg] = await Promise.all([
+        api.closedTrades({ since: sinceFor(win), includePaper: funding === "paper", limit: 300 }),
+        funding === "paper" ? api.config().catch(() => null) : Promise.resolve(null),
+      ]);
+      if (funding === "paper") {
+        const ids = portfolioPaperIds(cfg);
+        rows = (raw ?? []).filter((t) => isPortfolioPaperRow(t, ids));
+      } else {
+        rows = (raw ?? []).filter((t) => classOf(t) === funding);
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       rows = [];

@@ -74,6 +74,12 @@ export interface Performance {
   perStrategy?: PerfStrategy[];
   equity?: Array<{ t: number | string; cum: number }>;
   paper?: Partial<Performance> | null;
+  // "Paper" funding view scopes to the live-portfolio-mirror books
+  // (`paper_role: portfolio`) — the bot serves this sub-block (same shape as
+  // `paper`), falling it back to the all-paper `paper` block server-side when no
+  // portfolio accounts are declared. Prefer it over `paper` for the Paper
+  // segment so the soak roster stays off every tab but Accounts.
+  paperPortfolio?: Partial<Performance> | null;
 }
 
 export interface ClosedTrade {

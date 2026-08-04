@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { BotStats, Performance, Position } from "../lib/api";
   import { money, pct, num, signClass, agoFromIso, DASH } from "../lib/format";
+  import { portfolioPaperIds, isPortfolioPaperRow } from "../lib/funding";
 
   // Mirrors streamlit_app.py::_render_exec_summary — funding/window-scoped, real
   // and paper never blended. Status line + six cards (equity · open trades ·
@@ -25,6 +26,11 @@
     return "real";
   }
 
+  // "Paper" scopes to the live-portfolio-mirror books (paper_role: portfolio);
+  // soak books stay off this view (Accounts page only). Falls back to ALL paper
+  // when none are declared / config is unreadable. S-PAPER-PORTFOLIO.
+  const paperIds = $derived(portfolioPaperIds(config));
+
   // account_id → account_class map (from /config) so we can sum equity per class.
   const acctClass = $derived.by(() => {
     const m: Record<string, string> = {};
@@ -39,21 +45,40 @@
     const bals = balances?.balances ?? {};
     let sum = 0, any = false;
     for (const [id, b] of Object.entries<any>(bals)) {
-      if ((acctClass[id] ?? "") === want && typeof b?.balance === "number") { sum += b.balance; any = true; }
+      if ((acctClass[id] ?? "") !== want || typeof b?.balance !== "number") continue;
+      // Paper equity scopes to the portfolio-mirror books (soak excluded); all
+      // paper when none are declared.
+      if (want === "paper" && paperIds.size > 0 && !paperIds.has(id)) continue;
+      sum += b.balance; any = true;
     }
     return any ? sum : null;
   });
 
   // Open positions for the class (from REST /positions; prop from its own journal — not here).
-  const segOpen = $derived(funding === "prop" ? [] : positions.filter((p) => fundingOf(p) === funding));
+  // "Paper" keeps only the portfolio-mirror books, not the soak roster.
+  const segOpen = $derived(
+    funding === "prop"
+      ? []
+      : funding === "paper"
+        ? positions.filter((p) => isPortfolioPaperRow(p, paperIds))
+        : positions.filter((p) => fundingOf(p) === funding),
+  );
   const openUpnl = $derived.by(() => {
     let sum = 0, known = 0;
     for (const p of segOpen) if (typeof p.unrealizedPnl === "number") { sum += p.unrealizedPnl; known++; }
     return { sum: known ? sum : null, known };
   });
 
-  // Windowed realized P&L / win rate / profit factor for the segment.
-  const segPerf = $derived(funding === "paper" ? (perf?.paper ?? null) : funding === "prop" ? null : perf);
+  // Windowed realized P&L / win rate / profit factor for the segment. "Paper"
+  // prefers the portfolio-mirror sub-block (paper_role: portfolio) the bot
+  // serves, which itself falls back to the all-paper `paper` block server-side.
+  const segPerf = $derived(
+    funding === "paper"
+      ? (perf?.paperPortfolio ?? perf?.paper ?? null)
+      : funding === "prop"
+        ? null
+        : perf,
+  );
   const realized = $derived(segPerf?.totalPnl ?? null);
   const winRate = $derived(segPerf?.winRate ?? null);
   const profitFactor = $derived(segPerf?.profitFactor ?? null);
@@ -80,7 +105,8 @@
   }
 
   // The OTHER funding class one-liner (never let the other side be invisible).
-  const otherPerf = $derived(funding === "real" ? (perf?.paper ?? null) : perf);
+  // The paper side prefers the portfolio-mirror sub-block, same as segPerf.
+  const otherPerf = $derived(funding === "real" ? (perf?.paperPortfolio ?? perf?.paper ?? null) : perf);
   const otherTag = $derived(funding === "real" ? "🧪 Paper" : "💰 Real");
 
   // Asset-class P&L breakdown (mirrors Streamlit's perAssetClass row).

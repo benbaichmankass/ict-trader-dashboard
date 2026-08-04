@@ -3,6 +3,7 @@
   import { api, type BotStats, type Performance, type Position, type Candle, type ClosedTrade } from "../lib/api";
   import { MarketStream, type MarketStatus } from "../lib/ws";
   import { FUNDING_OPTIONS, WINDOW_OPTIONS } from "../lib/nav";
+  import { portfolioPaperIds, isPortfolioPaperRow } from "../lib/funding";
   import { money, signClass, DASH, agoFromIso } from "../lib/format";
   import ExecSummary from "../components/ExecSummary.svelte";
   import PositionsTable from "../components/PositionsTable.svelte";
@@ -53,7 +54,7 @@
     // defaults to one you actually hold under this toggle (e.g. a real-money
     // symbol under "Real money", not a paper one).
     const held = new Set(
-      positions.filter((p) => p.symbol && fundingOf(p) === funding).map((p) => p.symbol as string));
+      positions.filter((p) => p.symbol && matchesFunding(p)).map((p) => p.symbol as string));
     return [...s].sort((a, b) =>
       (held.has(b) ? 1 : 0) - (held.has(a) ? 1 : 0) || a.localeCompare(b));
   });
@@ -139,8 +140,17 @@
     if (c === "paper") return "paper";
     return "real";
   }
+  // "Paper" scopes to the live-portfolio-mirror books (paper_role: portfolio);
+  // the data-only soak books stay off every tab but Accounts. Falls back to ALL
+  // paper when none are declared / config unreadable. S-PAPER-PORTFOLIO.
+  const paperIds = $derived(portfolioPaperIds(config));
+  // True when a position belongs to the currently-selected funding class — the
+  // portfolio-mirror scoping is applied for the Paper toggle.
+  function matchesFunding(p: Position): boolean {
+    return funding === "paper" ? isPortfolioPaperRow(p, paperIds) : fundingOf(p) === funding;
+  }
   // Positions scoped to the selected funding class (never blended).
-  const shownPositions = $derived(positions.filter((p) => fundingOf(p) === funding));
+  const shownPositions = $derived(positions.filter((p) => matchesFunding(p)));
   const symOpen = $derived(shownPositions.filter((p) => p.symbol === selected));
 
   // REST candle fallback so the chart renders even when the market WebSocket
@@ -251,7 +261,7 @@
   <div class="chartcard panel">
     <div class="picker">
       {#each symbols as sym (sym)}
-        {@const held = positions.some((p) => p.symbol === sym && fundingOf(p) === funding)}
+        {@const held = positions.some((p) => p.symbol === sym && matchesFunding(p))}
         <button class:active={sym === selected} onclick={() => pick(sym)}>
           {held ? "🟢 " : ""}{sym}
         </button>
