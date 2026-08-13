@@ -1826,7 +1826,13 @@ def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
     """
     import math
 
-    cols = ["strategy", "pnl", "pnl_pct", "ts", "outcome", "accountClass", "isDemo", "account"]
+    # `pnlProvenance` (2026-08-13): carried so the PER-STRATEGY table can show
+    # measured coverage. It was already on the wire and already rendered on the
+    # raw Trades table, but it stopped at this frame -- so every analytics
+    # surface built from here (per-strategy breakdown above all) presented
+    # fabricated-inclusive P&L with no way to say so.
+    cols = ["strategy", "pnl", "pnl_pct", "ts", "outcome", "accountClass",
+            "isDemo", "account", "pnlProvenance"]
     records = []
     for t in trades or []:
         ts = _parse_trade_ts(t.get("closedAt") or t.get("openedAt"))
@@ -1863,6 +1869,10 @@ def _closed_trades_frame(trades: list[dict]) -> pd.DataFrame:
             "accountClass": _row_account_class(t),
             "isDemo": bool(t.get("isDemo", False)),
             "account": str(t.get("account") or t.get("account_id") or ""),
+            # Lower-cased, never defaulted: a row the bot did not grade must
+            # stay distinguishable from one it graded "measured". "" reads as
+            # UNGRADED downstream and is excluded from the denominator.
+            "pnlProvenance": str(t.get("pnlProvenance") or "").lower(),
         })
     if not records:
         return pd.DataFrame(columns=cols)
@@ -2651,9 +2661,51 @@ def build_cumulative_pnl_fig(frame: pd.DataFrame, height: int = 220) -> go.Figur
     return _style_plotly(fig, height)
 
 
+def _strategy_measured_cell(sub: pd.DataFrame) -> str:
+    """Per-strategy broker-measured coverage, rendered WITH its denominator.
+
+    Returns e.g. ``"58% of 45"``, or ``"—"`` when no row in the group carries a
+    provenance grade at all.
+
+    THREE STATES, never collapsed — this is the whole point of the cell:
+      * ``"—"``         we did not look (the bot graded none of these rows)
+      * ``"100% of N"`` we looked and every row is broker-measured
+      * ``"x% of N"``   we looked and (100−x)% is a best estimate
+
+    The denominator is GRADED rows, not all rows. An ungraded row is neither
+    measured nor fabricated, and folding it into either would manufacture the
+    very confidence this column exists to withhold. A bare percentage would
+    also be an unasserted denominator (CLAUDE.md § "always state the
+    population"), so the count ships inside the cell rather than in a caption
+    the reader has to go find.
+
+    MEASURED-only is the numerator, matching the bot's own ``pnlCoverage``
+    definition — ESTIMATED is deliberately NOT "covered" there, and a second,
+    friendlier definition here would be free to drift from the one the R4
+    promotion gate reads.
+    """
+    if "pnlProvenance" not in sub.columns:
+        return "—"
+    graded = [str(v) for v in sub["pnlProvenance"].tolist() if str(v)]
+    if not graded:
+        return "—"
+    measured = sum(1 for g in graded if g == "measured")
+    return f"{measured / len(graded) * 100:.0f}% of {len(graded)}"
+
+
 def _strategy_breakdown(df: pd.DataFrame) -> pd.DataFrame:
-    """Per-strategy performance table over the supplied closed-trade frame."""
-    cols = ["Strategy", "Trades", "Win rate %", "Expectancy $", "Total P&L $"]
+    """Per-strategy performance table over the supplied closed-trade frame.
+
+    Carries a **Measured %** column (2026-08-13). Until then this table was the
+    one fabricated-inclusive surface on the page with NO provenance caveat —
+    the equity curve and the calendar beside it both had one. That is the worst
+    place to omit it: per-strategy P&L is the table an operator reads to decide
+    which strategy to tune, and the bot's own records show live rows at
+    ``pnlCoverage: 0.0`` whose "Total P&L $" is therefore entirely
+    best-estimate. Label-only — no number in this table is changed.
+    """
+    cols = ["Strategy", "Trades", "Win rate %", "Expectancy $", "Total P&L $",
+            "Measured %"]
     if df.empty:
         return pd.DataFrame(columns=cols)
     rows = []
@@ -2666,6 +2718,7 @@ def _strategy_breakdown(df: pd.DataFrame) -> pd.DataFrame:
             "Win rate %": round(int((sub["pnl"] > 0).sum()) / n * 100, 1) if n else 0.0,
             "Expectancy $": round(total / n, 2) if n else 0.0,
             "Total P&L $": round(total, 2),
+            "Measured %": _strategy_measured_cell(sub),
         })
     return (pd.DataFrame(rows)
             .sort_values("Total P&L $", ascending=False)
@@ -2697,7 +2750,13 @@ def _prop_closed_frame() -> pd.DataFrame:
     (strategy/pnl/pnl_pct/ts/outcome/accountClass/isDemo), for the PROP funding
     class on the P&L calendar. Prop lives in a separate store (`/api/bot/prop/fills`),
     never `/trades/closed`; keyed by `reported_at`."""
-    cols = ["strategy", "pnl", "pnl_pct", "ts", "outcome", "accountClass", "isDemo", "account"]
+    # `pnlProvenance` (2026-08-13): carried so the PER-STRATEGY table can show
+    # measured coverage. It was already on the wire and already rendered on the
+    # raw Trades table, but it stopped at this frame -- so every analytics
+    # surface built from here (per-strategy breakdown above all) presented
+    # fabricated-inclusive P&L with no way to say so.
+    cols = ["strategy", "pnl", "pnl_pct", "ts", "outcome", "accountClass",
+            "isDemo", "account", "pnlProvenance"]
     data, err = _fetch("/api/bot/prop/fills?limit=400")
     fills = (data or {}).get("fills") or [] if not err else []
     records = []
@@ -2928,8 +2987,22 @@ def render_trade_analytics(segment: str) -> None:
                             config={"displayModeBar": False})
     with tbl_col:
         st.markdown(f"**Per-strategy breakdown · {dd_wlabel}**")
-        st.dataframe(_strategy_breakdown(df), hide_index=True,
-                     use_container_width=True)
+        _sb = _strategy_breakdown(df)
+        st.dataframe(_sb, hide_index=True, use_container_width=True)
+        # The column carries its own denominator, so this caption only has to
+        # say what the column MEANS — and only when a row actually falls short.
+        # A caveat printed over a fully-measured table is noise, and noise is
+        # how a real caveat stops being read.
+        if not _sb.empty and "Measured %" in _sb.columns:
+            _short = [c for c in _sb["Measured %"].tolist()
+                      if isinstance(c, str) and c != "—" and not c.startswith("100%")]
+            if _short:
+                st.caption(
+                    "⚠ **Measured %** = share of that strategy's *graded* closed "
+                    "trades whose realised P&L is broker-measured. The rest are "
+                    "best estimates, so **Total P&L $** for those rows is not "
+                    "broker truth. “—” means the bot graded none of them — that "
+                    "is *unknown*, not *measured*.")
 
 
 # ── Overview ──────────────────────────────────────────────────────────────────
