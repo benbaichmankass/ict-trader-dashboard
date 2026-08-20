@@ -65,3 +65,34 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt
       - run: python -m py_compile streamlit_app.py
+
+  webapp-api-contract:
+    # THE SPA HAD NO PR-BLOCKING CHECK OF ANY KIND until this job. `ci.yml`
+    # covered only the Streamlit app (ruff + py_compile, both Python), and
+    # `pages.yml` builds the SPA on push to main — i.e. AFTER merge, at deploy
+    # time. A broken SPA merged freely and shipped.
+    #
+    # What this catches, concretely: `Prop.svelte` read
+    # `rd?.daily_loss_remaining` and `rd?.static_dd_remaining` from 2026-07-16
+    # (#194) to 2026-08-20. Neither key has ever existed on
+    # /api/bot/prop/status. Both reads resolved to null, so BOTH account-killer
+    # cushions rendered as an em-dash — the app's own convention for a value the
+    # producer did not send — and the thin-cushion alert, guarded on `!= null`,
+    # was unreachable for 35 days on the panel whose only job is to warn before
+    # a breach. Streamlit read the correct keys throughout.
+    #
+    # Zero dependencies (plain node, no install) so this stays fast and cannot
+    # rot on a lockfile. The checker refuses to report success over an empty
+    # population, and `--self-test` plants the historical defect and requires
+    # the checker to catch it — a gate that cannot fail proves nothing.
+    name: webapp-api-contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Prove the checker can fail
+        run: node webapp/tests/api-contract.mjs --self-test
+      - name: Every field a route reads must exist in its recorded payload
+        run: node webapp/tests/api-contract.mjs
