@@ -33,8 +33,44 @@
   onMount(load);
 
   const rd = $derived(status?.rule_distance ?? null);
-  const dailyLeft = $derived(rd?.daily_loss_remaining ?? null);
-  const ddLeft = $derived(rd?.static_dd_remaining ?? null);
+  // BL-20260820-SPA-PROP-RULE-DISTANCE-DEAD-KEYS: these read
+  // `daily_loss_remaining` / `static_dd_remaining` from 2026-07-16 (#194) to
+  // 2026-08-20. Neither key has ever existed on the payload, so BOTH cushions
+  // rendered as an em-dash — indistinguishable from a genuinely absent value —
+  // and the `!= null` guard on the thin-cushion alert below made that alert
+  // UNREACHABLE for 35 days, on the panel whose only job is to warn before an
+  // account-killer breach. The real names are the ones the producer emits and
+  // the Streamlit app has always read (streamlit_app.py:8183,8187).
+  const dailyLeft = $derived(rd?.distance_to_daily_loss_usd ?? null);
+  const ddLeft = $derived(rd?.distance_to_dd_floor_usd ?? null);
+
+  // Freshness is NOT decoration and must not be dropped again. The manual
+  // bridge has no broker feed, so every distance above is a function of ONE
+  // operator-reported snapshot; a three-week-old row renders a full-looking
+  // cushion that is byte-identical to a live one. The bot publishes
+  // `status_freshness` for exactly this reason and the contract says to read it
+  // before treating any distance as a live cushion. Four states, never
+  // collapsed — `ok` / `stale` (too old, OR undateable: a row that cannot be
+  // dated cannot be shown to be current, and the fail-safe reading of a safety
+  // cushion is stale) / `absent` (nothing ever reported) / `unchecked` (the
+  // threshold is off — *we did not look*, which is NOT ok). A fifth, `error`,
+  // rides on the envelope when the read itself failed.
+  const freshness = $derived(
+    String(status?.status_freshness ?? rd?.status_freshness ?? "unknown"),
+  );
+  const ageHours = $derived(
+    status?.status_age_hours ?? rd?.status_age_hours ?? null,
+  );
+  const FRESHNESS_NOTE: Record<string, string> = {
+    ok: "",
+    stale: "the snapshot is older than the freshness threshold, or cannot be dated — treat every figure below as a LAST-KNOWN cushion, not a live one",
+    absent: "no account status has ever been reported for this account",
+    unchecked: "the freshness check is switched off — nothing established whether this snapshot is current",
+    error: "the freshness of this snapshot could not be read",
+    unknown: "this build could not read a freshness verdict from the payload",
+  };
+  const freshnessClass = $derived(freshness === "ok" ? "pos" : "warn");
+
   // Cushion severity: loud when a killer limit is close.
   function cushionClass(v: number | null): string {
     if (v == null) return "flat";
@@ -69,6 +105,25 @@
         </div>
         {#if (dailyLeft != null && dailyLeft <= 25) || (ddLeft != null && ddLeft <= 25)}
           <div class="alert neg">⚠ A killer limit is very close — the cushion is thin.</div>
+        {/if}
+        {#if dailyLeft == null && ddLeft == null}
+          <div class="alert warn">
+            ⚠ Neither cushion could be read from this snapshot — this is a
+            <strong>failure to measure</strong>, not a wide cushion.
+          </div>
+        {/if}
+        {#if freshness !== "ok"}
+          <div class="alert {freshnessClass}">
+            ⚠ Snapshot freshness: <span class="mono">{freshness}</span>{ageHours == null
+              ? ""
+              : ` · ${num(ageHours, 1)} h old`} — {FRESHNESS_NOTE[freshness] ??
+              FRESHNESS_NOTE.unknown}
+          </div>
+        {:else}
+          <div class="muted small">
+            Snapshot {ageHours == null ? "age unknown" : `${num(ageHours, 1)} h old`} · freshness
+            <span class="mono">ok</span>
+          </div>
         {/if}
       {/if}
     </div>
@@ -164,6 +219,11 @@
   .metric.warn .mval { color: #e0a800; }
   .alert { margin-top: 10px; font-size: 13px; }
   .alert.neg { color: var(--neg); }
+  /* The freshness caveat must be legible, not decorative: a cushion whose
+     snapshot cannot be shown to be current is a different claim from a wide
+     cushion, and the reader has to be able to tell at a glance. */
+  .alert.warn { color: #e0a800; }
+  .small { font-size: 12px; }
   .recon { font-size: 13px; }
   .unacted { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
   .urow { display: flex; gap: 10px; font-size: 13px; align-items: center; }

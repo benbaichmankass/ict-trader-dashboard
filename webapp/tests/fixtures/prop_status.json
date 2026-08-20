@@ -1,0 +1,43 @@
+{
+  "account_id": "breakout_1",
+  "present": true,
+  "rule_distance": {
+    "account_id": "breakout_1",
+    "account_size_usd": 5000.0,
+    "as_of": "2026-08-19T22:21:31.518013+00:00",
+    "balance": 4983.0,
+    "balance_basis": "snapshot",
+    "daily_loss_limit_usd": 149.48999999999998,
+    "daily_loss_pct": 0.03,
+    "daily_loss_used_usd": 0.0,
+    "day_pnl": 0.0,
+    "distance_to_daily_loss_usd": 149.48999999999998,
+    "distance_to_dd_floor_usd": 283.0,
+    "equity": 4983.0,
+    "equity_provenance": "measured",
+    "equity_used_usd": 4983.0,
+    "fills_applied_since_snapshot": 0,
+    "fills_pnl_since_snapshot_usd": 0.0,
+    "max_drawdown_pct": 0.06,
+    "static_dd_floor_usd": 4700.0,
+    "status_age_hours": 12.008192102499999,
+    "status_freshness": "ok",
+    "status_max_age_hours": 24.0,
+    "status_present": true
+  },
+  "status": {
+    "account_id": "breakout_1",
+    "balance": 4983.0,
+    "created_at": "2026-08-19T22:21:31.518053+00:00",
+    "day_start_balance": null,
+    "drawdown": null,
+    "equity": 4983.0,
+    "id": 9,
+    "raw": "{\"kind\": \"account_status\", \"account_id\": \"breakout_1\", \"balance\": 4983.0, \"equity\": 4983.0, \"unrealized\": 0.0}",
+    "realized_today": null,
+    "reported_at": "2026-08-19T22:21:31.518013+00:00",
+    "unrealized": 0.0
+  },
+  "status_age_hours": 12.008192102499999,
+  "status_freshness": "ok"
+}
