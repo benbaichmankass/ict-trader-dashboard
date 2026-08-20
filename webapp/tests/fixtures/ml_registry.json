@@ -1,0 +1,1924 @@
+{
+  "mirror_path": "/data/bot-data/runtime_logs/trainer_mirror",
+  "mirror_present": true,
+  "trainer_status_present": true,
+  "mirror_age_seconds": 82.99250721931458,
+  "count": 95,
+  "rows": [
+    {
+      "code_revision": "gpu-burst-reingest",
+      "created_at": "2026-07-02T21:54:32.464455+00:00",
+      "history": [
+        {
+          "at": "2026-07-02T21:54:32.464455+00:00",
+          "by": "gpu-burst",
+          "from_status": null,
+          "reason": "initial registration",
+          "to_status": "candidate"
+        }
+      ],
+      "manifest": {
+        "dataset": {
+          "family": "market_features",
+          "symbol_scope": "BTCUSDT",
+          "timeframe": "15m",
+          "version": "v002"
+        },
+        "description": "v2 LightGBM regime classifier for BTCUSDT 15m bars (the timeframe turtle_soup trades) \u2014 same target as baseline-v1 but with continuous vol + log-return features. Shadow context signal.",
+        "evaluator": "ml.evaluators.multiclass_classification.MulticlassClassificationEvaluator",
+        "evaluator_config": {
+          "holdout_fraction": 0.2,
+          "split_strategy": "time_aware_holdout",
+          "target_column": "regime_label",
+          "time_column": "ts"
+        },
+        "manifest_version": "v1",
+        "model_family": "classification_lightgbm",
+        "model_id": "btc-regime-15m-lgbm-v2-gpuburst",
+        "notes": "v2 LightGBM head, BTCUSDT @ 15m. Direct A/B vs the per-bucket-modal\nbaseline-v1 (same dataset, same split). Leakage gate forbids\nforward_log_return / forward_log_return_vol / regime_label.\n",
+        "target_deployment_stage": "candidate",
+        "trainer": "ml.trainers.lightgbm_multiclass.LightGBMMulticlassTrainer",
+        "trainer_config": {
+          "categorical_columns": [
+            "vol_bucket",
+            "hour_of_day",
+            "dayofweek"
+          ],
+          "class_weight": {
+            "range": 1.0,
+            "volatile": 28.0
+          },
+          "feature_columns": [
+            "vol_bucket",
+            "rolling_log_return_vol",
+            "log_return",
+            "log_return_lag_1",
+            "log_return_lag_2",
+            "hour_of_day",
+            "dayofweek"
+          ],
+          "freeze_regime_spec": true,
+          "lgbm_params": {
+            "bagging_fraction": 0.9,
+            "bagging_freq": 5,
+            "feature_fraction": 0.9,
+            "learning_rate": 0.05,
+            "min_data_in_leaf": 50,
+            "num_leaves": 31
+          },
+          "n_iter": 200,
+          "sample_weight": {
+            "half_life_days": 60,
+            "time_column": "ts"
+          },
+          "seed": 42,
+          "target_column": "regime_label",
+          "vol_feature_column": "rolling_log_return_vol",
+          "vol_window_n": 20
+        }
+      },
+      "metrics": {
+        "accuracy": 0.8976721629485936,
+        "f1_range": 0.9452491795771961,
+        "f1_volatile": 0.21902895710864356,
+        "macro_f1": 0.5821390683429198,
+        "n_eval": 35054.0,
+        "precision_range": 0.9852047472079927,
+        "precision_volatile": 0.13875862068965517,
+        "recall_range": 0.9084081441060846,
+        "recall_volatile": 0.5196280991735537,
+        "support_range": 34086.0,
+        "support_volatile": 968.0,
+        "weighted_f1": 0.9251949439593049
+      },
+      "model_id": "btc-regime-15m-lgbm-v2-gpuburst",
+      "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/btc-regime-15m-lgbm-v2-gpuburst/20260702T204526Z/model_state.json",
+      "notes": "",
+      "runs": [
+        {
+          "at": "2026-07-02T21:54:32.464455+00:00",
+          "by": "gpu-burst",
+          "code_revision": "gpu-burst-reingest",
+          "metrics": {
+            "accuracy": 0.8976721629485936,
+            "f1_range": 0.9452491795771961,
+            "f1_volatile": 0.21902895710864356,
+            "macro_f1": 0.5821390683429198,
+            "n_eval": 35054.0,
+            "precision_range": 0.9852047472079927,
+            "precision_volatile": 0.13875862068965517,
+            "recall_range": 0.9084081441060846,
+            "recall_volatile": 0.5196280991735537,
+            "support_range": 34086.0,
+            "support_volatile": 968.0,
+            "weighted_f1": 0.9251949439593049
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/btc-regime-15m-lgbm-v2-gpuburst/20260702T204526Z/model_state.json",
+          "run_id": "20260702T204526Z"
+        }
+      ],
+      "stage_history": [],
+      "status": "candidate",
+      "target_deployment_stage": "candidate",
+      "linked_strategies": [],
+      "deployment_bucket": "OFFLINE",
+      "model_family": "classification_lightgbm",
+      "trainer": "ml.trainers.lightgbm_multiclass.LightGBMMulticlassTrainer",
+      "evaluator": "ml.evaluators.multiclass_classification.MulticlassClassificationEvaluator",
+      "dataset_ref": {
+        "family": "market_features",
+        "symbol_scope": "BTCUSDT",
+        "timeframe": "15m",
+        "version": "v002"
+      },
+      "latest_run": {
+        "at": "2026-07-02T21:54:32.464455+00:00",
+        "by": "gpu-burst",
+        "code_revision": "gpu-burst-reingest",
+        "metrics": {
+          "accuracy": 0.8976721629485936,
+          "f1_range": 0.9452491795771961,
+          "f1_volatile": 0.21902895710864356,
+          "macro_f1": 0.5821390683429198,
+          "n_eval": 35054.0,
+          "precision_range": 0.9852047472079927,
+          "precision_volatile": 0.13875862068965517,
+          "recall_range": 0.9084081441060846,
+          "recall_volatile": 0.5196280991735537,
+          "support_range": 34086.0,
+          "support_volatile": 968.0,
+          "weighted_f1": 0.9251949439593049
+        },
+        "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/btc-regime-15m-lgbm-v2-gpuburst/20260702T204526Z/model_state.json",
+        "run_id": "20260702T204526Z"
+      },
+      "description": "v2 LightGBM regime classifier for BTCUSDT 15m bars (the timeframe turtle_soup trades) \u2014 same target as baseline-v1 but with continuous vol + log-return features. Shadow context signal."
+    },
+    {
+      "code_revision": "8807d66c4a06095934441b6362eee2770269a76a",
+      "created_at": "2026-08-02T04:28:36.703461+00:00",
+      "history": [
+        {
+          "at": "2026-08-02T04:28:36.703461+00:00",
+          "by": "experiments-runner",
+          "from_status": null,
+          "reason": "initial registration",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-02T04:32:18.187928+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260802T043218Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-04T02:12:17.794566+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260804T021217Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-05T01:44:40.326377+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260805T014440Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-06T01:44:57.005499+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260806T014457Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-07T01:23:58.284277+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260807T012358Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-08T01:11:37.807924+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260808T011137Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-09T01:29:29.589132+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260809T012929Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-10T01:13:46.636213+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260810T011346Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-11T00:56:43.040770+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260811T005643Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-12T01:42:05.702650+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260812T014205Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-13T02:12:15.100160+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260813T021215Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-14T01:48:36.317684+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260814T014836Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-15T00:41:33.503924+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260815T004133Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-16T01:13:29.460933+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260816T011329Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-17T01:29:34.284092+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260817T012934Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-18T01:45:06.595735+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260818T014506Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-19T01:31:33.555245+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260819T013133Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-20T01:08:32.326993+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260820T010832Z)",
+          "to_status": "candidate"
+        }
+      ],
+      "manifest": {
+        "dataset": {
+          "family": "setup_labels",
+          "symbol_scope": "MES",
+          "timeframe": "all",
+          "version": "v002"
+        },
+        "description": "Baseline regressor scoring trade-setup quality for MES (Micro E-mini S&P 500) from engineered setup labels. Per-strategy historical-mean baseline. Shadow-stage.",
+        "evaluator": "ml.evaluators.regression.RegressionEvaluator",
+        "evaluator_config": {
+          "holdout_fraction": 0.2,
+          "metrics": [
+            "mse",
+            "mae"
+          ],
+          "split_strategy": "time_aware_holdout",
+          "target_column": "r_multiple",
+          "time_column": "created_at"
+        },
+        "manifest_version": "v1",
+        "model_family": "regression_baseline",
+        "model_id": "mes-setup-quality-baseline-v0",
+        "notes": "MES starter baseline. Per-setup_type mean R-multiple over closed\nMES trades. Time-aware holdout (latest 20 % by created_at).\nRegisters at `shadow`. Leakage discipline: only metadata columns\n(`setup_type`, `killzone`, `bias`, `direction`) are features.\n",
+        "target_deployment_stage": "shadow",
+        "trainer": "ml.trainers.per_strategy_winrate.PerStrategyWinRateTrainer",
+        "trainer_config": {
+          "feature_column": "setup_type",
+          "target_column": "r_multiple",
+          "target_kind": "numeric_mean"
+        }
+      },
+      "metrics": {
+        "mae": 1.1196628571428573,
+        "mse": 1.8254639073469388,
+        "n_eval": 5.0
+      },
+      "model_id": "mes-setup-quality-baseline-v0",
+      "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260820T010832Z/model_state.json",
+      "notes": "MES starter baseline. Per-setup_type mean R-multiple over closed\nMES trades. Time-aware holdout (latest 20 % by created_at).\nRegisters at `shadow`. Leakage discipline: only metadata columns\n(`setup_type`, `killzone`, `bias`, `direction`) are features.\n",
+      "runs": [
+        {
+          "at": "2026-08-02T04:28:36.703461+00:00",
+          "by": "experiments-runner",
+          "code_revision": "75a8f2a4290b2269e364dbed5ec7820689bc3ed1",
+          "metrics": {
+            "mae": 0.5946008844097077,
+            "mse": 0.557075693864099,
+            "n_eval": 110.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260802T042836Z/model_state.json",
+          "run_id": "20260802T042836Z"
+        },
+        {
+          "at": "2026-08-02T04:32:18.187928+00:00",
+          "by": "experiments-runner",
+          "code_revision": "a77d1669f1dbda1644e20a2f6719d79b1c262115",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260802T043218Z/model_state.json",
+          "run_id": "20260802T043218Z"
+        },
+        {
+          "at": "2026-08-04T02:12:17.794566+00:00",
+          "by": "experiments-runner",
+          "code_revision": "0ed8a5a6e0fd7e422ea7b74b7e31e4cc1a769b46",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260804T021217Z/model_state.json",
+          "run_id": "20260804T021217Z"
+        },
+        {
+          "at": "2026-08-05T01:44:40.326377+00:00",
+          "by": "experiments-runner",
+          "code_revision": "40ccc4cf673f4157c46dbbe19fc4452e225f17ca",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260805T014440Z/model_state.json",
+          "run_id": "20260805T014440Z"
+        },
+        {
+          "at": "2026-08-06T01:44:57.005499+00:00",
+          "by": "experiments-runner",
+          "code_revision": "7485fd5f5c67b6569941653b6802a7c11a7aec98",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260806T014457Z/model_state.json",
+          "run_id": "20260806T014457Z"
+        },
+        {
+          "at": "2026-08-07T01:23:58.284277+00:00",
+          "by": "experiments-runner",
+          "code_revision": "9d7786e1acbd3b5ef25f36a91e3a72b47453b9ce",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260807T012358Z/model_state.json",
+          "run_id": "20260807T012358Z"
+        },
+        {
+          "at": "2026-08-08T01:11:37.807924+00:00",
+          "by": "experiments-runner",
+          "code_revision": "250efec0eef4452e04a3024489f30db902fb3cf5",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260808T011137Z/model_state.json",
+          "run_id": "20260808T011137Z"
+        },
+        {
+          "at": "2026-08-09T01:29:29.589132+00:00",
+          "by": "experiments-runner",
+          "code_revision": "2b979ad075c3e56cbae05efdbc996328e2c200a9",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260809T012929Z/model_state.json",
+          "run_id": "20260809T012929Z"
+        },
+        {
+          "at": "2026-08-10T01:13:46.636213+00:00",
+          "by": "experiments-runner",
+          "code_revision": "173ce35daa768fca365e670227a6f60f6b4d940d",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260810T011346Z/model_state.json",
+          "run_id": "20260810T011346Z"
+        },
+        {
+          "at": "2026-08-11T00:56:43.040770+00:00",
+          "by": "experiments-runner",
+          "code_revision": "00f86d435c628b15ee2f676ae48a25ff850ac23d",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260811T005643Z/model_state.json",
+          "run_id": "20260811T005643Z"
+        },
+        {
+          "at": "2026-08-12T01:42:05.702650+00:00",
+          "by": "experiments-runner",
+          "code_revision": "dbe5b660837993b279b71a263999cec471e3e764",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260812T014205Z/model_state.json",
+          "run_id": "20260812T014205Z"
+        },
+        {
+          "at": "2026-08-13T02:12:15.100160+00:00",
+          "by": "experiments-runner",
+          "code_revision": "7f0955e9e98c12c95160da4e3467c46bcf4ef524",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260813T021215Z/model_state.json",
+          "run_id": "20260813T021215Z"
+        },
+        {
+          "at": "2026-08-14T01:48:36.317684+00:00",
+          "by": "experiments-runner",
+          "code_revision": "317193c7c22b03d8141d6a784a610fda8fd89ccb",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260814T014836Z/model_state.json",
+          "run_id": "20260814T014836Z"
+        },
+        {
+          "at": "2026-08-15T00:41:33.503924+00:00",
+          "by": "experiments-runner",
+          "code_revision": "b659a68af7eb746daaba4a384605860449b6f04d",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260815T004133Z/model_state.json",
+          "run_id": "20260815T004133Z"
+        },
+        {
+          "at": "2026-08-16T01:13:29.460933+00:00",
+          "by": "experiments-runner",
+          "code_revision": "5d5bbb67d7c00c2ad1e74d1958c7857b5133742f",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260816T011329Z/model_state.json",
+          "run_id": "20260816T011329Z"
+        },
+        {
+          "at": "2026-08-17T01:29:34.284092+00:00",
+          "by": "experiments-runner",
+          "code_revision": "4c50bb134924579869d5b70213defab4d6eec117",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260817T012934Z/model_state.json",
+          "run_id": "20260817T012934Z"
+        },
+        {
+          "at": "2026-08-18T01:45:06.595735+00:00",
+          "by": "experiments-runner",
+          "code_revision": "08dc9987d7d060341c9a17ef73aca8fcf973223b",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260818T014506Z/model_state.json",
+          "run_id": "20260818T014506Z"
+        },
+        {
+          "at": "2026-08-19T01:31:33.555245+00:00",
+          "by": "experiments-runner",
+          "code_revision": "8d748ee071333bad95d5619a4b014cb3cb9cf7e7",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260819T013133Z/model_state.json",
+          "run_id": "20260819T013133Z"
+        },
+        {
+          "at": "2026-08-20T01:08:32.326993+00:00",
+          "by": "experiments-runner",
+          "code_revision": "8807d66c4a06095934441b6362eee2770269a76a",
+          "metrics": {
+            "mae": 1.1196628571428573,
+            "mse": 1.8254639073469388,
+            "n_eval": 5.0
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260820T010832Z/model_state.json",
+          "run_id": "20260820T010832Z"
+        }
+      ],
+      "stage_history": [],
+      "status": "candidate",
+      "target_deployment_stage": "shadow",
+      "linked_strategies": [
+        "turtle_soup",
+        "trend_donchian",
+        "fade_breakout_4h",
+        "squeeze_breakout_4h",
+        "vwap",
+        "ict_scalp_5m",
+        "fvg_range_15m",
+        "htf_pullback_trend_2h",
+        "trend_donchian_sol",
+        "trend_donchian_eth",
+        "trend_donchian_sol_prop",
+        "trend_donchian_eth_prop",
+        "trend_donchian_eth_4h",
+        "trend_donchian_sol_4h",
+        "trend_donchian_xrp_4h",
+        "trend_donchian_ada_4h",
+        "trend_donchian_avax_4h",
+        "mes_trend_long_1d",
+        "eth_pullback_2h",
+        "eth_pullback_prop_2h",
+        "sol_pullback_2h",
+        "xrp_pullback_2h",
+        "ada_pullback_2h",
+        "avax_pullback_2h"
+      ],
+      "deployment_bucket": "SHADOW",
+      "model_family": "regression_baseline",
+      "trainer": "ml.trainers.per_strategy_winrate.PerStrategyWinRateTrainer",
+      "evaluator": "ml.evaluators.regression.RegressionEvaluator",
+      "dataset_ref": {
+        "family": "setup_labels",
+        "symbol_scope": "MES",
+        "timeframe": "all",
+        "version": "v002"
+      },
+      "latest_run": {
+        "at": "2026-08-20T01:08:32.326993+00:00",
+        "by": "experiments-runner",
+        "code_revision": "8807d66c4a06095934441b6362eee2770269a76a",
+        "metrics": {
+          "mae": 1.1196628571428573,
+          "mse": 1.8254639073469388,
+          "n_eval": 5.0
+        },
+        "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-setup-quality-baseline-v0/20260820T010832Z/model_state.json",
+        "run_id": "20260820T010832Z"
+      },
+      "description": "Baseline regressor scoring trade-setup quality for MES (Micro E-mini S&P 500) from engineered setup labels. Per-strategy historical-mean baseline. Shadow-stage."
+    },
+    {
+      "code_revision": "8807d66c4a06095934441b6362eee2770269a76a",
+      "created_at": "2026-07-21T05:42:10.387168+00:00",
+      "history": [
+        {
+          "at": "2026-07-21T05:42:10.387168+00:00",
+          "by": "experiments-runner",
+          "from_status": null,
+          "reason": "initial registration",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-07-21T06:19:12.282085+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260721T061912Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-07-22T01:49:45.331299+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260722T014945Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-07-23T01:59:43.097292+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260723T015943Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-07-24T01:56:43.445264+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260724T015643Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-07-24T06:05:43.001349+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260724T060542Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-07-25T01:23:22.116970+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260725T012322Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-07-26T01:52:45.464687+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260726T015245Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-07-26T06:05:17.209086+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260726T060517Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-07-27T01:57:33.705104+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260727T015733Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-07-28T01:01:46.552614+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260728T010146Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-07-29T01:52:10.260936+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260729T015210Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-07-30T01:50:30.990194+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260730T015030Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-07-31T01:57:23.765638+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260731T015723Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-07-31T10:52:03.975303+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260731T105203Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-01T01:14:46.553693+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260801T011446Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-02T02:11:26.795775+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260802T021126Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-03T01:24:40.224226+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260803T012440Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-04T02:16:17.030024+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260804T021617Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-05T01:48:30.289943+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260805T014830Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-06T01:48:43.212278+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260806T014843Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-07T01:27:49.119390+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260807T012749Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-08T01:15:27.829342+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260808T011527Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-09T01:33:14.803454+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260809T013314Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-10T01:17:41.247907+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260810T011741Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-11T01:00:31.420708+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260811T010031Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-12T01:45:53.485526+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260812T014553Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-13T02:20:42.932676+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260813T022042Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-14T01:52:24.741897+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260814T015224Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-15T00:45:30.131248+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260815T004530Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-16T01:17:28.815115+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260816T011728Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-17T01:33:17.735443+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260817T013317Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-18T01:48:54.871072+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260818T014854Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-19T01:35:19.411948+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260819T013519Z)",
+          "to_status": "candidate"
+        },
+        {
+          "at": "2026-08-20T01:12:19.908697+00:00",
+          "by": "experiments-runner",
+          "from_status": "candidate",
+          "reason": "re-trained (run_id=20260820T011219Z)",
+          "to_status": "candidate"
+        }
+      ],
+      "manifest": {
+        "dataset": {
+          "family": "market_features",
+          "symbol_scope": "SOLUSDT",
+          "timeframe": "15m",
+          "version": "v002"
+        },
+        "description": "fc-pcv refresh sibling (v2): SOLUSDT 15m regime head base + 6 frozen chronos-bolt-tiny quantile-forecast features (fc_*) on the NIGHTLY-REBUILT dataset v002 (fresh forecast side-stream). Fresh-data counterpart to the frozen-v530 advisory head sol-regime-15m-lgbm-fc-pcv-v1; soaks at shadow toward a gate-checked swap. Remediates MB-20260720-FCPCV-RETRAIN-NOOP.",
+        "evaluator": "ml.evaluators.multiclass_classification.MulticlassClassificationEvaluator",
+        "evaluator_config": {
+          "embargo_fraction": 0.01,
+          "label_horizon": 5,
+          "min_train_fraction": 0.5,
+          "n_folds": 5,
+          "split_strategy": "purged_walk_forward",
+          "target_column": "regime_label",
+          "time_column": "ts"
+        },
+        "manifest_version": "v1",
+        "model_family": "classification_lightgbm",
+        "model_id": "sol-regime-15m-lgbm-fc-pcv-v2",
+        "notes": "fc-pcv refresh sibling on the nightly-fresh v002 dataset (fc_* added to the\nSOL 15m v002 build 2026-07-21 by rebuilding the forecast side-stream nightly;\nSOL 15m rebuilds on the alternating-night intraday cadence). Soaks at shadow \u2014\nlogs predictions, never order-influencing until an operator-gated\nshadow->advisory swap replaces the frozen v1. fc_* are past-only (frozen\nchronos-bolt-tiny forecast \u2014 see ml/datasets/forecast_features.py). Leakage\ngate forbids forward_log_return / forward_log_return_vol / regime_label.\nCompare against sol-regime-15m-lgbm-fc-pcv-v1 (frozen v530) once v2 has soaked.\n",
+        "target_deployment_stage": "shadow",
+        "trainer": "ml.trainers.lightgbm_multiclass.LightGBMMulticlassTrainer",
+        "trainer_config": {
+          "categorical_columns": [
+            "vol_bucket",
+            "hour_of_day",
+            "dayofweek"
+          ],
+          "class_weight": {
+            "range": 1.0,
+            "volatile": 28.0
+          },
+          "feature_columns": [
+            "vol_bucket",
+            "rolling_log_return_vol",
+            "log_return",
+            "log_return_lag_1",
+            "log_return_lag_2",
+            "hour_of_day",
+            "dayofweek",
+            "fc_ret_med",
+            "fc_range_rel",
+            "fc_up_prob",
+            "fc_skew",
+            "fc_q10_rel",
+            "fc_q90_rel"
+          ],
+          "freeze_regime_spec": true,
+          "lgbm_params": {
+            "bagging_fraction": 0.9,
+            "bagging_freq": 5,
+            "feature_fraction": 0.9,
+            "learning_rate": 0.05,
+            "min_data_in_leaf": 50,
+            "num_leaves": 31
+          },
+          "n_iter": 200,
+          "sample_weight": {
+            "half_life_days": 60,
+            "time_column": "ts"
+          },
+          "seed": 42,
+          "target_column": "regime_label",
+          "vol_feature_column": "rolling_log_return_vol",
+          "vol_window_n": 20
+        }
+      },
+      "metrics": {
+        "accuracy": 0.6275133022554975,
+        "f1_range": 0.7199247584574543,
+        "f1_volatile": 0.37614109319689,
+        "macro_f1": 0.5480329258271721,
+        "n_eval": 84948.0,
+        "n_folds": 5.0,
+        "n_train_final": 169896.0,
+        "precision_range": 0.960034667931119,
+        "precision_volatile": 0.2435645731370719,
+        "recall_range": 0.5835590487801451,
+        "recall_volatile": 0.8339467580151053,
+        "support_range": 73029.0,
+        "support_volatile": 11919.0,
+        "weighted_f1": 0.6789373474038785
+      },
+      "model_id": "sol-regime-15m-lgbm-fc-pcv-v2",
+      "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260820T011219Z/model_state.json",
+      "notes": "fc-pcv refresh sibling on the nightly-fresh v002 dataset (fc_* added to the\nSOL 15m v002 build 2026-07-21 by rebuilding the forecast side-stream nightly;\nSOL 15m rebuilds on the alternating-night intraday cadence). Soaks at shadow \u2014\nlogs predictions, never order-influencing until an operator-gated\nshadow->advisory swap replaces the frozen v1. fc_* are past-only (frozen\nchronos-bolt-tiny forecast \u2014 see ml/datasets/forecast_features.py). Leakage\ngate forbids forward_log_return / forward_log_return_vol / regime_label.\nCompare against sol-regime-15m-lgbm-fc-pcv-v1 (frozen v530) once v2 has soaked.\n",
+      "runs": [
+        {
+          "at": "2026-07-21T05:42:10.387168+00:00",
+          "by": "experiments-runner",
+          "code_revision": "83c4c524b26940f07c4b2ad8d43565a0d36805be",
+          "metrics": {
+            "accuracy": 0.5600661014513579,
+            "f1_range": 0.6469162587538535,
+            "f1_volatile": 0.36983849865712287,
+            "macro_f1": 0.5083773787054882,
+            "n_eval": 83508.0,
+            "n_folds": 5.0,
+            "n_train_final": 167016.0,
+            "precision_range": 0.9634810985481477,
+            "precision_volatile": 0.23448637266886824,
+            "recall_range": 0.4945302561003161,
+            "recall_volatile": 0.8843365331685157,
+            "support_range": 70944.0,
+            "support_volatile": 12564.0,
+            "weighted_f1": 0.6118854461702663
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260721T054210Z/model_state.json",
+          "run_id": "20260721T054210Z"
+        },
+        {
+          "at": "2026-07-21T06:19:12.282085+00:00",
+          "by": "experiments-runner",
+          "code_revision": "dddc5ff8b8a197e35c849f19dcba6162e0c50cfc",
+          "metrics": {
+            "accuracy": 0.615713464578244,
+            "f1_range": 0.7063588506298156,
+            "f1_volatile": 0.3908342590859852,
+            "macro_f1": 0.5485965548579004,
+            "n_eval": 83508.0,
+            "n_folds": 5.0,
+            "n_train_final": 167016.0,
+            "precision_range": 0.9566576510699564,
+            "precision_volatile": 0.2550027818656634,
+            "recall_range": 0.5668813400051195,
+            "recall_volatile": 0.8423865303992044,
+            "support_range": 70944.0,
+            "support_volatile": 12564.0,
+            "weighted_f1": 0.6650261368538922
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260721T061912Z/model_state.json",
+          "run_id": "20260721T061912Z"
+        },
+        {
+          "at": "2026-07-22T01:49:45.331299+00:00",
+          "by": "experiments-runner",
+          "code_revision": "2a21ed58d3d1185ea15f6a22b84b2fd39b4a79b7",
+          "metrics": {
+            "accuracy": 0.615713464578244,
+            "f1_range": 0.7063588506298156,
+            "f1_volatile": 0.3908342590859852,
+            "macro_f1": 0.5485965548579004,
+            "n_eval": 83508.0,
+            "n_folds": 5.0,
+            "n_train_final": 167016.0,
+            "precision_range": 0.9566576510699564,
+            "precision_volatile": 0.2550027818656634,
+            "recall_range": 0.5668813400051195,
+            "recall_volatile": 0.8423865303992044,
+            "support_range": 70944.0,
+            "support_volatile": 12564.0,
+            "weighted_f1": 0.6650261368538922
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260722T014945Z/model_state.json",
+          "run_id": "20260722T014945Z"
+        },
+        {
+          "at": "2026-07-23T01:59:43.097292+00:00",
+          "by": "experiments-runner",
+          "code_revision": "c2f9a5e0584b2f067155190df1395da3993ff8ff",
+          "metrics": {
+            "accuracy": 0.6145519353140998,
+            "f1_range": 0.7051684073917213,
+            "f1_volatile": 0.3905947297595192,
+            "macro_f1": 0.5478815685756202,
+            "n_eval": 83604.0,
+            "n_folds": 5.0,
+            "n_train_final": 167208.0,
+            "precision_range": 0.95756897045024,
+            "precision_volatile": 0.2545150700853501,
+            "recall_range": 0.5652073430281596,
+            "recall_volatile": 0.8458924578320387,
+            "support_range": 71064.0,
+            "support_volatile": 12540.0,
+            "weighted_f1": 0.6640156517541663
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260723T015943Z/model_state.json",
+          "run_id": "20260723T015943Z"
+        },
+        {
+          "at": "2026-07-24T01:56:43.445264+00:00",
+          "by": "experiments-runner",
+          "code_revision": "3138907ffeeb7d1ebce75a4c23a5c9158446287b",
+          "metrics": {
+            "accuracy": 0.6145519353140998,
+            "f1_range": 0.7051684073917213,
+            "f1_volatile": 0.3905947297595192,
+            "macro_f1": 0.5478815685756202,
+            "n_eval": 83604.0,
+            "n_folds": 5.0,
+            "n_train_final": 167208.0,
+            "precision_range": 0.95756897045024,
+            "precision_volatile": 0.2545150700853501,
+            "recall_range": 0.5652073430281596,
+            "recall_volatile": 0.8458924578320387,
+            "support_range": 71064.0,
+            "support_volatile": 12540.0,
+            "weighted_f1": 0.6640156517541663
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260724T015643Z/model_state.json",
+          "run_id": "20260724T015643Z"
+        },
+        {
+          "at": "2026-07-24T06:05:43.001349+00:00",
+          "by": "experiments-runner",
+          "code_revision": "9339c7f59d2dcc223eda8bcc27d27035334c9091",
+          "metrics": {
+            "accuracy": 0.6145519353140998,
+            "f1_range": 0.7051684073917213,
+            "f1_volatile": 0.3905947297595192,
+            "macro_f1": 0.5478815685756202,
+            "n_eval": 83604.0,
+            "n_folds": 5.0,
+            "n_train_final": 167208.0,
+            "precision_range": 0.95756897045024,
+            "precision_volatile": 0.2545150700853501,
+            "recall_range": 0.5652073430281596,
+            "recall_volatile": 0.8458924578320387,
+            "support_range": 71064.0,
+            "support_volatile": 12540.0,
+            "weighted_f1": 0.6640156517541663
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260724T060542Z/model_state.json",
+          "run_id": "20260724T060542Z"
+        },
+        {
+          "at": "2026-07-25T01:23:22.116970+00:00",
+          "by": "experiments-runner",
+          "code_revision": "a8ee6762ebc85e897cf86125f4de474899a211f6",
+          "metrics": {
+            "accuracy": 0.6173715651135006,
+            "f1_range": 0.7085275259060564,
+            "f1_volatile": 0.39104279557701777,
+            "macro_f1": 0.5497851607415369,
+            "n_eval": 83700.0,
+            "n_folds": 5.0,
+            "n_train_final": 167400.0,
+            "precision_range": 0.9578718984103313,
+            "precision_volatile": 0.25496490928391985,
+            "recall_range": 0.5689777043818752,
+            "recall_volatile": 0.8447985251879523,
+            "support_range": 71188.0,
+            "support_volatile": 12512.0,
+            "weighted_f1": 0.6670005655613611
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260725T012322Z/model_state.json",
+          "run_id": "20260725T012322Z"
+        },
+        {
+          "at": "2026-07-26T01:52:45.464687+00:00",
+          "by": "experiments-runner",
+          "code_revision": "164fe7792e155ef55c35e1aa927ee069b790c55c",
+          "metrics": {
+            "accuracy": 0.6173715651135006,
+            "f1_range": 0.7085275259060564,
+            "f1_volatile": 0.39104279557701777,
+            "macro_f1": 0.5497851607415369,
+            "n_eval": 83700.0,
+            "n_folds": 5.0,
+            "n_train_final": 167400.0,
+            "precision_range": 0.9578718984103313,
+            "precision_volatile": 0.25496490928391985,
+            "recall_range": 0.5689777043818752,
+            "recall_volatile": 0.8447985251879523,
+            "support_range": 71188.0,
+            "support_volatile": 12512.0,
+            "weighted_f1": 0.6670005655613611
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260726T015245Z/model_state.json",
+          "run_id": "20260726T015245Z"
+        },
+        {
+          "at": "2026-07-26T06:05:17.209086+00:00",
+          "by": "experiments-runner",
+          "code_revision": "47747d174523e3237c9eecf5123fc9f7d78619f4",
+          "metrics": {
+            "accuracy": 0.6173715651135006,
+            "f1_range": 0.7085275259060564,
+            "f1_volatile": 0.39104279557701777,
+            "macro_f1": 0.5497851607415369,
+            "n_eval": 83700.0,
+            "n_folds": 5.0,
+            "n_train_final": 167400.0,
+            "precision_range": 0.9578718984103313,
+            "precision_volatile": 0.25496490928391985,
+            "recall_range": 0.5689777043818752,
+            "recall_volatile": 0.8447985251879523,
+            "support_range": 71188.0,
+            "support_volatile": 12512.0,
+            "weighted_f1": 0.6670005655613611
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260726T060517Z/model_state.json",
+          "run_id": "20260726T060517Z"
+        },
+        {
+          "at": "2026-07-27T01:57:33.705104+00:00",
+          "by": "experiments-runner",
+          "code_revision": "ef07b8f9db15971299f4dcef4b8f1226e3079f61",
+          "metrics": {
+            "accuracy": 0.6162465988830016,
+            "f1_range": 0.7072576206465684,
+            "f1_volatile": 0.38919822488318556,
+            "macro_f1": 0.548227922764877,
+            "n_eval": 83796.0,
+            "n_folds": 5.0,
+            "n_train_final": 167592.0,
+            "precision_range": 0.9583078317752871,
+            "precision_volatile": 0.25323436986437575,
+            "recall_range": 0.5675399845907279,
+            "recall_volatile": 0.8456992441419845,
+            "support_range": 71345.0,
+            "support_volatile": 12451.0,
+            "weighted_f1": 0.6659918450091679
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260727T015733Z/model_state.json",
+          "run_id": "20260727T015733Z"
+        },
+        {
+          "at": "2026-07-28T01:01:46.552614+00:00",
+          "by": "experiments-runner",
+          "code_revision": "595b4e293590901906c191f1b2890365ea8b0f95",
+          "metrics": {
+            "accuracy": 0.6162465988830016,
+            "f1_range": 0.7072576206465684,
+            "f1_volatile": 0.38919822488318556,
+            "macro_f1": 0.548227922764877,
+            "n_eval": 83796.0,
+            "n_folds": 5.0,
+            "n_train_final": 167592.0,
+            "precision_range": 0.9583078317752871,
+            "precision_volatile": 0.25323436986437575,
+            "recall_range": 0.5675399845907279,
+            "recall_volatile": 0.8456992441419845,
+            "support_range": 71345.0,
+            "support_volatile": 12451.0,
+            "weighted_f1": 0.6659918450091679
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260728T010146Z/model_state.json",
+          "run_id": "20260728T010146Z"
+        },
+        {
+          "at": "2026-07-29T01:52:10.260936+00:00",
+          "by": "experiments-runner",
+          "code_revision": "99cdb698fffa667eb10fdf9b4216334a3dbcd219",
+          "metrics": {
+            "accuracy": 0.6147189243312831,
+            "f1_range": 0.706134570509436,
+            "f1_volatile": 0.3855496651167778,
+            "macro_f1": 0.5458421178131069,
+            "n_eval": 83892.0,
+            "n_folds": 5.0,
+            "n_train_final": 167784.0,
+            "precision_range": 0.9574087128191929,
+            "precision_volatile": 0.25055965281371695,
+            "recall_range": 0.5665887608732464,
+            "recall_volatile": 0.8414660829730812,
+            "support_range": 71496.0,
+            "support_volatile": 12396.0,
+            "weighted_f1": 0.6648496150802057
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260729T015210Z/model_state.json",
+          "run_id": "20260729T015210Z"
+        },
+        {
+          "at": "2026-07-30T01:50:30.990194+00:00",
+          "by": "experiments-runner",
+          "code_revision": "d90ca90f33c92293faf2f7dd895607d9e7d8a368",
+          "metrics": {
+            "accuracy": 0.6147189243312831,
+            "f1_range": 0.706134570509436,
+            "f1_volatile": 0.3855496651167778,
+            "macro_f1": 0.5458421178131069,
+            "n_eval": 83892.0,
+            "n_folds": 5.0,
+            "n_train_final": 167784.0,
+            "precision_range": 0.9574087128191929,
+            "precision_volatile": 0.25055965281371695,
+            "recall_range": 0.5665887608732464,
+            "recall_volatile": 0.8414660829730812,
+            "support_range": 71496.0,
+            "support_volatile": 12396.0,
+            "weighted_f1": 0.6648496150802057
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260730T015030Z/model_state.json",
+          "run_id": "20260730T015030Z"
+        },
+        {
+          "at": "2026-07-31T01:57:23.765638+00:00",
+          "by": "experiments-runner",
+          "code_revision": "44e8710e4961f5cc8ff5a82bbc08288e5465346a",
+          "metrics": {
+            "accuracy": 0.6157427251512121,
+            "f1_range": 0.7076583523032807,
+            "f1_volatile": 0.3828998699351149,
+            "macro_f1": 0.5452791111191978,
+            "n_eval": 83988.0,
+            "n_folds": 5.0,
+            "n_train_final": 167976.0,
+            "precision_range": 0.957263095580478,
+            "precision_volatile": 0.24872701598723992,
+            "recall_range": 0.5682739250258023,
+            "recall_volatile": 0.8375641831426892,
+            "support_range": 71635.0,
+            "support_volatile": 12353.0,
+            "weighted_f1": 0.666278097895509
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260731T015723Z/model_state.json",
+          "run_id": "20260731T015723Z"
+        },
+        {
+          "at": "2026-07-31T10:52:03.975303+00:00",
+          "by": "experiments-runner",
+          "code_revision": "0c8faa2b96026d39a84685184a1c233fcedccdc3",
+          "metrics": {
+            "accuracy": 0.6157427251512121,
+            "f1_range": 0.7076583523032807,
+            "f1_volatile": 0.3828998699351149,
+            "macro_f1": 0.5452791111191978,
+            "n_eval": 83988.0,
+            "n_folds": 5.0,
+            "n_train_final": 167976.0,
+            "precision_range": 0.957263095580478,
+            "precision_volatile": 0.24872701598723992,
+            "recall_range": 0.5682739250258023,
+            "recall_volatile": 0.8375641831426892,
+            "support_range": 71635.0,
+            "support_volatile": 12353.0,
+            "weighted_f1": 0.666278097895509
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260731T105203Z/model_state.json",
+          "run_id": "20260731T105203Z"
+        },
+        {
+          "at": "2026-08-01T01:14:46.553693+00:00",
+          "by": "experiments-runner",
+          "code_revision": "d2561ca46b8bd0b070c8e48e9c7a74a54459925c",
+          "metrics": {
+            "accuracy": 0.6157427251512121,
+            "f1_range": 0.7076583523032807,
+            "f1_volatile": 0.3828998699351149,
+            "macro_f1": 0.5452791111191978,
+            "n_eval": 83988.0,
+            "n_folds": 5.0,
+            "n_train_final": 167976.0,
+            "precision_range": 0.957263095580478,
+            "precision_volatile": 0.24872701598723992,
+            "recall_range": 0.5682739250258023,
+            "recall_volatile": 0.8375641831426892,
+            "support_range": 71635.0,
+            "support_volatile": 12353.0,
+            "weighted_f1": 0.666278097895509
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260801T011446Z/model_state.json",
+          "run_id": "20260801T011446Z"
+        },
+        {
+          "at": "2026-08-02T02:11:26.795775+00:00",
+          "by": "experiments-runner",
+          "code_revision": "0f52ce64ab2b5a6eeda92fa6cf05d735a83ef12a",
+          "metrics": {
+            "accuracy": 0.6195233338090481,
+            "f1_range": 0.7112812409373943,
+            "f1_volatile": 0.38441703409631267,
+            "macro_f1": 0.5478491375168535,
+            "n_eval": 84084.0,
+            "n_folds": 5.0,
+            "n_train_final": 168168.0,
+            "precision_range": 0.9580494223885565,
+            "precision_volatile": 0.24996380077275035,
+            "recall_range": 0.5725474646497287,
+            "recall_volatile": 0.8385545932338231,
+            "support_range": 71759.0,
+            "support_volatile": 12325.0,
+            "weighted_f1": 0.6698285809839848
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260802T021126Z/model_state.json",
+          "run_id": "20260802T021126Z"
+        },
+        {
+          "at": "2026-08-03T01:24:40.224226+00:00",
+          "by": "experiments-runner",
+          "code_revision": "61aba82466a7c29ea6d0a34486a1fe7acd386930",
+          "metrics": {
+            "accuracy": 0.6195233338090481,
+            "f1_range": 0.7112812409373943,
+            "f1_volatile": 0.38441703409631267,
+            "macro_f1": 0.5478491375168535,
+            "n_eval": 84084.0,
+            "n_folds": 5.0,
+            "n_train_final": 168168.0,
+            "precision_range": 0.9580494223885565,
+            "precision_volatile": 0.24996380077275035,
+            "recall_range": 0.5725474646497287,
+            "recall_volatile": 0.8385545932338231,
+            "support_range": 71759.0,
+            "support_volatile": 12325.0,
+            "weighted_f1": 0.6698285809839848
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260803T012440Z/model_state.json",
+          "run_id": "20260803T012440Z"
+        },
+        {
+          "at": "2026-08-04T02:16:17.030024+00:00",
+          "by": "experiments-runner",
+          "code_revision": "0ed8a5a6e0fd7e422ea7b74b7e31e4cc1a769b46",
+          "metrics": {
+            "accuracy": 0.6224875267284391,
+            "f1_range": 0.7144867452223175,
+            "f1_volatile": 0.3851001082059108,
+            "macro_f1": 0.5497934267141142,
+            "n_eval": 84180.0,
+            "n_folds": 5.0,
+            "n_train_final": 168360.0,
+            "precision_range": 0.9578026961025404,
+            "precision_volatile": 0.2507769703613476,
+            "recall_range": 0.5765221671860681,
+            "recall_volatile": 0.8363848013087539,
+            "support_range": 71858.0,
+            "support_volatile": 12322.0,
+            "weighted_f1": 0.6727291286261342
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260804T021617Z/model_state.json",
+          "run_id": "20260804T021617Z"
+        },
+        {
+          "at": "2026-08-05T01:48:30.289943+00:00",
+          "by": "experiments-runner",
+          "code_revision": "40ccc4cf673f4157c46dbbe19fc4452e225f17ca",
+          "metrics": {
+            "accuracy": 0.6224875267284391,
+            "f1_range": 0.7144867452223175,
+            "f1_volatile": 0.3851001082059108,
+            "macro_f1": 0.5497934267141142,
+            "n_eval": 84180.0,
+            "n_folds": 5.0,
+            "n_train_final": 168360.0,
+            "precision_range": 0.9578026961025404,
+            "precision_volatile": 0.2507769703613476,
+            "recall_range": 0.5765221671860681,
+            "recall_volatile": 0.8363848013087539,
+            "support_range": 71858.0,
+            "support_volatile": 12322.0,
+            "weighted_f1": 0.6727291286261342
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260805T014830Z/model_state.json",
+          "run_id": "20260805T014830Z"
+        },
+        {
+          "at": "2026-08-06T01:48:43.212278+00:00",
+          "by": "experiments-runner",
+          "code_revision": "7485fd5f5c67b6569941653b6802a7c11a7aec98",
+          "metrics": {
+            "accuracy": 0.6198443210403911,
+            "f1_range": 0.7111642023379733,
+            "f1_volatile": 0.38215613225172507,
+            "macro_f1": 0.5466601672948491,
+            "n_eval": 84276.0,
+            "n_folds": 5.0,
+            "n_train_final": 168552.0,
+            "precision_range": 0.9581906673028184,
+            "precision_volatile": 0.24835855313995964,
+            "recall_range": 0.5729389513701518,
+            "recall_volatile": 0.8349366569901645,
+            "support_range": 71975.0,
+            "support_volatile": 12301.0,
+            "weighted_f1": 0.6699804007754971
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260806T014843Z/model_state.json",
+          "run_id": "20260806T014843Z"
+        },
+        {
+          "at": "2026-08-07T01:27:49.119390+00:00",
+          "by": "experiments-runner",
+          "code_revision": "9d7786e1acbd3b5ef25f36a91e3a72b47453b9ce",
+          "metrics": {
+            "accuracy": 0.6198443210403911,
+            "f1_range": 0.7111642023379733,
+            "f1_volatile": 0.38215613225172507,
+            "macro_f1": 0.5466601672948491,
+            "n_eval": 84276.0,
+            "n_folds": 5.0,
+            "n_train_final": 168552.0,
+            "precision_range": 0.9581906673028184,
+            "precision_volatile": 0.24835855313995964,
+            "recall_range": 0.5729389513701518,
+            "recall_volatile": 0.8349366569901645,
+            "support_range": 71975.0,
+            "support_volatile": 12301.0,
+            "weighted_f1": 0.6699804007754971
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260807T012749Z/model_state.json",
+          "run_id": "20260807T012749Z"
+        },
+        {
+          "at": "2026-08-08T01:15:27.829342+00:00",
+          "by": "experiments-runner",
+          "code_revision": "250efec0eef4452e04a3024489f30db902fb3cf5",
+          "metrics": {
+            "accuracy": 0.6198264827193856,
+            "f1_range": 0.7113217661428188,
+            "f1_volatile": 0.3815451390317299,
+            "macro_f1": 0.5464334525872743,
+            "n_eval": 84372.0,
+            "n_folds": 5.0,
+            "n_train_final": 168744.0,
+            "precision_range": 0.958750868009506,
+            "precision_volatile": 0.2476189543593804,
+            "recall_range": 0.5726009869031593,
+            "recall_volatile": 0.8384379637277584,
+            "support_range": 72102.0,
+            "support_volatile": 12270.0,
+            "weighted_f1": 0.6703882902693342
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260808T011527Z/model_state.json",
+          "run_id": "20260808T011527Z"
+        },
+        {
+          "at": "2026-08-09T01:33:14.803454+00:00",
+          "by": "experiments-runner",
+          "code_revision": "2b979ad075c3e56cbae05efdbc996328e2c200a9",
+          "metrics": {
+            "accuracy": 0.6198264827193856,
+            "f1_range": 0.7113217661428188,
+            "f1_volatile": 0.3815451390317299,
+            "macro_f1": 0.5464334525872743,
+            "n_eval": 84372.0,
+            "n_folds": 5.0,
+            "n_train_final": 168744.0,
+            "precision_range": 0.958750868009506,
+            "precision_volatile": 0.2476189543593804,
+            "recall_range": 0.5726009869031593,
+            "recall_volatile": 0.8384379637277584,
+            "support_range": 72102.0,
+            "support_volatile": 12270.0,
+            "weighted_f1": 0.6703882902693342
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260809T013314Z/model_state.json",
+          "run_id": "20260809T013314Z"
+        },
+        {
+          "at": "2026-08-10T01:17:41.247907+00:00",
+          "by": "experiments-runner",
+          "code_revision": "173ce35daa768fca365e670227a6f60f6b4d940d",
+          "metrics": {
+            "accuracy": 0.621608182980537,
+            "f1_range": 0.7132475535222945,
+            "f1_volatile": 0.37982094766020896,
+            "macro_f1": 0.5465342505912517,
+            "n_eval": 84468.0,
+            "n_folds": 5.0,
+            "n_train_final": 168936.0,
+            "precision_range": 0.9582066608640264,
+            "precision_volatile": 0.2466541683808529,
+            "recall_range": 0.5754780972038535,
+            "recall_volatile": 0.8326006806652579,
+            "support_range": 72242.0,
+            "support_volatile": 12226.0,
+            "weighted_f1": 0.6721459675665796
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260810T011741Z/model_state.json",
+          "run_id": "20260810T011741Z"
+        },
+        {
+          "at": "2026-08-11T01:00:31.420708+00:00",
+          "by": "experiments-runner",
+          "code_revision": "00f86d435c628b15ee2f676ae48a25ff850ac23d",
+          "metrics": {
+            "accuracy": 0.621608182980537,
+            "f1_range": 0.7132475535222945,
+            "f1_volatile": 0.37982094766020896,
+            "macro_f1": 0.5465342505912517,
+            "n_eval": 84468.0,
+            "n_folds": 5.0,
+            "n_train_final": 168936.0,
+            "precision_range": 0.9582066608640264,
+            "precision_volatile": 0.2466541683808529,
+            "recall_range": 0.5754780972038535,
+            "recall_volatile": 0.8326006806652579,
+            "support_range": 72242.0,
+            "support_volatile": 12226.0,
+            "weighted_f1": 0.6721459675665796
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260811T010031Z/model_state.json",
+          "run_id": "20260811T010031Z"
+        },
+        {
+          "at": "2026-08-12T01:45:53.485526+00:00",
+          "by": "experiments-runner",
+          "code_revision": "dbe5b660837993b279b71a263999cec471e3e764",
+          "metrics": {
+            "accuracy": 0.6251359916749444,
+            "f1_range": 0.7166776440038378,
+            "f1_volatile": 0.3809838342725005,
+            "macro_f1": 0.5488307391381692,
+            "n_eval": 84564.0,
+            "n_folds": 5.0,
+            "n_train_final": 169128.0,
+            "precision_range": 0.958864832700959,
+            "precision_volatile": 0.2476109280103262,
+            "recall_range": 0.5794806957262844,
+            "recall_volatile": 0.833551125334074,
+            "support_range": 72364.0,
+            "support_volatile": 12200.0,
+            "weighted_f1": 0.675570264612665
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260812T014553Z/model_state.json",
+          "run_id": "20260812T014553Z"
+        },
+        {
+          "at": "2026-08-13T02:20:42.932676+00:00",
+          "by": "experiments-runner",
+          "code_revision": "7f0955e9e98c12c95160da4e3467c46bcf4ef524",
+          "metrics": {
+            "accuracy": 0.6251359916749444,
+            "f1_range": 0.7166776440038378,
+            "f1_volatile": 0.3809838342725005,
+            "macro_f1": 0.5488307391381692,
+            "n_eval": 84564.0,
+            "n_folds": 5.0,
+            "n_train_final": 169128.0,
+            "precision_range": 0.958864832700959,
+            "precision_volatile": 0.2476109280103262,
+            "recall_range": 0.5794806957262844,
+            "recall_volatile": 0.833551125334074,
+            "support_range": 72364.0,
+            "support_volatile": 12200.0,
+            "weighted_f1": 0.675570264612665
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260813T022042Z/model_state.json",
+          "run_id": "20260813T022042Z"
+        },
+        {
+          "at": "2026-08-14T01:52:24.741897+00:00",
+          "by": "experiments-runner",
+          "code_revision": "317193c7c22b03d8141d6a784a610fda8fd89ccb",
+          "metrics": {
+            "accuracy": 0.6274037325773683,
+            "f1_range": 0.7191114698349915,
+            "f1_volatile": 0.3803167463609457,
+            "macro_f1": 0.5497141080979686,
+            "n_eval": 84660.0,
+            "n_folds": 5.0,
+            "n_train_final": 169320.0,
+            "precision_range": 0.9586762992386701,
+            "precision_volatile": 0.24723285359519842,
+            "recall_range": 0.582845934204941,
+            "recall_volatile": 0.831245155957992,
+            "support_range": 72530.0,
+            "support_volatile": 12130.0,
+            "weighted_f1": 0.6777989443279246
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260814T015224Z/model_state.json",
+          "run_id": "20260814T015224Z"
+        },
+        {
+          "at": "2026-08-15T00:45:30.131248+00:00",
+          "by": "experiments-runner",
+          "code_revision": "b659a68af7eb746daaba4a384605860449b6f04d",
+          "metrics": {
+            "accuracy": 0.6274037325773683,
+            "f1_range": 0.7191114698349915,
+            "f1_volatile": 0.3803167463609457,
+            "macro_f1": 0.5497141080979686,
+            "n_eval": 84660.0,
+            "n_folds": 5.0,
+            "n_train_final": 169320.0,
+            "precision_range": 0.9586762992386701,
+            "precision_volatile": 0.24723285359519842,
+            "recall_range": 0.582845934204941,
+            "recall_volatile": 0.831245155957992,
+            "support_range": 72530.0,
+            "support_volatile": 12130.0,
+            "weighted_f1": 0.6777989443279246
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260815T004530Z/model_state.json",
+          "run_id": "20260815T004530Z"
+        },
+        {
+          "at": "2026-08-16T01:17:28.815115+00:00",
+          "by": "experiments-runner",
+          "code_revision": "5d5bbb67d7c00c2ad1e74d1958c7857b5133742f",
+          "metrics": {
+            "accuracy": 0.6275071971305867,
+            "f1_range": 0.7193736567345667,
+            "f1_volatile": 0.3790814058430658,
+            "macro_f1": 0.5492275312888162,
+            "n_eval": 84756.0,
+            "n_folds": 5.0,
+            "n_train_final": 169512.0,
+            "precision_range": 0.9590424450266283,
+            "precision_volatile": 0.24605919533642634,
+            "recall_range": 0.5832166648284788,
+            "recall_volatile": 0.8329036197662937,
+            "support_range": 72714.0,
+            "support_volatile": 12042.0,
+            "weighted_f1": 0.6782029909961571
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260816T011728Z/model_state.json",
+          "run_id": "20260816T011728Z"
+        },
+        {
+          "at": "2026-08-17T01:33:17.735443+00:00",
+          "by": "experiments-runner",
+          "code_revision": "4c50bb134924579869d5b70213defab4d6eec117",
+          "metrics": {
+            "accuracy": 0.6275071971305867,
+            "f1_range": 0.7193736567345667,
+            "f1_volatile": 0.3790814058430658,
+            "macro_f1": 0.5492275312888162,
+            "n_eval": 84756.0,
+            "n_folds": 5.0,
+            "n_train_final": 169512.0,
+            "precision_range": 0.9590424450266283,
+            "precision_volatile": 0.24605919533642634,
+            "recall_range": 0.5832166648284788,
+            "recall_volatile": 0.8329036197662937,
+            "support_range": 72714.0,
+            "support_volatile": 12042.0,
+            "weighted_f1": 0.6782029909961571
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260817T013317Z/model_state.json",
+          "run_id": "20260817T013317Z"
+        },
+        {
+          "at": "2026-08-18T01:48:54.871072+00:00",
+          "by": "experiments-runner",
+          "code_revision": "08dc9987d7d060341c9a17ef73aca8fcf973223b",
+          "metrics": {
+            "accuracy": 0.6278697025408947,
+            "f1_range": 0.7201992492806708,
+            "f1_volatile": 0.3764686093878301,
+            "macro_f1": 0.5483339293342504,
+            "n_eval": 84852.0,
+            "n_folds": 5.0,
+            "n_train_final": 169704.0,
+            "precision_range": 0.9591855426254723,
+            "precision_volatile": 0.24417787097024685,
+            "recall_range": 0.5841827731518827,
+            "recall_volatile": 0.8301066762622024,
+            "support_range": 72883.0,
+            "support_volatile": 11969.0,
+            "weighted_f1": 0.6790187105060931
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260818T014854Z/model_state.json",
+          "run_id": "20260818T014854Z"
+        },
+        {
+          "at": "2026-08-19T01:35:19.411948+00:00",
+          "by": "experiments-runner",
+          "code_revision": "8d748ee071333bad95d5619a4b014cb3cb9cf7e7",
+          "metrics": {
+            "accuracy": 0.6278697025408947,
+            "f1_range": 0.7201992492806708,
+            "f1_volatile": 0.3764686093878301,
+            "macro_f1": 0.5483339293342504,
+            "n_eval": 84852.0,
+            "n_folds": 5.0,
+            "n_train_final": 169704.0,
+            "precision_range": 0.9591855426254723,
+            "precision_volatile": 0.24417787097024685,
+            "recall_range": 0.5841827731518827,
+            "recall_volatile": 0.8301066762622024,
+            "support_range": 72883.0,
+            "support_volatile": 11969.0,
+            "weighted_f1": 0.6790187105060931
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260819T013519Z/model_state.json",
+          "run_id": "20260819T013519Z"
+        },
+        {
+          "at": "2026-08-20T01:12:19.908697+00:00",
+          "by": "experiments-runner",
+          "code_revision": "8807d66c4a06095934441b6362eee2770269a76a",
+          "metrics": {
+            "accuracy": 0.6275133022554975,
+            "f1_range": 0.7199247584574543,
+            "f1_volatile": 0.37614109319689,
+            "macro_f1": 0.5480329258271721,
+            "n_eval": 84948.0,
+            "n_folds": 5.0,
+            "n_train_final": 169896.0,
+            "precision_range": 0.960034667931119,
+            "precision_volatile": 0.2435645731370719,
+            "recall_range": 0.5835590487801451,
+            "recall_volatile": 0.8339467580151053,
+            "support_range": 73029.0,
+            "support_volatile": 11919.0,
+            "weighted_f1": 0.6789373474038785
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260820T011219Z/model_state.json",
+          "run_id": "20260820T011219Z"
+        }
+      ],
+      "stage_history": [
+        {
+          "at": "2026-08-02T04:10:36.022275+00:00",
+          "by": "operator (chat approval 2026-08-01; executed by claude session full-system-review-zajauh)",
+          "from_stage": "shadow",
+          "reason": "Gate packet ready:true (#8294): oos_edge +0.239 macro_f1 over 5 purged WF-CV folds, drift clean KS 0.1353/PSI 0.0391, live_parity 50 sampled/0 mismatched, non_degenerate 0.383, 11.6d shadow soak. Restores the SOL advisory head after the 07-26 v1 demotion (MB-20260721-FCPCV-V2-SOAK).",
+          "to_stage": "advisory"
+        }
+      ],
+      "status": "candidate",
+      "target_deployment_stage": "advisory",
+      "linked_strategies": [],
+      "deployment_bucket": "LIVE",
+      "model_family": "classification_lightgbm",
+      "trainer": "ml.trainers.lightgbm_multiclass.LightGBMMulticlassTrainer",
+      "evaluator": "ml.evaluators.multiclass_classification.MulticlassClassificationEvaluator",
+      "dataset_ref": {
+        "family": "market_features",
+        "symbol_scope": "SOLUSDT",
+        "timeframe": "15m",
+        "version": "v002"
+      },
+      "latest_run": {
+        "at": "2026-08-20T01:12:19.908697+00:00",
+        "by": "experiments-runner",
+        "code_revision": "8807d66c4a06095934441b6362eee2770269a76a",
+        "metrics": {
+          "accuracy": 0.6275133022554975,
+          "f1_range": 0.7199247584574543,
+          "f1_volatile": 0.37614109319689,
+          "macro_f1": 0.5480329258271721,
+          "n_eval": 84948.0,
+          "n_folds": 5.0,
+          "n_train_final": 169896.0,
+          "precision_range": 0.960034667931119,
+          "precision_volatile": 0.2435645731370719,
+          "recall_range": 0.5835590487801451,
+          "recall_volatile": 0.8339467580151053,
+          "support_range": 73029.0,
+          "support_volatile": 11919.0,
+          "weighted_f1": 0.6789373474038785
+        },
+        "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/sol-regime-15m-lgbm-fc-pcv-v2/20260820T011219Z/model_state.json",
+        "run_id": "20260820T011219Z"
+      },
+      "description": "fc-pcv refresh sibling (v2): SOLUSDT 15m regime head base + 6 frozen chronos-bolt-tiny quantile-forecast features (fc_*) on the NIGHTLY-REBUILT dataset v002 (fresh forecast side-stream). Fresh-data counterpart to the frozen-v530 advisory head sol-regime-15m-lgbm-fc-pcv-v1; soaks at shadow toward a gate-checked swap. Remediates MB-20260720-FCPCV-RETRAIN-NOOP."
+    },
+    {
+      "code_revision": "c0b14ff183d8461bdefc5137189bb28fb0d5a712",
+      "created_at": "2026-05-22T09:05:39.094403+00:00",
+      "history": [
+        {
+          "at": "2026-05-22T09:05:39.094403+00:00",
+          "by": "experiments-runner",
+          "from_status": null,
+          "reason": "initial registration",
+          "to_status": "candidate"
+        }
+      ],
+      "manifest": {
+        "dataset": {
+          "family": "market_features",
+          "symbol_scope": "MES",
+          "timeframe": "1d",
+          "version": "v001"
+        },
+        "evaluator": "ml.evaluators.multiclass_classification.MulticlassClassificationEvaluator",
+        "evaluator_config": {
+          "holdout_fraction": 0.2,
+          "split_strategy": "time_aware_holdout",
+          "target_column": "regime_label",
+          "time_column": "ts"
+        },
+        "manifest_version": "v1",
+        "model_family": "classification_baseline",
+        "model_id": "mes-regime-classifier-baseline-v0",
+        "notes": "MES starter baseline. 2-class regime classifier (range / volatile)\nwith `vol_bucket` as the sole feature, trained on MES daily bars\n(default ticker ES=F via yfinance_offvm \u2014 same index level as MES,\ndeepest history). Time-aware holdout (latest 20 % of bars).\nvol_threshold is set at build time (0.01 for daily equity-index\nreturns, vs 0.003 for BTCUSDT 1h). Registers at `shadow`. Starter\ncalibration \u2014 not a candidate for any live tier; revisit\nvol_threshold once MES intraday history is wired.\n",
+        "target_deployment_stage": "shadow",
+        "trainer": "ml.trainers.regime_classifier.RegimeClassifierTrainer",
+        "trainer_config": {
+          "class_labels": [
+            "range",
+            "volatile"
+          ],
+          "feature_column": "vol_bucket",
+          "target_column": "regime_label",
+          "unknown_bucket": ""
+        }
+      },
+      "metrics": {
+        "accuracy": 0.7476780185758514,
+        "f1_range": 0.825668449197861,
+        "f1_volatile": 0.5434173669467787,
+        "macro_f1": 0.6845429080723198,
+        "n_eval": 1292.0,
+        "precision_range": 0.8354978354978355,
+        "precision_volatile": 0.5271739130434783,
+        "recall_range": 0.8160676532769556,
+        "recall_volatile": 0.5606936416184971,
+        "weighted_f1": 0.7500810850656052
+      },
+      "model_id": "mes-regime-classifier-baseline-v0",
+      "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-regime-classifier-baseline-v0/20260522T090539Z/model_state.json",
+      "notes": "MES starter baseline. 2-class regime classifier (range / volatile)\nwith `vol_bucket` as the sole feature, trained on MES daily bars\n(default ticker ES=F via yfinance_offvm \u2014 same index level as MES,\ndeepest history). Time-aware holdout (latest 20 % of bars).\nvol_threshold is set at build time (0.01 for daily equity-index\nreturns, vs 0.003 for BTCUSDT 1h). Registers at `shadow`. Starter\ncalibration \u2014 not a candidate for any live tier; revisit\nvol_threshold once MES intraday history is wired.\n",
+      "runs": [
+        {
+          "at": "2026-05-22T09:05:39.094403+00:00",
+          "by": "experiments-runner",
+          "code_revision": "c0b14ff183d8461bdefc5137189bb28fb0d5a712",
+          "metrics": {
+            "accuracy": 0.7476780185758514,
+            "f1_range": 0.825668449197861,
+            "f1_volatile": 0.5434173669467787,
+            "macro_f1": 0.6845429080723198,
+            "n_eval": 1292.0,
+            "precision_range": 0.8354978354978355,
+            "precision_volatile": 0.5271739130434783,
+            "recall_range": 0.8160676532769556,
+            "recall_volatile": 0.5606936416184971,
+            "weighted_f1": 0.7500810850656052
+          },
+          "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-regime-classifier-baseline-v0/20260522T090539Z/model_state.json",
+          "run_id": "20260522T090539Z"
+        }
+      ],
+      "stage_history": [],
+      "status": "candidate",
+      "target_deployment_stage": "research_only",
+      "linked_strategies": [],
+      "deployment_bucket": "OFFLINE",
+      "model_family": "classification_baseline",
+      "trainer": "ml.trainers.regime_classifier.RegimeClassifierTrainer",
+      "evaluator": "ml.evaluators.multiclass_classification.MulticlassClassificationEvaluator",
+      "dataset_ref": {
+        "family": "market_features",
+        "symbol_scope": "MES",
+        "timeframe": "1d",
+        "version": "v001"
+      },
+      "latest_run": {
+        "at": "2026-05-22T09:05:39.094403+00:00",
+        "by": "experiments-runner",
+        "code_revision": "c0b14ff183d8461bdefc5137189bb28fb0d5a712",
+        "metrics": {
+          "accuracy": 0.7476780185758514,
+          "f1_range": 0.825668449197861,
+          "f1_volatile": 0.5434173669467787,
+          "macro_f1": 0.6845429080723198,
+          "n_eval": 1292.0,
+          "precision_range": 0.8354978354978355,
+          "precision_volatile": 0.5271739130434783,
+          "recall_range": 0.8160676532769556,
+          "recall_volatile": 0.5606936416184971,
+          "weighted_f1": 0.7500810850656052
+        },
+        "model_state_path": "/home/ubuntu/ict-trading-bot/ml/experiments-runs/mes-regime-classifier-baseline-v0/20260522T090539Z/model_state.json",
+        "run_id": "20260522T090539Z"
+      },
+      "description": null
+    }
+  ],
+  "_fixture_note": "REAL capture of GET /api/bot/ml/registry via https://ict-bot.duckdns.org on 2026-08-20 (95 rows, 4.1 MB). The envelope is verbatim. `rows` is a SUBSET: the SMALLEST real row for each distinct target_deployment_stage (advisory, candidate, research_only, shadow), each kept BYTE-VERBATIM and never edited. Smallest-per-stage rather than first-per-stage only to keep the committed file small; both are real rows. VERIFIED at capture that the subset's union of keys equals the full population's (20 keys, 0 missing) -- otherwise the fixture could pass a field read that the real payload would fail, which is the failure this checker exists to prevent. Hand-writing a row would encode the same assumption the consumer got wrong. Full-population coverage measured at capture: stage 0/95, current_stage 0/95, id 0/95, status 95/95 (all 'candidate' -- poisoned per F-105), target_deployment_stage 95/95, model_id 95/95, deployment_bucket 95/95."
+}

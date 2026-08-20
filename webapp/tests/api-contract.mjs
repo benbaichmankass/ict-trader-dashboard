@@ -59,6 +59,21 @@ const BINDINGS = {
     root: "status",
     paths: { status: "", rd: "rule_distance" },
   },
+  // ROW-SCOPED binding (F-111). Models.svelte reads fields off `m`, the
+  // each-block item bound to one registry ROW — not off a `$derived` alias —
+  // so `paths` cannot express it and `rowPaths` does: resolve the array, then
+  // require each read field to exist on at LEAST one row.
+  //
+  // At-least-one rather than all-rows, deliberately: enriched registry fields
+  // are documented nullable, so a key legitimately carried by a subset must
+  // not fail. The defect signature is 0 rows, not "fewer than all" — measured
+  // 2026-08-20 across all 95 live rows, `stage` and `current_stage` were on
+  // ZERO while `target_deployment_stage` was on 95. Coverage is PRINTED per
+  // field so a 1-of-95 read is visible rather than silently passing.
+  "Models.svelte": {
+    fixture: "ml_registry.json",
+    rowPaths: { m: "rows" },
+  },
 };
 
 function dig(obj, path) {
@@ -67,10 +82,34 @@ function dig(obj, path) {
 }
 
 /** Fields read as `alias?.field` for each alias we have a binding for. */
-function readsByAlias(src, aliases) {
+/** Strip // and /* *\/ comments so prose about a key is not read as a key.
+ *
+ * Load-bearing, not tidiness: the FIRST run of the row-scoped check reported
+ * `m.stage` and `m.current_stage` absent from all 4 fixture rows — and both
+ * hits were inside a comment in Models.svelte explaining that the old code
+ * used to read exactly those names. A guard that flags the note describing a
+ * fixed bug, as though the bug were still there, trains readers to ignore it.
+ * (Same shape as the audit's own 40x miscount from a regex matching
+ * docstrings.) String literals are deliberately NOT stripped: `obj["field"]`
+ * is a real read, and this checker's regex does not match that form anyway.
+ */
+function stripComments(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+}
+
+function readsByAlias(rawSrc, aliases) {
+  const src = stripComments(rawSrc);
   const out = {};
   for (const alias of aliases) {
-    const re = new RegExp(`\\b${alias}\\?\\.([a-zA-Z_][a-zA-Z0-9_]*)`, "g");
+    // Both `alias?.field` and `alias.field`. The optional-chained form is the
+    // one that fails SILENTLY (undefined, rendered as an em-dash) and is what
+    // this file was built for; the plain form throws only if the alias itself
+    // is nullish, so a wrong KEY on a present object degrades just as quietly.
+    // F-111 was the plain form, and a probe matching only `?.` would have
+    // reported the Models route clean.
+    const re = new RegExp(`\\b${alias}\\??\\.([a-zA-Z_][a-zA-Z0-9_]*)`, "g");
     out[alias] = new Set([...src.matchAll(re)].map((m) => m[1]));
   }
   return out;
@@ -79,7 +118,7 @@ function readsByAlias(src, aliases) {
 function checkRoute(routeFile, binding, srcOverride) {
   const src = srcOverride ?? readFileSync(join(ROUTES, routeFile), "utf8");
   const payload = JSON.parse(readFileSync(join(FIXTURES, binding.fixture), "utf8"));
-  const reads = readsByAlias(src, Object.keys(binding.paths));
+  const reads = readsByAlias(src, Object.keys(binding.paths ?? {}));
   const problems = [];
   for (const [alias, fields] of Object.entries(reads)) {
     const target = dig(payload, binding.paths[alias]);
@@ -104,7 +143,34 @@ function checkRoute(routeFile, binding, srcOverride) {
       }
     }
   }
-  const checked = Object.values(reads).reduce((n, s) => n + s.size, 0);
+  let checked = Object.values(reads).reduce((n, s) => n + s.size, 0);
+
+  for (const [alias, path] of Object.entries(binding.rowPaths ?? {})) {
+    const rows = dig(payload, path);
+    if (!Array.isArray(rows) || rows.length === 0) {
+      problems.push(
+        `${routeFile}: rowPaths alias '${alias}' -> '${path}' is not a ` +
+          `non-empty array in ${binding.fixture} — refusing to report success ` +
+          `over an empty population`,
+      );
+      continue;
+    }
+    const fields = readsByAlias(src, [alias])[alias];
+    for (const f of [...fields].sort()) {
+      const n = rows.filter((r) => r && typeof r === "object" && f in r).length;
+      checked += 1;
+      if (n === 0) {
+        problems.push(
+          `${routeFile}: reads '${alias}.${f}' — present on 0/${rows.length} ` +
+            `rows of ${binding.fixture} .${path}. Available on row 0: ` +
+            `${Object.keys(rows[0]).sort().join(", ")}`,
+        );
+      } else if (n < rows.length) {
+        // Not a failure (enriched fields are nullable) but never silent.
+        console.log(`  note: ${alias}.${f} present on ${n}/${rows.length} rows`);
+      }
+    }
+  }
   return { problems, checked };
 }
 
@@ -135,7 +201,56 @@ function selfTest() {
     console.error("SELF-TEST FAIL: a binding pointing at nothing was accepted");
     return 1;
   }
-  console.log("SELF-TEST PASS  (3/3: defect caught · fix accepted · empty binding refused)");
+
+  // --- row-scoped path (F-111) -------------------------------------------
+  const mb = BINDINGS["Models.svelte"];
+  // The historical defect: the stage chain short-circuited at a field that
+  // exists but is uniformly wrong, behind two that exist on ZERO rows.
+  const mBroken = `function stage(m) { return m.stage ?? m.current_stage ?? m.status; }`;
+  const d = checkRoute("Models.svelte", mb, mBroken);
+  if (!d.problems.some((x) => x.includes("m.stage"))) {
+    console.error("SELF-TEST FAIL: the F-111 defect was NOT caught", d.problems);
+    return 1;
+  }
+  const mFixed = `function stage(m) { return m.target_deployment_stage ?? "-"; }`;
+  const e = checkRoute("Models.svelte", mb, mFixed);
+  if (e.problems.length !== 0) {
+    console.error("SELF-TEST FAIL: the corrected stage read was rejected:", e.problems);
+    return 1;
+  }
+  // A row binding pointing at a non-array must REFUSE, not quietly check zero.
+  const f = checkRoute("Models.svelte", { ...mb, rowPaths: { m: "no_such_array" } },
+    `function stage(m) { return m.anything; }`);
+  if (f.problems.length === 0) {
+    console.error("SELF-TEST FAIL: a row binding over an empty population passed");
+    return 1;
+  }
+
+  // --- comment stripping (the false-positive control) ---------------------
+  // A note ABOUT a removed key must not be read as a live read of it. Without
+  // this, documenting a fix re-raises the finding it documents, and readers
+  // learn to ignore the checker.
+  const g = checkRoute("Models.svelte", mb,
+    `// this used to read m.stage and m.current_stage, both absent
+     /* and m.id too */
+     function stage(m) { return m.target_deployment_stage ?? "-"; }`);
+  if (g.problems.length !== 0) {
+    console.error("SELF-TEST FAIL: commented-out key names were flagged as reads:",
+      g.problems);
+    return 1;
+  }
+  // ...but the checker must still SEE a real read on a line that also has a
+  // trailing comment, or the stripper has over-reached.
+  const h = checkRoute("Models.svelte", mb,
+    `function stage(m) { return m.stage; } // a real dead read`);
+  if (h.problems.length === 0) {
+    console.error("SELF-TEST FAIL: stripping comments also hid a real read");
+    return 1;
+  }
+
+  console.log("SELF-TEST PASS  (7/7: prop defect caught · prop fix accepted · " +
+    "empty binding refused · F-111 caught · stage fix accepted · " +
+    "empty row population refused · comments stripped without hiding real reads)");
   return 0;
 }
 

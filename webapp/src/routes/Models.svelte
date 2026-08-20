@@ -12,7 +12,12 @@
     if (Array.isArray(raw)) return raw;
     return raw?.models ?? raw?.registry ?? raw?.records ?? raw?.rows ?? [];
   }
-  function mid(m: any): string { return m.model_id ?? m.manifest?.model_id ?? m.id ?? "?"; }
+  // `m.id` dropped 2026-08-20: measured across all 95 live registry rows,
+  // `model_id` is present on 95 and non-falsy on 95, `manifest.model_id` on 95,
+  // and `id` on ZERO. It was an unreachable fallback — surfaced by
+  // webapp/tests/api-contract.mjs on its first row-scoped run, which is the
+  // checker doing its job on a read nobody had questioned.
+  function mid(m: any): string { return m.model_id ?? m.manifest?.model_id ?? "?"; }
   // BL-20260820-SPA-MODELS-STAGE-READS-POISONED-STATUS (F-111).
   //
   // This chain used to read `m.stage ?? m.current_stage ?? m.status ??
