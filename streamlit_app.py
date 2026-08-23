@@ -8194,6 +8194,47 @@ def page_prop() -> None:
                 st.error(f"⛔ BREACHED the {label} ({_money(val)} cushion).")
             elif isinstance(val, (int, float)) and val < 50:
                 st.warning(f"⚠ Thin cushion to the {label}: {_money(val)} left.")
+        # FRESHNESS IS NOT DECORATION. The manual bridge has no broker feed, so
+        # every distance above is a function of ONE operator-reported snapshot;
+        # a days-old row renders a full-looking cushion byte-identical to a live
+        # one. The bot publishes `status_freshness` for exactly this reason and
+        # the contract says to read it BEFORE treating any distance as a live
+        # cushion. The Svelte SPA already does (`webapp/src/routes/Prop.svelte`);
+        # this panel did not, which is how the same endpoint got two behaviours.
+        # Four states, never collapsed — `ok` / `stale` (too old, OR undateable:
+        # a row that cannot be dated cannot be shown to be current, and the
+        # fail-safe reading of a safety cushion is stale) / `absent` (nothing
+        # ever reported) / `unchecked` (the threshold is off — *we did not
+        # look*, which is NOT ok). A fifth, `error`, rides on the envelope when
+        # the read itself failed. `unknown` covers a bot too old to publish it.
+        _fresh = str(
+            status_payload.get("status_freshness")
+            or rd.get("status_freshness")
+            or "unknown"
+        ).lower()
+        _age = status_payload.get("status_age_hours")
+        if _age is None:
+            _age = rd.get("status_age_hours")
+        _age_txt = (
+            f" (snapshot is {float(_age):.1f}h old)"
+            if isinstance(_age, (int, float))
+            else " (snapshot could not be dated)"
+        )
+        _NOTE = {
+            "stale": "older than the freshness threshold, or undateable — treat "
+                     "every figure above as a LAST-KNOWN cushion, not a live one",
+            "absent": "no account status has ever been reported for this account",
+            "unchecked": "the freshness check is switched off — nothing "
+                         "established whether this snapshot is current",
+            "error": "the freshness of this snapshot could not be read",
+            "unknown": "this bot build published no freshness verdict",
+        }
+        if _fresh == "ok":
+            st.caption(f"✅ Snapshot fresh{_age_txt}.")
+        else:
+            st.warning(
+                f"⚠ Snapshot **{_fresh}**{_age_txt} — {_NOTE.get(_fresh, _NOTE['unknown'])}."
+            )
         if rd.get("as_of"):
             st.caption(f"As of {rd['as_of']}")
 
