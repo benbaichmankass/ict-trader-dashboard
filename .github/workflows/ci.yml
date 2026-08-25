@@ -96,3 +96,39 @@ jobs:
         run: node webapp/tests/api-contract.mjs --self-test
       - name: Every field a route reads must exist in its recorded payload
         run: node webapp/tests/api-contract.mjs
+
+  webapp-ws-frame-scope:
+    # Sibling of webapp-api-contract, and the same class one step further on:
+    # that job catches a consumer reading a key with NO WRITER; this one catches
+    # a consumer trusting a payload for MORE THAN IT SAYS.
+    #
+    # What it catches, concretely: the /ws/market positions frame is filtered
+    # SERVER-SIDE to the symbols the socket subscribed to (market_ws.py). Its
+    # TypeScript type is `Position[]` either way, so nothing distinguishes "the
+    # open positions" from "the open positions in the subscribed symbols".
+    # Overview.svelte subscribed to ONE symbol — the charted one — and assigned
+    # that frame straight onto its positions state, so ~2s after every load the
+    # book collapsed to whatever was charted. Measured 2026-08-25:
+    # /api/bot/positions returned 3 real-money rows (XRPUSDT + 2x ETHUSDT) and
+    # the Overview rendered "Open trades 2" with the XRP row gone. The KPI, the
+    # open-trades table, the unrealized-P&L card and the symbol picker all read
+    # that array.
+    #
+    # It had already been HALF fixed: an earlier guard stopped an EMPTY frame
+    # blanking the tables. Empty and PARTIAL are the same defect; only one was
+    # caught. This job makes the other half a build failure.
+    #
+    # Zero dependencies (plain node), and `--self-test` plants the historical
+    # defect and requires the checker to catch it — a gate that cannot fail
+    # proves nothing.
+    name: webapp-ws-frame-scope
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Prove the checker can fail
+        run: node webapp/tests/ws-frame-scope.mjs --self-test
+      - name: A symbol-scoped WS frame must never define row membership
+        run: node webapp/tests/ws-frame-scope.mjs

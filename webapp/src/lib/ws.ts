@@ -14,6 +14,26 @@ export type MarketStatus = "connecting" | "open" | "closed";
 
 export interface MarketHandlers {
   onCandles?: (symbol: string, interval: string, candles: Candle[]) => void;
+  /**
+   * Live positions frame.
+   *
+   * ⚠️ **THIS FRAME IS SYMBOL-SCOPED, NOT THE WHOLE BOOK.** The server filters
+   * it to the symbols this stream subscribed to (`market_ws.py`: `if symbols:
+   * positions = [p for p in positions if p["symbol"] in symbols]`). The type is
+   * `Position[]` either way, so nothing here distinguishes "these are the open
+   * positions" from "these are the open positions IN THE SUBSCRIBED SYMBOLS" —
+   * and a consumer that assigns it straight onto its positions state silently
+   * drops every position in every other symbol.
+   *
+   * That is not hypothetical: `Overview.svelte` did exactly that until
+   * 2026-08-25, subscribing to one charted symbol and then replacing the
+   * REST-populated array with this frame ~2s after every load. Measured that
+   * day, `/api/bot/positions` returned 3 real-money rows and the SPA rendered
+   * "Open trades 2".
+   *
+   * **Use it to REFRESH uPnL on rows you already have. Never to decide which
+   * rows exist** — REST (`/api/bot/positions`) is the authority on membership.
+   */
   onPositions?: (positions: Position[]) => void;
   onStatus?: (status: MarketStatus) => void;
 }
