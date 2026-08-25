@@ -173,12 +173,39 @@
         candlesBySymbol = { ...candlesBySymbol, [sym]: cs };
       },
       onPositions: (ps) => {
-        // Only let a NON-EMPTY WS snapshot refresh positions (for ~2s uPnL
-        // freshness). An empty/paper-excluded WS frame must never blank the
-        // REST-populated tables — that was the "Open trades: N but no
-        // positions shown" bug on mobile where the WS connects but delivers
-        // an empty positions frame.
-        if (ps && ps.length) positions = ps;
+        // MERGE uPnL onto the REST rows — NEVER replace the row SET.
+        //
+        // The server SCOPES this frame to the subscribed symbols
+        // (`market_ws.py`: `if symbols: positions = [p for p in positions if
+        // p["symbol"] in symbols]`), and this component subscribes to exactly
+        // ONE symbol — the charted one. So the frame is a uPnL refresh for the
+        // charted symbol and is NOT a statement about which positions exist.
+        //
+        // Replacing the array wholesale therefore collapsed the whole book to
+        // the charted symbol ~2s after every load, and every consumer reads
+        // from it: ExecSummary's "Open trades" COUNT and its open-trades table,
+        // `shownPositions`, the unrealized-P&L card, and `symbols` itself.
+        // Measured 2026-08-25: /api/bot/positions returned 3 real-money rows
+        // (XRPUSDT 4934 + ETHUSDT 4922 + ETHUSDT 4904) while the SPA rendered
+        // "Open trades 2" with the XRP row gone, ETHUSDT being the charted
+        // symbol. Selecting BTCUSDT dropped the ETH rows the same way.
+        //
+        // The previous guard (`if (ps && ps.length)`) was the half-fix: it
+        // stopped an EMPTY frame from blanking the tables, but a PARTIAL frame
+        // is the same defect and it let that through. Membership now comes only
+        // from REST — which is what the `poll()` comment already declared
+        // ("REST is authoritative — the WS only refreshes uPnL below") and what
+        // the code did not do. Cost of the fix: a position opened between REST
+        // polls appears up to one poll interval late, which is strictly better
+        // than silently dropping positions that exist.
+        if (!ps || !ps.length) return;
+        const live = new Map(ps.map((p) => [String(p.id ?? ""), p]));
+        positions = positions.map((p) => {
+          const w = live.get(String(p.id ?? ""));
+          return w
+            ? { ...p, unrealizedPnl: w.unrealizedPnl, unrealizedPnlSource: w.unrealizedPnlSource }
+            : p;
+        });
       },
       onStatus: (st) => {
         wsStatus = st;
