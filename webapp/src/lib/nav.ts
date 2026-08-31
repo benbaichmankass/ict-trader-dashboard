@@ -14,7 +14,7 @@ export const SECTIONS: Record<string, string[]> = {
   Activity: ["Positions", "Trades", "Order Packages", "Signals"],
   Roadmap: [],
   Learning: [],
-  Admin: ["Data Explorer", "Logs", "Health"],
+  Admin: ["Data Explorer", "Logs", "Health", "Runbooks"],
 };
 export const SECTION_NAMES = Object.keys(SECTIONS);
 
@@ -39,6 +39,7 @@ export const PAGE_DESC: Record<string, string> = {
   "Data Explorer": "Read-only browse of the federated canonical store.",
   Logs: "Merged pipeline + outcome log feed.",
   Health: "VM / service health + last-tick + snapshot checks.",
+  Runbooks: "Operating schematic, the coordination board, and what is due today.",
   Roadmap: "Product-roadmap progress — milestones → sprints → work-session notes.",
   Learning: "Trading + AI curriculum with per-resource progress.",
 };
@@ -66,6 +67,7 @@ export const IMPLEMENTED_PAGES = new Set<string>([
   "Exit Ladder",
   "Backtesting",
   "Promotion",
+  "Runbooks",
 ]);
 
 const SPECIAL_SECTIONS = new Set(["Overview", "Roadmap", "Learning"]);

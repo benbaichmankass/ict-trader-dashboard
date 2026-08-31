@@ -20,6 +20,7 @@
   import ExitLadder from "./routes/ExitLadder.svelte";
   import Backtesting from "./routes/Backtesting.svelte";
   import Promotion from "./routes/Promotion.svelte";
+  import Runbooks from "./routes/Runbooks.svelte";
   import SectionLanding from "./components/SectionLanding.svelte";
   import Placeholder from "./components/Placeholder.svelte";
   import { nav, gotoSection, gotoDetail, SECTION_NAMES, SECTIONS, isSpecial, IMPLEMENTED_PAGES } from "./lib/nav";
@@ -55,6 +56,7 @@
     "Exit Ladder": ExitLadder,
     Backtesting,
     Promotion,
+    Runbooks,
   };
 
   function pickSection(s: string) {
