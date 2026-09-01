@@ -1,7 +1,16 @@
-// Navigation model — mirrors streamlit_app.py's SECTIONS / PAGE_DESC exactly so
-// the SPA matches the production Streamlit UI: a left sidebar of 8 sections,
-// each a landing of summary cards that drill into detail sub-pages (except
-// Overview / Roadmap / Learning, which render directly).
+// Navigation model — mirrors streamlit_app.py's SECTIONS / PAGE_DESC: a left
+// sidebar of sections, each a landing of summary cards that drill into detail
+// sub-pages (except Overview / Roadmap / Learning / Work, which render
+// directly).
+//
+// ⚠️ ONE DELIBERATE DIVERGENCE, recorded rather than left for someone to trip
+// over: `Work` is SPA-ONLY. It has no Streamlit counterpart, so this file no
+// longer mirrors streamlit_app.py *exactly* and the previous version of this
+// comment claiming it did would now be false. The work view is the read half of
+// the operating layer's visibility phase, and that phase builds on the SPA
+// because retiring the Streamlit consumer is part of a later phase — adding a
+// Streamlit twin would be work aimed at a surface already scheduled for
+// archiving. If the two are ever reconciled, reconcile this comment too.
 
 import { writable } from "svelte/store";
 
@@ -13,6 +22,7 @@ export const SECTIONS: Record<string, string[]> = {
   Accounts: ["Accounts", "Prop"],
   Activity: ["Positions", "Trades", "Order Packages", "Signals"],
   Roadmap: [],
+  Work: [],
   Learning: [],
   Admin: ["Data Explorer", "Logs", "Health", "Runbooks"],
 };
@@ -41,6 +51,7 @@ export const PAGE_DESC: Record<string, string> = {
   Health: "VM / service health + last-tick + snapshot checks.",
   Runbooks: "Operating schematic, the coordination board, and what is due today.",
   Roadmap: "Product-roadmap progress — milestones → sprints → work-session notes.",
+  Work: "What is in flight — intents → work objects → steps, with each object's blockers. Read-only; covers the operating-layer build only.",
   Learning: "Trading + AI curriculum with per-resource progress.",
 };
 

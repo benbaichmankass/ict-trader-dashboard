@@ -74,6 +74,21 @@ const BINDINGS = {
     fixture: "ml_registry.json",
     rowPaths: { m: "rows" },
   },
+  // Work.svelte (Phase B). Bound BOTH ways: `paths` for the $derived aliases
+  // off the whole payload, `rowPaths` for the each-block items. The fixture is
+  // a REAL captured /api/bot/work response, not hand-written -- a hand-written
+  // one would encode the same assumption the consumer might have got wrong.
+  //
+  // The three keys this route must not lose are exactly the ones a renderer
+  // tends to drop: coverage.complete (the store is PARTIAL), wip.enforced (the
+  // ceiling is DECLARED, not kept), and o.blockedOnState (a claim vs silence).
+  // Binding them means a rename bot-side fails here instead of rendering blank.
+  "Work.svelte": {
+    fixture: "work_store.json",
+    root: "raw",
+    paths: { raw: "", summary: "summary", coverage: "coverage", wip: "wip" },
+    rowPaths: { o: "objects", it: "intents" },
+  },
 };
 
 function dig(obj, path) {
