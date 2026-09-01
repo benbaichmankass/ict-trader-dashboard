@@ -47,11 +47,20 @@ const ROUTES = join(HERE, "..", "src", "routes");
 const FIXTURES = join(HERE, "fixtures");
 
 /**
- * route file -> { rootVar: fixture, derivedVar: "path.inside.fixture" }
+ * route file -> binding, OR an ARRAY of bindings.
  *
  * `root` names the `$state` holding the whole response. `paths` maps each
  * `$derived` alias to the object inside that response it is bound to, so a read
  * off the alias is checked against the right sub-object.
+ *
+ * ⚠️ THE ARRAY FORM EXISTS BECAUSE ONE ROUTE FILE CAN CONSUME TWO ENDPOINTS.
+ * `Work.svelte` renders `/api/bot/work` AND `/api/bot/work/decisions` (Phase H
+ * put decisions at the top of the same view). With one binding per file the
+ * second endpoint's aliases would be checked against the FIRST endpoint's
+ * fixture — where none of them exist — so the honest options were "check it
+ * against the wrong payload" or "do not check it at all". Both are worse than
+ * a second entry. Each binding is checked independently and their field counts
+ * add, so a route with two endpoints cannot pass by having only one covered.
  */
 const BINDINGS = {
   "Prop.svelte": {
@@ -83,12 +92,28 @@ const BINDINGS = {
   // tends to drop: coverage.complete (the store is PARTIAL), wip.enforced (the
   // ceiling is DECLARED, not kept), and o.blockedOnState (a claim vs silence).
   // Binding them means a rename bot-side fails here instead of rendering blank.
-  "Work.svelte": {
-    fixture: "work_store.json",
-    root: "raw",
-    paths: { raw: "", summary: "summary", coverage: "coverage", wip: "wip" },
-    rowPaths: { o: "objects", it: "intents" },
-  },
+  // TWO endpoints, one file — see the ARRAY note above.
+  "Work.svelte": [
+    {
+      fixture: "work_store.json",
+      root: "raw",
+      paths: { raw: "", summary: "summary", coverage: "coverage", wip: "wip" },
+      rowPaths: { o: "objects", it: "intents" },
+    },
+    {
+      // Phase H — the decision inbox rendered at the top of the same view.
+      fixture: "work_decisions.json",
+      root: "dec",
+      paths: { dec: "", dsum: "summary", dtransit: "transit", dgate: "writeGate" },
+      // `req` is one decision request — an each-block item, so only rowPaths
+      // can express it. Its nested `options[]` entries are NOT covered: the
+      // checker resolves one array per alias, and an option is a row inside a
+      // row. Stating the gap rather than implying coverage, since a binding
+      // that looks complete and is not is the failure this file exists to
+      // prevent one level up.
+      rowPaths: { req: "requests" },
+    },
+  ],
 };
 
 function dig(obj, path) {
@@ -263,9 +288,44 @@ function selfTest() {
     return 1;
   }
 
-  console.log("SELF-TEST PASS  (7/7: prop defect caught · prop fix accepted · " +
+  // --- the ARRAY form (Phase H) ------------------------------------------
+  // The failure this guards against: a second endpoint's aliases silently
+  // checked against the FIRST endpoint's fixture, where nothing exists.
+  const wb = BINDINGS["Work.svelte"];
+  if (!Array.isArray(wb) || wb.length < 2) {
+    console.error("SELF-TEST FAIL: Work.svelte should declare two bindings");
+    return 1;
+  }
+  const [workB, decB] = wb;
+  const decBroken = `const dsum = $derived(dec?.summary ?? null);
+  const n = $derived(dsum?.awaiting_operator ?? null);`;   // snake_case: absent
+  const i = checkRoute("Work.svelte", decB, decBroken);
+  if (i.problems.length === 0) {
+    console.error("SELF-TEST FAIL: a nonexistent decision-summary key was accepted");
+    return 1;
+  }
+  const decFixed = `const dsum = $derived(dec?.summary ?? null);
+  const n = $derived(dsum?.awaitingOperator ?? null);`;
+  const j = checkRoute("Work.svelte", decB, decFixed);
+  if (j.problems.length !== 0) {
+    console.error("SELF-TEST FAIL: the correct decision key was rejected:", j.problems);
+    return 1;
+  }
+  // ...and the two bindings must not be interchangeable, or the array buys
+  // nothing. `summary` is an alias in BOTH, with different contents — so a
+  // decision-only field read through it must FAIL against the work fixture.
+  const k = checkRoute("Work.svelte", workB,
+    `const summary = $derived(raw?.summary ?? null);
+     const n = $derived(summary?.awaitingOperator ?? null);`);
+  if (k.problems.length === 0) {
+    console.error("SELF-TEST FAIL: a decision read passed against the work fixture");
+    return 1;
+  }
+
+  console.log("SELF-TEST PASS  (10/10: prop defect caught · prop fix accepted · " +
     "empty binding refused · F-111 caught · stage fix accepted · " +
-    "empty row population refused · comments stripped without hiding real reads)");
+    "empty row population refused · comments stripped without hiding real reads · " +
+    "two-endpoint binding: bad key caught, good key accepted, fixtures not interchangeable)");
   return 0;
 }
 
@@ -275,14 +335,17 @@ function main() {
   const present = new Set(readdirSync(ROUTES));
   let problems = [];
   let checked = 0;
-  for (const [routeFile, binding] of Object.entries(BINDINGS)) {
+  for (const [routeFile, declared] of Object.entries(BINDINGS)) {
     if (!present.has(routeFile)) {
       problems.push(`binding declared for ${routeFile}, which does not exist`);
       continue;
     }
-    const r = checkRoute(routeFile, binding);
-    problems = problems.concat(r.problems);
-    checked += r.checked;
+    // One binding or several — a route file may consume more than one endpoint.
+    for (const binding of Array.isArray(declared) ? declared : [declared]) {
+      const r = checkRoute(routeFile, binding);
+      problems = problems.concat(r.problems);
+      checked += r.checked;
+    }
   }
   if (checked === 0) {
     // Never report a green over an empty population.

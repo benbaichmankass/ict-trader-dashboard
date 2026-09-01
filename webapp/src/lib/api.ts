@@ -180,6 +180,48 @@ export const api = {
   insight: (endpoint: string, signal?: AbortSignal) => get<any>(`/api/bot/insights/${endpoint}`, signal),
   roadmap: (signal?: AbortSignal) => get<any>("/api/bot/roadmap", signal),
   work: (signal?: AbortSignal) => get<any>("/api/bot/work", signal),
+  // Phase H — the decision inbox. Tier-1 READ: no auth, so the panel always
+  // renders even when answering is closed.
+  workDecisions: (signal?: AbortSignal) => get<any>("/api/bot/work/decisions", signal),
+  // Phase H — submit ONE answer. Tier-2 WRITE, token-gated and FAIL-CLOSED on
+  // the bot side (503 when DASHBOARD_API_TOKEN is unset).
+  //
+  // ⚠️ IT DECIDES NOTHING. The bot appends the submission to a transit log and
+  // returns `answerState: "in_transit"`, NEVER "committed" — the answer becomes
+  // the decision only when a committer writes it into the work object in the
+  // repo. So this function must never be treated as confirmation: the caller
+  // re-reads `workDecisions()` and renders whatever the SERVER says.
+  //
+  // ⚠️ The bearer is passed per call and is NEVER stored by this module. A
+  // static site on GitHub Pages cannot hold a secret; where the caller keeps it
+  // is the caller's decision and is documented at the call site.
+  postWorkDecision: async (
+    token: string,
+    body: { object_id: string; request_id: string; chosen?: string | null; free_text?: string | null },
+  ): Promise<any> => {
+    const res = await fetch(`${getBotApiUrl()}/api/bot/work/decision`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body),
+    });
+    let payload: any = null;
+    try {
+      payload = await res.json();
+    } catch {
+      payload = null;
+    }
+    if (!res.ok) {
+      // Surface the SERVER's reason. 503 (answering not configured), 401 (bad
+      // bearer), 409 (already decided in the repo) and 400 (not a valid answer
+      // to this question) mean different things to the operator, and collapsing
+      // them into "failed" would hide which.
+      const detail = payload?.detail ?? res.statusText;
+      const err = new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+      (err as any).status = res.status;
+      throw err;
+    }
+    return payload;
+  },
 
   // Prop (Breakout manual-bridge) — isolated journal, never blended into real/paper.
   propStatus: (accountId = "breakout_1", signal?: AbortSignal) =>
