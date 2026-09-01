@@ -30,27 +30,58 @@ reference (architecture, API contract, tabs).
 
 ## What this is
 
+> # 🗄️ THE STREAMLIT APP IS RETIRED (2026-09-01) — READ THIS FIRST
+>
+> **`streamlit_app.py` is a notice page. It makes NO call to the bot API.**
+> The live frontend is the **Svelte SPA** under `webapp/`.
+>
+> Operator decision 2026-09-01,
+> `BL-20260901-RETIRE-ANDROID-AND-STREAMLIT-FROM-THE-LIVE-FEED` in the bot
+> repo: **the SPA is the only live consumer of the bot API.** The Android app
+> was retired at the same time.
+>
+> **Why a session must not undo this.** The retirement is the *precondition*
+> for gating the bot's read surface (Phase H — `require_session` on the routes
+> that never got it). As the bot's build plan puts it, archiving the other
+> consumers is what makes the gate tractable, *"because there is nothing else
+> left to keep working"*. Restoring a second consumer silently re-opens a
+> closed question.
+>
+> - The previous 9,628-line implementation:
+>   [`archive/streamlit_app_RETIRED_2026-09-01.py`](archive/streamlit_app_RETIRED_2026-09-01.py)
+>   — reference only, **not maintained**, and it *does* still contain bot-API
+>   calls, so do not point it at the live bot.
+> - ⚠️ The Community-Cloud app still exists and tracks `main`; it will
+>   redeploy the notice. **Deleting the deployment is an operator action** in
+>   <https://share.streamlit.io> — nothing in this repo can do it.
+> - **Every section below that describes the Streamlit app as live is
+>   HISTORICAL.** It is kept because it documents an app that ran for months
+>   and whose archived source is still here — not because it is current.
+
+The live frontend is the **Svelte SPA** under `webapp/` hosted on **GitHub
+Pages** (`https://benbaichmankass.github.io/ict-trader-dashboard/`,
+browser-direct to the bot API over HTTPS, auto-deployed on every push to
+`main` by `.github/workflows/pages.yml`). **The bot's Telegram system-report
+ping deep-links into it** — `…github.io/ict-trader-dashboard/?report=<id>` —
+per the bot repo's authoritative `CLAUDE.md` § "Dashboard consumer" (which is
+the source of truth). The `webapp/` SPA carries its own `webapp/README.md`.
+
+<details>
+<summary>🗄️ What the Streamlit app was (historical, until 2026-09-01)</summary>
+
 Streamlit dashboard for the ICT Trading Bot's FastAPI on the VPS.
-Read-only — polls the bot's REST API and renders stats, positions,
+Read-only — polled the bot's REST API and rendered stats, positions,
 signals, closed trades, logs, and health. Hosted on Streamlit Community
-Cloud (free), auto-redeploys from `main`.
+Cloud (free), auto-redeployed from `main`, at
+`https://ict-trader-dashboard-z67ryan2ttrxjdvk6ozcjc.streamlit.app/`. It read
+the same `?report=` deep-link scheme as the SPA
+(`_consume_report_deeplink`). Sections below describe **this** app unless
+noted.
 
-**Two production frontends serve this repo (correction 2026-08-04):** the
-**Streamlit app** (this file's subject — `streamlit_app.py`, Streamlit Community
-Cloud, auto-redeploys from `main`) at
-`https://ict-trader-dashboard-z67ryan2ttrxjdvk6ozcjc.streamlit.app/`, **and** the
-newer **Svelte SPA** under `webapp/` hosted on **GitHub Pages**
-(`https://benbaichmankass.github.io/ict-trader-dashboard/`, browser-direct to the
-bot API over HTTPS, auto-deployed on every push to `main` by
-`.github/workflows/pages.yml`). **The bot's Telegram system-report ping now
-deep-links into the SPA** — `…github.io/ict-trader-dashboard/?report=<id>` — per
-the bot repo's authoritative `CLAUDE.md` § "Dashboard consumer" (which is the
-source of truth). Both frontends read the same `?report=` scheme, so the
-Streamlit app (`_consume_report_deeplink`) still resolves a report deep-link too.
-The `webapp/` SPA carries its own `webapp/README.md`; sections below describe the
-Streamlit app specifically unless noted.
+</details>
 
-- Entry point: [`streamlit_app.py`](./streamlit_app.py)
+- Entry point (the live one): [`webapp/`](./webapp/) — the Svelte SPA
+- Retired entry point: [`streamlit_app.py`](./streamlit_app.py) (notice page)
 - Deploy + local-dev steps: [`README.md`](./README.md)
 - Migration history: [PR #32](https://github.com/benbaichmankass/ict-trader-dashboard/pull/32)
 
