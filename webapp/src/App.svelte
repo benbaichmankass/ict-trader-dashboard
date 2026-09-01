@@ -11,6 +11,7 @@
   import OrderPackages from "./routes/OrderPackages.svelte";
   import Insights from "./routes/Insights.svelte";
   import Roadmap from "./routes/Roadmap.svelte";
+  import Work from "./routes/Work.svelte";
   import Prop from "./routes/Prop.svelte";
   import Health from "./routes/Health.svelte";
   import Logs from "./routes/Logs.svelte";
@@ -117,6 +118,8 @@
         <Overview />
       {:else if $nav.section === "Roadmap"}
         <Roadmap />
+      {:else if $nav.section === "Work"}
+        <Work />
       {:else if isSpecial($nav.section)}
         <Placeholder page={$nav.section} />
       {:else if $nav.detail == null}

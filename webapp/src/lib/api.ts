@@ -179,6 +179,7 @@ export const api = {
   },
   insight: (endpoint: string, signal?: AbortSignal) => get<any>(`/api/bot/insights/${endpoint}`, signal),
   roadmap: (signal?: AbortSignal) => get<any>("/api/bot/roadmap", signal),
+  work: (signal?: AbortSignal) => get<any>("/api/bot/work", signal),
 
   // Prop (Breakout manual-bridge) — isolated journal, never blended into real/paper.
   propStatus: (accountId = "breakout_1", signal?: AbortSignal) =>

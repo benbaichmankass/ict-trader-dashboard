@@ -1,0 +1,321 @@
+{
+  "present": true,
+  "reason": null,
+  "intents": [
+    {
+      "id": "IN-20260901-OPERATING-LAYER",
+      "title": "The system steers itself, instead of only executing well",
+      "status": "live",
+      "openedAt": "2026-09-01",
+      "reviewCadence": "weekly",
+      "why": "Measured 2026-09-01 across the working tree, populations stated in the design series: the system built EXECUTION and INTEGRITY to a high standard and never built the STEERING. Of 24 declared functions, 5 work, 14 are partial and 5 are missing outright — and all five missing ones are steering (priority propagation, WIP control, constraint diagnosis, capability build as a governed function, capability retirement). The consequences are measurable rather than felt: backlog net +425 rows in August against +37 in May; 196 dated sprint logs of which 1.0% deployed to real money, deployment being the only category that FELL while throughput tripled; 256 of 370 research units superseded before anyone read them; 1 of 117 dispositions producing an action; 6 strategy retirements ever, none in five weeks; 21 of 32 milestones simultaneously active.\nThe root cause is not rigour, effort or tooling — all three are unusually strong. It is that one undifferentiated session type does three incompatible jobs, guided by a ~403,000-token map no session can hold, with four competing \"what next\" surfaces and no arbiter, and no forcing function that removes anything.",
+      "doneLooksLike": "The operator's cycle decision has a computed constraint behind it; work in flight is capped and visible; a session inherits its context from the work rather than from the corpus; and something has actually been retired. NOT \"all 8 phases merged\" — a phase that merged and changed nobody's behaviour has not delivered this intent.",
+      "extra": {
+        "⚠️_this_intent_is_capability_work": "E2 capability build is supposed to be PULLED by a held-up stage, never self-started. This is pulled by an operator directive instead, because E1 (constraint diagnosis) does not exist yet to give a diagnosis. That is a legitimate source — A2 priority is operator-set by design — but it is a DIFFERENT one, and recording it as a constraint finding would be the unprovenanced conclusion this repo keeps paying for. The measured constraint is DECISION, and only phase F acts on it directly."
+      },
+      "path": "docs/claude/work/intents/IN-20260901-OPERATING-LAYER.yaml"
+    }
+  ],
+  "objects": [
+    {
+      "id": "WO-20260901-PHASE-B",
+      "type": "commitment",
+      "parentIntent": "IN-20260901-OPERATING-LAYER",
+      "title": "Phase B — visibility — the read-only work view and the daily digest",
+      "stage": "CAPABILITY",
+      "lifecycle": "in_flight",
+      "lifecycleDeclared": "in_flight",
+      "owner": "claude",
+      "openedAt": "2026-09-01",
+      "closedAt": null,
+      "reviewTrigger": "Re-read when the phase it depends on closes, or when the operator changes the cycle priority. A dormant phase is not a queued one — it is re-argued when it becomes reachable.",
+      "doneCondition": "The operator can see what is in flight without opening the repo, and receives one rolled-up daily summary of autonomous activity.\n# ⚠️ CORRECTED 2026-09-01, and the correction is the point. This edge read # `object: WO-20260901-PHASE-A`, which was WRONG in the direction that matters: # Phase A is `waiting` on a COLD SESSION'S OBSERVATION that may be days away, # so the graph reported this phase blocked when its real dependency — THE STORE # EXISTS — has been satisfied since A's first commit. A false blocker is worse # than a missing one: it is exactly what E1's constraint computation would later # read, and it would have said \"we are waiting\" while two phases were available. # An edge must name the CONDITION, never the object that happened to create it.",
+      "blockedOn": [],
+      "blockedOnState": "declared_none",
+      "note": "Only the READ half. The route follows src/web/api/routers/roadmap.py (475 ln), which already parses repo files into a view — file-backed, Tier 1, cached on mtime, degrading to an empty envelope rather than a 5xx. ⚠️ The digest pings on STATE CHANGES and never on activity: 202 of 376 CRITICAL/ERROR rows in one measured window were a single un-latched alarm, which trained the operator past the one channel reserved for an unprotected position.",
+      "evidence": [
+        "docs/design/operating-layer-build-plan-DESIGN.md"
+      ],
+      "verdict": null,
+      "hasVerdict": false,
+      "extra": {},
+      "path": "docs/claude/work/objects/WO-20260901-PHASE-B.yaml",
+      "parentIntentKnown": true
+    },
+    {
+      "id": "WO-20260901-PHASE-F",
+      "type": "commitment",
+      "parentIntent": "IN-20260901-OPERATING-LAYER",
+      "title": "Phase F — the repairs — decision preparation and decision recording",
+      "stage": "CAPABILITY",
+      "lifecycle": "in_flight",
+      "lifecycleDeclared": "in_flight",
+      "owner": "claude",
+      "openedAt": "2026-09-01",
+      "closedAt": null,
+      "reviewTrigger": "Re-read when the phase it depends on closes, or when the operator changes the cycle priority. A dormant phase is not a queued one — it is re-argued when it becomes reachable.",
+      "doneCondition": "A strategy-review packet is committed on a cadence and read, and a Tier-3 approval lands in exactly one place.",
+      "blockedOn": [],
+      "blockedOnState": "declared_none",
+      "note": "⚠️ THIS IS THE ONLY PHASE THAT IS UNBLOCKED TODAY, and it is the only one that touches the MEASURED constraint (DECISION). It depends on nothing this build produces. strategy_review_packet.py is 1,518 lines that emit a real action badge with reasons and an SLA, and write to a GITIGNORED path with no cron — so no packet has ever been committed. The repair is a cron and a committed path. C4: strategy_changelog.json has been dead since 2026-07-28, and squeeze_breakout_4h runs live today against a written record saying it was demoted for a 0% win rate over 60 closes.",
+      "evidence": [
+        "docs/design/operating-layer-build-plan-DESIGN.md"
+      ],
+      "verdict": null,
+      "hasVerdict": false,
+      "extra": {
+        "scope_split": {
+          "c3_decision_preparation": "IN FLIGHT 2026-09-01. The cron (.github/workflows/strategy-review-packets.yml), --all-strategies, write_index(), and the committed path comms/strategy_reviews/. ⚠️ NOT done until a dispatched run has actually COMMITTED an INDEX.json — a green run with no committed index is a failure, not a pass.",
+          "c4_decision_recording": "DEFERRED, with a stated reason rather than silently dropped. C4 wants one decision record instead of four forked surfaces, and the obvious first move — a guard comparing the changelog's execution verdict against config/strategies.yaml — CANNOT be built honestly today: the 53 changelog entries carry only {date, ref, summary}, so the verdict exists solely as PROSE (\"DEMOTED execution: live -> shadow ...\"). Extracting it by pattern-matching English is sub-class A of the diagnostic-provenance defect this repo has a guard family for, and a guard that matches prose would be confidently wrong on the entries it misses. The honest path is a STRUCTURED field on new entries plus a reported denominator of un-structured ones — which is a design decision, not a wire, and belongs to its own change.",
+          "⚠️_do_not_read_this_object_as_c4_delivered": "A concrete live instance is already filed as BL-20260901-DECISION-RECORD-SAYS-SHADOW-WHILE-CONFIG-SAYS-LIVE-SQUEEZE-BREAKOUT-4H, whose resolution_criteria require BOTH a reconciliation AND the executable check — because closing the instance without the check is exactly what left this class alive the two previous times it was fixed."
+        }
+      },
+      "path": "docs/claude/work/objects/WO-20260901-PHASE-F.yaml",
+      "parentIntentKnown": true
+    },
+    {
+      "id": "WO-20260901-PHASE-C",
+      "type": "commitment",
+      "parentIntent": "IN-20260901-OPERATING-LAYER",
+      "title": "Phase C — migration, the WIP ceiling, and the priority that reaches a session",
+      "stage": "CAPABILITY",
+      "lifecycle": "ready",
+      "lifecycleDeclared": "ready",
+      "owner": "claude",
+      "openedAt": "2026-09-01",
+      "closedAt": null,
+      "reviewTrigger": "Re-read when the phase it depends on closes, or when the operator changes the cycle priority. A dormant phase is not a queued one — it is re-argued when it becomes reachable.",
+      "doneCondition": "A session knows this cycle's priority without being told, and the ceiling refuses a ninth parent.\n# ⚠️ CORRECTED 2026-09-01, and the correction is the point. This edge read # `object: WO-20260901-PHASE-A`, which was WRONG in the direction that matters: # Phase A is `waiting` on a COLD SESSION'S OBSERVATION that may be days away, # so the graph reported this phase blocked when its real dependency — THE STORE # EXISTS — has been satisfied since A's first commit. A false blocker is worse # than a missing one: it is exactly what E1's constraint computation would later # read, and it would have said \"we are waiting\" while two phases were available. # An edge must name the CONDITION, never the object that happened to create it.",
+      "blockedOn": [],
+      "blockedOnState": "declared_none",
+      "note": "Migration and the ceiling ship TOGETHER, deliberately: ~572 not-closed backlog rows arriving unbounded would render as 572 things in flight, which is the condition the redesign exists to end. Carried rows arrive dormant or accepted by default. ⚠️ scripts/ci/check_open_items.py keeps MAX_ITEMS = None — the REGISTER is uncapped, the IN-FLIGHT SET is capped; conflating those populations would re-introduce the eviction rule the operator reversed on 2026-08-26.",
+      "evidence": [
+        "docs/design/operating-layer-build-plan-DESIGN.md"
+      ],
+      "verdict": null,
+      "hasVerdict": false,
+      "extra": {},
+      "path": "docs/claude/work/objects/WO-20260901-PHASE-C.yaml",
+      "parentIntentKnown": true
+    },
+    {
+      "id": "WO-20260901-PHASE-A",
+      "type": "commitment",
+      "parentIntent": "IN-20260901-OPERATING-LAYER",
+      "title": "Phase A — survival — the plan carries itself forward",
+      "stage": "CAPABILITY",
+      "lifecycle": "waiting",
+      "lifecycleDeclared": "waiting",
+      "owner": "claude",
+      "openedAt": "2026-09-01",
+      "closedAt": null,
+      "reviewTrigger": "Re-read when the phase it depends on closes, or when the operator changes the cycle priority. A dormant phase is not a queued one — it is re-argued when it becomes reachable.",
+      "doneCondition": "A session that arrives COLD, pointed at nothing, states which phase this build is on and what the next step is, CITING the CLAUDE.md session brief as where it saw it. A passing test is not that observation, and neither is this session reporting on its own work.",
+      "blockedOn": [
+        {
+          "kind": "external_event",
+          "ref": "a COLD session reporting on this work, citing the CLAUDE.md brief",
+          "since": "2026-09-01",
+          "note": "Everything Phase A ships is BUILT and pushed. It is deliberately NOT `done`: its done_condition is an OBSERVATION nobody has made yet, and the channel it rides is itself unproven (OI-20260826). `waiting` is the honest state — a `done` here would be the collapse the six-state vocabulary exists to prevent, and would quietly convert \"we deployed it\" into \"we verified it\".",
+          "refResolvedInStore": null
+        }
+      ],
+      "blockedOnState": "declared",
+      "note": "Rides scripts/ops/render_session_brief.py, which renders OPEN-ITEMS.json into CLAUDE.md — the only surface reaching a session before its first tool call. ⚠️ That channel is ITSELF unproven: OI-20260826-SESSION-BRIEF-NEVER- READ-BY-A-FRESH-SESSION is open and says no fresh session has ever been observed acting on it. So this object's done-condition is an OBSERVATION, not a deploy.",
+      "evidence": [
+        "docs/design/operating-layer-build-plan-DESIGN.md"
+      ],
+      "verdict": null,
+      "hasVerdict": false,
+      "extra": {
+        "carried_out_of_scope": [
+          {
+            "what": "Delete the two dead Routines (Health Check Routine trig_015diTGEy9jATecSPMFmPyNF, Sprint Continue Work trig_01SvpLKYiTKgXkeLgV7Q3pEr) — both enabled:true with next_run_at 0001-01-01, never fired, naming the pre-rename repo and branches that no longer exist.",
+            "why": "OPERATOR-ONLY. Attempted 2026-09-01 and refused by the control plane: both were created via http_api, and an agent may only delete or disable routines it created itself. delete_trigger AND update_trigger(enabled=false) both refused. No runner path exists — this is the Claude Code Remote control plane, not a VM action.",
+            "⚠️": "Until the operator removes them the register keeps two routines reading enabled:true that can never fire. Health Check Routine also holds an unused stored OAuth token from 2026-05-10, retired with it."
+          }
+        ]
+      },
+      "path": "docs/claude/work/objects/WO-20260901-PHASE-A.yaml",
+      "parentIntentKnown": true
+    },
+    {
+      "id": "WO-20260901-PHASE-D",
+      "type": "commitment",
+      "parentIntent": "IN-20260901-OPERATING-LAYER",
+      "title": "Phase D — the constraint, computed rather than judged",
+      "stage": "CAPABILITY",
+      "lifecycle": "dormant",
+      "lifecycleDeclared": "dormant",
+      "owner": "claude",
+      "openedAt": "2026-09-01",
+      "closedAt": null,
+      "reviewTrigger": "Re-read when the phase it depends on closes, or when the operator changes the cycle priority. A dormant phase is not a queued one — it is re-argued when it becomes reachable.",
+      "doneCondition": "The cycle's priority has a computed readout behind it, AND docs/claude/DUE.* is deleted rather than left running beside it.",
+      "blockedOn": [
+        {
+          "kind": "object",
+          "ref": "WO-20260901-PHASE-C",
+          "since": "2026-09-01",
+          "note": "E1 walks the typed blocked_on edges, which only exist once the carried rows are migrated with their dependencies.",
+          "refResolvedInStore": true
+        }
+      ],
+      "blockedOnState": "declared",
+      "note": "E1 is genuinely new — verified by search, nothing in the repo names a bottleneck stage. render_due_list.py is 746 lines that say what is DUE, never where the chain is stuck.",
+      "evidence": [
+        "docs/design/operating-layer-build-plan-DESIGN.md"
+      ],
+      "verdict": null,
+      "hasVerdict": false,
+      "extra": {},
+      "path": "docs/claude/work/objects/WO-20260901-PHASE-D.yaml",
+      "parentIntentKnown": true
+    },
+    {
+      "id": "WO-20260901-PHASE-E",
+      "type": "commitment",
+      "parentIntent": "IN-20260901-OPERATING-LAYER",
+      "title": "Phase E — no work is lost, and rules are verified at exit",
+      "stage": "CAPABILITY",
+      "lifecycle": "dormant",
+      "lifecycleDeclared": "dormant",
+      "owner": "claude",
+      "openedAt": "2026-09-01",
+      "closedAt": null,
+      "reviewTrigger": "Re-read when the phase it depends on closes, or when the operator changes the cycle priority. A dormant phase is not a queued one — it is re-argued when it becomes reachable.",
+      "doneCondition": "Killing a session mid-work loses nothing, DEMONSTRATED by killing one. Not asserted from a test.\n# ⚠️ CORRECTED 2026-09-01, and the correction is the point. This edge read # `object: WO-20260901-PHASE-A`, which was WRONG in the direction that matters: # Phase A is `waiting` on a COLD SESSION'S OBSERVATION that may be days away, # so the graph reported this phase blocked when its real dependency — THE STORE # EXISTS — has been satisfied since A's first commit. A false blocker is worse # than a missing one: it is exactly what E1's constraint computation would later # read, and it would have said \"we are waiting\" while two phases were available. # An edge must name the CONDITION, never the object that happened to create it.",
+      "blockedOn": [
+        {
+          "kind": "capability",
+          "ref": "DASHBOARD_API_TOKEN propagation to the session environment",
+          "since": "2026-09-01",
+          "note": "The ONLY real blocker left on this phase. Operator-decided 2026-09-01; propagation only, the value already exists on the VM at /etc/ict-trader/web-api.env, so nothing is originated. The store-exists edge that also sat here was the same false blocker corrected above.",
+          "refResolvedInStore": null
+        }
+      ],
+      "blockedOnState": "declared",
+      "note": "F2 close-out verification and F5 exit verification are ONE hook, not two: same moment, same mechanism, same session. close_session.py (354 ln) already does the right things but is SESSION-INVOKED, so a session that dies never runs it. ⚠️ The transit contract is part of the done-condition: three states never collapsed (not_submitted · in_transit · committed), and transit fails BACK never forward.",
+      "evidence": [
+        "docs/design/operating-layer-build-plan-DESIGN.md"
+      ],
+      "verdict": null,
+      "hasVerdict": false,
+      "extra": {},
+      "path": "docs/claude/work/objects/WO-20260901-PHASE-E.yaml",
+      "parentIntentKnown": true
+    },
+    {
+      "id": "WO-20260901-PHASE-G",
+      "type": "commitment",
+      "parentIntent": "IN-20260901-OPERATING-LAYER",
+      "title": "Phase G — the forcing function — retirement, and the E2 pull rule",
+      "stage": "CAPABILITY",
+      "lifecycle": "dormant",
+      "lifecycleDeclared": "dormant",
+      "owner": "claude",
+      "openedAt": "2026-09-01",
+      "closedAt": null,
+      "reviewTrigger": "Re-read when the phase it depends on closes, or when the operator changes the cycle priority. A dormant phase is not a queued one — it is re-argued when it becomes reachable.",
+      "doneCondition": "Something has actually been REMOVED, and a capability PR carries the stage it unblocks.",
+      "blockedOn": [
+        {
+          "kind": "object",
+          "ref": "WO-20260901-PHASE-D",
+          "since": "2026-09-01",
+          "note": "The pull rule requires E1 to be able to NAME the held-up stage a capability claims to unblock; without it the rule is unenforceable.",
+          "refResolvedInStore": true
+        }
+      ],
+      "blockedOnState": "declared",
+      "note": "6 strategy retirements have ever occurred, none in five weeks against 45 live legs, and nothing has ever retired a skill, register, workflow or guard. Complexity is monotonic by construction until something removes. ⚠️ A retirement is done when the old thing is GONE, not when the replacement ships.",
+      "evidence": [
+        "docs/design/operating-layer-build-plan-DESIGN.md"
+      ],
+      "verdict": null,
+      "hasVerdict": false,
+      "extra": {},
+      "path": "docs/claude/work/objects/WO-20260901-PHASE-G.yaml",
+      "parentIntentKnown": true
+    },
+    {
+      "id": "WO-20260901-PHASE-H",
+      "type": "commitment",
+      "parentIntent": "IN-20260901-OPERATING-LAYER",
+      "title": "Phase H — the control half — decisions from the UI, and the read gate",
+      "stage": "CAPABILITY",
+      "lifecycle": "dormant",
+      "lifecycleDeclared": "dormant",
+      "owner": "claude",
+      "openedAt": "2026-09-01",
+      "closedAt": null,
+      "reviewTrigger": "Re-read when the phase it depends on closes, or when the operator changes the cycle priority. A dormant phase is not a queued one — it is re-argued when it becomes reachable.",
+      "doneCondition": "The operator answers a decision from the UI, and the API's read surface is gated.",
+      "blockedOn": [
+        {
+          "kind": "object",
+          "ref": "WO-20260901-PHASE-B",
+          "since": "2026-09-01",
+          "note": "The control half extends the read view; building both at once would couple the cheap half to the gated one.",
+          "refResolvedInStore": true
+        },
+        {
+          "kind": "object",
+          "ref": "BL-20260901-RETIRE-ANDROID-AND-STREAMLIT-FROM-THE-LIVE-FEED",
+          "since": "2026-09-01",
+          "note": "Gating reads is only tractable once there is nothing else left to keep working.",
+          "refResolvedInStore": false
+        },
+        {
+          "kind": "object",
+          "ref": "BL-20260901-DB-EXPLORER-IS-UNGATED-AND-REACHES-DEVICE-TOKENS-RAW-TOKEN-COLUMN",
+          "since": "2026-09-01",
+          "note": "A route gate is authentication, not authorization: one token would otherwise open all 22 tables.",
+          "refResolvedInStore": false
+        }
+      ],
+      "blockedOnState": "declared",
+      "note": "require_session is genuinely default-deny and already tested; exactly two routes attach it today. /api/auth/login was built for this and NO consumer has ever called it. ⚠️ A static site cannot hold a secret — the SPA is served from GitHub Pages, so the operator logs in and the browser holds a short-lived session token.",
+      "evidence": [
+        "docs/design/operating-layer-build-plan-DESIGN.md"
+      ],
+      "verdict": null,
+      "hasVerdict": false,
+      "extra": {},
+      "path": "docs/claude/work/objects/WO-20260901-PHASE-H.yaml",
+      "parentIntentKnown": true
+    }
+  ],
+  "steps": [],
+  "readErrors": [],
+  "lifecycle": {
+    "dormant": 4,
+    "ready": 1,
+    "in_flight": 2,
+    "waiting": 1,
+    "done": 0,
+    "accepted": 0,
+    "unknown": 0
+  },
+  "summary": {
+    "intentCount": 1,
+    "objectCount": 8,
+    "stepCount": 0,
+    "objectsGraded": 8,
+    "readErrorCount": 0
+  },
+  "wip": {
+    "ceiling": 8,
+    "inFlight": 2,
+    "enforced": false,
+    "state": "declared_not_enforced",
+    "note": "The ceiling of 8 is DECLARED but not enforced. Enforcement ships in Phase C together with the backlog migration, because a ceiling with no real rows behind it is meaningless and the rows without a ceiling are the condition the redesign exists to end. This count is a reading, not a gate."
+  },
+  "coverage": {
+    "complete": false,
+    "scope": "operating-layer-build",
+    "carriedRowsApprox": 572,
+    "carriedRowsMigrateIn": "Phase C",
+    "note": "This store holds the operating-layer build's own phases and nothing else. The carried backlog rows (~572 not-closed) migrate in Phase C, together with the WIP ceiling. A bug to fix still goes to the review backlogs; what a session must KNOW before it plans is still OPEN-ITEMS.json. Do not read this as the whole of the system's work."
+  }
+}
