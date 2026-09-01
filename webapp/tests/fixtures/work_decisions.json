@@ -1,0 +1,77 @@
+{
+  "present": true,
+  "reason": null,
+  "requests": [
+    {
+      "id": "DEC-20260901-READ-GATE-SEQUENCING",
+      "objectId": "WO-20260901-PHASE-H",
+      "question": "Phase H's read gate cannot be flipped today: attaching `require_session` to the read surface would break the Streamlit dashboard, which is still a live consumer. How should it be sequenced?",
+      "options": [
+        {
+          "key": "retire_then_flip",
+          "label": "Retire both consumers first, then flip the gate",
+          "implication": "Open the dashboard PR, delete the Streamlit Community Cloud app, and establish Android makes no reads; then flip API_READ_GATE_MODE=enforce. Slowest, and the only order in which nothing the operator uses breaks."
+        },
+        {
+          "key": "flip_now",
+          "label": "Flip the gate now and accept that Streamlit breaks",
+          "implication": "Closes the unauthenticated read surface immediately. The Streamlit dashboard starts 401-ing; the SPA needs its login built first or BOTH frontends go dark."
+        },
+        {
+          "key": "partial_gate",
+          "label": "Gate only the routes no remaining consumer calls",
+          "implication": "Narrower blast radius, but it leaves a mixed surface where \"gated\" is per-route and a new route defaults OPEN \u2014 the same inversion failure the DB-explorer allowlist was just built to end."
+        },
+        {
+          "key": "accept_ungated",
+          "label": "Leave the read surface ungated, as a declared decision",
+          "implication": "The full trading history stays world-readable. Legitimate only if it is DECIDED and recorded, rather than drifted into \u2014 which is the state it is in today."
+        }
+      ],
+      "allowsFreeText": true,
+      "urgency": "blocking",
+      "askedOn": "2026-09-01",
+      "context": "The design says archiving the other two consumers is \"what makes that tractable \u2014 there is nothing else left to keep working\". MEASURED against that: Streamlit's retirement sits on an UNOPENED `ict-trader-dashboard` branch (`claude/phase-h-preconditions-retire-streamlit`, no PR \u2014 that repo has no `pr-opener.yml` relay), and the Android app was deliberately not touched because it is ON ICE. So the precondition `BL-20260901-RETIRE-ANDROID-AND-STREAMLIT-FROM-THE-LIVE-FEED` is NOT met, whatever a summary may say. \u26a0\ufe0f Separately: the DB-explorer precondition (#10682) is MERGED but its own done_condition needs the narrowed route DEPLOYED and re-probed \u2014 a merge is not a deploy. \u26a0\ufe0f And state the exposure plainly: `GET /api/bot/db/tables` answers 200 unauthenticated on a public host, and the tables behind it are not empty \u2014 `signals` 2,301,022 rows, `trades` 5,313, `order_packages` 4,272 (measured by `session_01LvzsinECH8HPCyauVJZBZw`, 2026-09-01).",
+      "answer": null,
+      "objectTitle": "Phase H \u2014 the control half \u2014 decisions from the UI, and the read gate",
+      "objectLifecycle": "in_flight",
+      "parentIntent": "IN-20260901-OPERATING-LAYER",
+      "answerState": "not_submitted",
+      "transit": {
+        "submissionId": null,
+        "submittedAt": null,
+        "ageSeconds": null,
+        "stale": null
+      }
+    }
+  ],
+  "unanswerableOperatorEdges": [],
+  "summary": {
+    "awaitingOperator": 1,
+    "awaitingCommit": 0,
+    "decided": 0,
+    "byAnswerState": {
+      "not_submitted": 1,
+      "in_transit": 0,
+      "committed": 0,
+      "unreadable": 0
+    },
+    "requestCount": 1,
+    "malformedRequestsDropped": 0,
+    "unanswerableOperatorEdgeCount": 0,
+    "staleOpenWindows": 0,
+    "staleAfterSeconds": 3600
+  },
+  "transit": {
+    "state": "absent",
+    "error": null,
+    "path": "/home/user/Metis-Insights/runtime_logs/work_decision_transit.jsonl",
+    "rowsRead": 0
+  },
+  "writeGate": {
+    "state": "closed_no_token",
+    "acceptsWrites": false,
+    "note": "DASHBOARD_API_TOKEN is UNSET, so POST /api/bot/work/decision refuses with 503. This is FAIL-CLOSED and deliberate (the prop.py polarity), not an outage: a dropped .env value closes writes rather than reopening an anonymous write hole."
+  },
+  "note": "The repo is the source of truth. This route reports `committed` ONLY from an `answer` block on the work object in the repo \u2014 never from the transit log \u2014 so an answer that does not commit leaves its question UNANSWERED. Transit fails BACK, never forward."
+}
