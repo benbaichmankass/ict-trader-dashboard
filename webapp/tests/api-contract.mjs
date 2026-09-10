@@ -113,6 +113,32 @@ const BINDINGS = {
                sess: "sessions", ssum: "sessions.summary" },
       rowPaths: { row: "items", l: "sessions.lanes" },
     },
+    // ⚠️ THE DECISIONS PAYLOAD HAD NO BINDING, AND THAT IS THE COVERAGE GAP
+    // THAT LET MI-254 SHIP. The page read `r.answerState` off a payload this
+    // checker never saw, so when the bot grew two more states and a
+    // `conversationalAnswer` block, nothing here noticed the page was still
+    // filtering on `answerState !== "committed"` — a second definition of
+    // "answered" in TypeScript that missed every decision answered in
+    // conversation. Binding it means a rename or a dropped field fails HERE.
+    //
+    // ⚠️ `ca.condition` is the field most at risk of being quietly dropped:
+    // OPEN-PRS.json's doctrine is that a verdict recorded WITHOUT its
+    // condition is worse than a missing row, because it reads as complete.
+    // The fixture deliberately keeps a row that carries one.
+    {
+      fixture: "work_decisions.json",
+      root: "decisions",
+      // `ca` is an OBJECT alias (`{@const ca = r.conversationalAnswer}`), not a
+      // row array, so it belongs in `paths`. It points at index 2 DELIBERATELY:
+      // that is the `answered_in_conversation` row, the only one in the fixture
+      // carrying a real `condition`. Index 0 also has a `conversationalAnswer`
+      // but its condition is null, and binding there would let a dropped
+      // `condition` key pass unnoticed — which is the exact field OPEN-PRS's
+      // doctrine says must never go missing.
+      paths: { decisions: "", dec: "summary",
+               ca: "requests.2.conversationalAnswer" },
+      rowPaths: { r: "requests" },
+    },
   ],
   // Workflow.svelte (MI-238) — the manager checklist + the decision inbox.
   // Bound BOTH ways, like Work.svelte: `paths` for the $derived aliases off the
