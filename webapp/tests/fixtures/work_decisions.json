@@ -38,10 +38,78 @@
       "askedOn": "2026-09-08",
       "context": "The row is left OPEN with a full `observation` recording exactly what was built, measured and deviated from, so whoever decides is deciding on the evidence rather than on a summary. Removing a `loud` row is a judgement about a deviation from a written condition, and a sub-session that cannot put the deviation to anyone should not make it silently.",
       "answer": null,
+      "conversationalAnswer": {
+        "verdict": "reframed_not_answered",
+        "grade": "engaged_not_settled",
+        "chosen": null,
+        "answeredAt": "2026-09-10T07:52:00Z",
+        "answeredBy": "operator (conversational popup, relayed by manager session_01HrmZ1RRNM4UnEUaFdrPEjj)",
+        "condition": null,
+        "text": "Operator, verbatim: \"We should have a workflow for monitoring that allows us to follow mo itores items in a clean wya that doesn't generate noise, if we don't then we need to understand how that fits into the workflow lane. The problem here is not correctly framed for a structurally sound workflow.\""
+      },
       "objectTitle": "Give backtest_system.py an N-book mode and a ranking-key arm, then measure whether arbitration ORDER drives outcome at all",
       "objectLifecycle": "done",
       "parentIntent": "IN-20260903-TRADING-SYSTEM-HEALTH",
-      "answerState": "not_submitted",
+      "answerState": "engaged_not_settled",
+      "answerStateNote": "⚠️ You responded but did NOT settle it — this question is still open. Shown apart from both answered and untouched, because it is neither.",
+      "settled": false,
+      "transit": {
+        "submissionId": null,
+        "submittedAt": null,
+        "ageSeconds": null,
+        "stale": null
+      }
+    },
+    {
+      "id": "DEC-20260901-READ-GATE-SEQUENCING",
+      "objectId": "WO-20260901-PHASE-H",
+      "askedBy": null,
+      "askedByState": "unrecorded",
+      "push": null,
+      "resumeContext": null,
+      "resumeState": "unstated",
+      "question": "Phase H's read gate cannot be flipped today: attaching `require_session` to the read surface would break the Streamlit dashboard, which is still a live consumer. How should it be sequenced?",
+      "options": [
+        {
+          "key": "retire_then_flip",
+          "label": "Retire both consumers first, then flip the gate",
+          "implication": "Open the dashboard PR, delete the Streamlit Community Cloud app, and establish Android makes no reads; then flip API_READ_GATE_MODE=enforce. Slowest, and the only order in which nothing the operator uses breaks."
+        },
+        {
+          "key": "flip_now",
+          "label": "Flip the gate now and accept that Streamlit breaks",
+          "implication": "Closes the unauthenticated read surface immediately. The Streamlit dashboard starts 401-ing; the SPA needs its login built first or BOTH frontends go dark."
+        },
+        {
+          "key": "partial_gate",
+          "label": "Gate only the routes no remaining consumer calls",
+          "implication": "Narrower blast radius, but it leaves a mixed surface where \"gated\" is per-route and a new route defaults OPEN — the same inversion failure the DB-explorer allowlist was just built to end."
+        },
+        {
+          "key": "accept_ungated",
+          "label": "Leave the read surface ungated, as a declared decision",
+          "implication": "The full trading history stays world-readable. Legitimate only if it is DECIDED and recorded, rather than drifted into — which is the state it is in today."
+        }
+      ],
+      "allowsFreeText": true,
+      "urgency": "blocking",
+      "askedOn": "2026-09-01",
+      "context": "The design says archiving the other two consumers is \"what makes that tractable — there is nothing else left to keep working\". MEASURED against that: Streamlit's retirement sits on an UNOPENED `ict-trader-dashboard` branch (`claude/phase-h-preconditions-retire-streamlit`, no PR — that repo has no `pr-opener.yml` relay), and the Android app was deliberately not touched because it is ON ICE. So the precondition `BL-20260901-RETIRE-ANDROID-AND-STREAMLIT-FROM-THE-LIVE-FEED` is NOT met, whatever a summary may say. ⚠️ Separately: the DB-explorer precondition (#10682) is MERGED but its own done_condition needs the narrowed route DEPLOYED and re-probed — a merge is not a deploy. ⚠️ And state the exposure plainly: `GET /api/bot/db/tables` answers 200 unauthenticated on a public host, and the tables behind it are not empty — `signals` 2,301,022 rows, `trades` 5,313, `order_packages` 4,272 (measured by `session_01LvzsinECH8HPCyauVJZBZw`, 2026-09-01).",
+      "answer": {
+        "chosen": "accept_ungated",
+        "freeText": null,
+        "answeredAt": "2026-09-02T10:16:36.989279Z",
+        "answeredBy": "telegram",
+        "committedBy": "commit_work_decisions.py",
+        "submissionId": "7ce60af995cb4b32aeb4f86209851e0d"
+      },
+      "conversationalAnswer": null,
+      "objectTitle": "Phase H — the control half — decisions from the UI, and the read gate",
+      "objectLifecycle": "ready",
+      "parentIntent": "IN-20260901-OPERATING-LAYER",
+      "answerState": "committed",
+      "answerStateNote": "Answered through the decision channel (SPA or Telegram) and committed.",
+      "settled": true,
       "transit": {
         "submissionId": null,
         "submittedAt": null,
@@ -80,62 +148,21 @@
       "askedOn": "2026-09-08",
       "context": "Editing check_pr_landing.py is LANDING_MACHINERY, so R12 holds such a change for a human by design and it cannot ride the PR that surfaced it, whatever its merit.",
       "answer": null,
+      "conversationalAnswer": {
+        "verdict": "approved",
+        "grade": "answered_in_conversation",
+        "chosen": "add_it",
+        "answeredAt": "2026-09-10T07:52:00Z",
+        "answeredBy": "operator (conversational popup, relayed by manager session_01HrmZ1RRNM4UnEUaFdrPEjj)",
+        "condition": "⚠️ EDITING check_pr_landing.py IS LANDING_MACHINERY, so R12 holds that PR for a human BY DESIGN — the approval does not make it self-landing, and the PR must declare landing: hold with hold_reason changes_landing_machinery. The widening is scripts/backtest_*.py ONLY; it is not a licence to widen scripts/*.py generally.",
+        "text": "Operator chose \"Add scripts/backtest_*.py to TIER1_SURFACE\", closing the contradiction between the guard and the canonical Tier-1 examples, which already name \"Backtest tooling that does not alter live runtime behavior\"."
+      },
       "objectTitle": "Give backtest_system.py an N-book mode and a ranking-key arm, then measure whether arbitration ORDER drives outcome at all",
       "objectLifecycle": "done",
       "parentIntent": "IN-20260903-TRADING-SYSTEM-HEALTH",
-      "answerState": "not_submitted",
-      "transit": {
-        "submissionId": null,
-        "submittedAt": null,
-        "ageSeconds": null,
-        "stale": null
-      }
-    },
-    {
-      "id": "DEC-20260910-EXIT-EVAL-60S-REMEDY",
-      "objectId": "WO-20260910-ROOT-CAUSE-THE-EXIT-EVAL-60S-BREACHES",
-      "askedBy": {
-        "sessionId": "session_01Ww2pZVK5VUqV8xFFtTs9B1",
-        "sessionUrl": "https://claude.ai/code/session_01Ww2pZVK5VUqV8xFFtTs9B1",
-        "recordedAt": "2026-09-10T06:5x:00Z",
-        "note": "The investigating lane. NOT a re-ask of DEC-20260909-M20-EXIT-EVAL-NEAR-MISS, which was about INSTRUMENTATION and is answered and discharged; this is the CAUSE question that decision explicitly left open (\"investigate_the_tail ... is a separate question about CAUSE, where this decision is about INSTRUMENTATION\")."
-      },
-      "askedByState": "recorded",
-      "push": null,
-      "resumeContext": null,
-      "resumeState": "unstated",
-      "question": "The exit-eval 60s promise is breached on 6.2% of restarts (20 of 325 post-fix, max 210.4s) and on 14 within-process intervals in 18 days. Both causes are now named. Two exact Tier-2 remedies are ready, independent of each other, each with a one-env-flip rollback. Which, if any, should be armed - and is the restart boundary in scope for the 60s promise at all?",
-      "options": [
-        {
-          "key": "r2_only",
-          "label": "Arm R2 only - the per-pass IB circuit breaker",
-          "implication": "The larger effect on the larger live residual. Once one IB fetch returns a pinned-thread queue timeout, skip the remaining IB packages in THAT pass. Changes NOTHING about what any package receives - a skipped package gets the same candles=None it would have got 29s later - it bounds the cost of an outcome already determined. Pass cost in the reset window falls from n x 29s to ~35s. Rollback EXIT_LOOP_IB_BREAKER_DISABLED. Cost: during a transient (non-outage) queue timeout, later IB packages are skipped for one pass and retried 30s later."
-        },
-        {
-          "key": "both",
-          "label": "Arm R2 and R1",
-          "implication": "R1 additionally moves _start_exit_loop above _apply_per_account_leverage in src/main.py::main() - measured 2.0-10.0s off the startup term, median ~3s, and it is the 10s tail it targets. Must stay AFTER boot_reconcile so a pass cannot evaluate a journal row the reconciler is about to void. Rollback EXIT_LOOP_EARLY_START_DISABLED. Cost: the cold first pass then overlaps the leverage pre-flight on a 2-core box."
-        },
-        {
-          "key": "r1_only",
-          "label": "Arm R1 only",
-          "implication": "Touches only startup ordering and no fetch behaviour - the smaller blast radius of the two - but it addresses the persistent 6.2% restart-gap tail and leaves the reset-window residual entirely."
-        },
-        {
-          "key": "decide_the_scope_instead",
-          "label": "Record a DECIDED on whether the restart boundary is in scope, and arm nothing",
-          "implication": "A legitimate answer. The restart gap is 19-60s by construction, so keeping the 60s promise across a restart means changing one of the four measured terms - there is no version of the current design that comfortably clears it. If the boundary is declared out of scope, that must be RECORDED with its consequence stated (756 s/day unevaluated), never left looking like a fix about to happen."
-        }
-      ],
-      "allowsFreeText": true,
-      "urgency": "routine",
-      "askedOn": "2026-09-10",
-      "context": "MEASURED 2026-09-10T06:13Z from GET /api/bot/exit-interval/soak (whole-file summary + breached_only=true&limit=2000, both COMPLETE censuses: 1218 of 1218 breach rows, 444 of 444 measured boundaries), plus four /api/diag/journalctl restart windows and a 1000-row /api/diag/log_file tail. RESTART GAP: min 17.5s, median 40.5s, p90 56.0s, p95 60.9s post-fix; it decomposes as residual cadence sleep 0-30s + systemd downtime ~0.3s + startup-to-thread 6-15s + cold first pass 12.7-16.9s, reconciling exactly on all four measured boundaries - i.e. 19-60s BY CONSTRUCTION against a 60s requirement, with essentially no headroom, at 18.1 restarts/day. Total exposure 756 s/day (12.6 min/day, 0.875% of wall clock) in which no open position's exit is evaluated - and 93.8% of that is from COMPLIANT restarts, so the breach rate understates it. WITHIN-PROCESS: 97.0% of the 1218 predate 2026-08-22; the live residual is 14 breaches in 18 days, 10 of them in the 04:00-05:00Z IBKR reset window, where each IB-routed package pays a serialized 29.0s pinned-thread queue timeout so a pass costs n_IB_packages x 29s and crosses 60s at THREE packages.",
-      "answer": null,
-      "objectTitle": "The exit-eval 60s breaches have TWO different causes - a closed within-process episode plus a live IBKR-reset-window residual, and a structural restart gap with no headroom",
-      "objectLifecycle": "waiting",
-      "parentIntent": "IN-20260903-TRADING-SYSTEM-HEALTH",
-      "answerState": "not_submitted",
+      "answerState": "answered_in_conversation",
+      "answerStateNote": "Answered IN CONVERSATION and recorded by hand as a verdict. It never travelled through the decision channel, which is why it used to show as unanswered here.",
+      "settled": true,
       "transit": {
         "submissionId": null,
         "submittedAt": null,
@@ -160,21 +187,34 @@
       "ref": "The Alpaca close-confirmation MEASUREMENT — reserved to #11312 by #11279's own approval scope",
       "since": "2026-09-08",
       "note": null
+    },
+    {
+      "objectId": "WO-20260908-WIRE-MORE-STRATEGIES-TO-ALPACA-LIVE-WHICH",
+      "objectTitle": "Wire more strategies to alpaca_live, which runs one leg on a 200 dollar cash account",
+      "objectLifecycle": "waiting",
+      "ref": "DEC-20260910-ALPACA-LIVE-ROSTER-EXPANSION",
+      "since": "2026-09-10",
+      "note": "NARROWED 2026-09-10T09:3xZ by MI-201, and the two halves are DIFFERENT FACTS. (a) MI-247 (session_01Ek2KDXDeLAMrN4JH4aEXWf) REPORTS that the operator chose Option A on 2026-09-10 from a four-option pop-up built on this proposal, and has opened PR #11671 enacting it — Tier-3, landing: hold, correctly unarmed and claiming no merge slot, so what it waits on is a human MERGE CLICK, not a decision. VERIFIED BY ME: #11671 exists, is Tier-3, declares landing: hold, and carries exactly the Option A diff from § 5.1 of the proposal. (b) ⚠️ I DID NOT WITNESS THE APPROVAL and I am not recording it as observed. No human input reached this session. The claim reaches me only through another session's PR body. ⚠️ AND IT IS RECORDED NOWHERE DURABLE: git grep for DEC-20260910-ALPACA-LIVE-ROSTER-EXPANSION across origin/main:docs/ returns exactly ONE file — this one — so on the evidence available to me an operator decision authorising a REAL-MONEY roster change lives only in a PR body and in this note. That is the shape OPEN-PRS.json's own doctrine warns about (\"a row recording a verdict without its condition is WORSE than a missing row\"), and it is why the typed operator_decision object exists. Raised to MI-247 and the manager on the coordination board rather than written by me, because a session that did not hear the operator must not author the record of what they said. The four secondary questions (side_filter, funding, the short side, SPLG) are NOT reported as answered by anything I can see, and remain open."
     }
   ],
   "summary": {
-    "awaitingOperator": 3,
+    "awaitingOperator": 1,
     "awaitingCommit": 0,
-    "decided": 23,
+    "decided": 25,
+    "decidedViaRoute": 23,
+    "decidedInConversation": 2,
     "byAnswerState": {
-      "not_submitted": 3,
+      "not_submitted": 0,
       "in_transit": 0,
       "committed": 23,
-      "unreadable": 0
+      "unreadable": 0,
+      "answered_in_conversation": 2,
+      "engaged_not_settled": 1,
+      "verdict_unrecognised": 0
     },
     "requestCount": 26,
     "malformedRequestsDropped": 0,
-    "unanswerableOperatorEdgeCount": 2,
+    "unanswerableOperatorEdgeCount": 3,
     "staleOpenWindows": 0,
     "staleAfterSeconds": 3600,
     "byAskedByState": {
@@ -201,5 +241,5 @@
     "note": "DASHBOARD_API_TOKEN is UNSET, so POST /api/bot/work/decision refuses with 503. This is FAIL-CLOSED and deliberate (the prop.py polarity), not an outage: a dropped .env value closes writes rather than reopening an anonymous write hole."
   },
   "note": "The repo is the source of truth. This route reports `committed` ONLY from an `answer` block on the work object in the repo — never from the transit log — so an answer that does not commit leaves its question UNANSWERED. Transit fails BACK, never forward.",
-  "_fixture_note": "REAL captured GET /api/bot/work/decisions, 2026-09-10, `requests` trimmed to 3. Summary counts are the untrimmed originals."
+  "_fixture_note": "REAL captured GET /api/bot/work/decisions, 2026-09-10, AFTER MI-254. `requests` is TRIMMED to one row per answerState so every branch Work.svelte renders has a real row behind it — including answered_in_conversation (which carries a load-bearing `condition`) and engaged_not_settled. `summary` is the UNTRIMMED count over all 26 requests and deliberately does not match len(requests)."
 }

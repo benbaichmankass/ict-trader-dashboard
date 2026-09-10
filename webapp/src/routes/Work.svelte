@@ -137,9 +137,41 @@
   const quietCount = $derived(
     groups.filter(([k]) => QUIET.has(k)).reduce((n, [, v]) => n + v.length, 0),
   );
-  const openRequests = $derived<any[]>(
-    (decisions?.requests ?? []).filter((r: any) => r.answerState !== "committed"),
+  // ⚠️ `settled` COMES FROM THE BOT — do not re-derive it here. This filter
+  // used to read `answerState !== "committed"`, which was a SECOND definition
+  // of "answered" living in TypeScript. It missed every decision answered IN
+  // CONVERSATION (recorded as `verdict`, not as an `answer` block), so three
+  // questions the operator settled at 07:52Z on 2026-09-10 kept showing as
+  // waiting on them. `work_decisions.SETTLED_STATES` is the one owner.
+  //
+  // ⚠️ THREE STATES, NEVER TWO. `settled` is ABSENT on a bot that predates
+  // MI-254, and a strict `=== false` / `=== true` pair sends those rows to
+  // NEITHER bucket — they disappear from the page with no trace. MEASURED
+  // 2026-09-10 against the live API before the bot half deployed: all 26
+  // decisions vanished, and because one unanswerable edge was present the
+  // "Nothing is waiting" empty-state did not fire either, so the panel read
+  // as populated while the inbox was silently empty. That is the exact
+  // collapsed-state failure this page exists to prevent, committed by the
+  // page itself. `ungraded` is "WE COULD NOT TELL", never "answered".
+  const isSettled = (r: any) =>
+    r?.settled === true ? "yes" : r?.settled === false ? "no" : "ungraded";
+  // Ungraded rows ride WITH the waiting ones, deliberately: showing a
+  // possibly-answered decision costs the operator a glance, hiding a
+  // genuinely-waiting one is the defect MI-254 exists to fix. Fail toward
+  // surfacing.
+  const waiting = $derived<any[]>(
+    (decisions?.requests ?? []).filter((r: any) => isSettled(r) !== "yes"),
   );
+  const ungraded = $derived<any[]>(
+    (decisions?.requests ?? []).filter((r: any) => isSettled(r) === "ungraded"),
+  );
+  // Answered rows are SHOWN, not hidden: the operator needs to see what they
+  // decided and under what CONDITION, and this page is the one surface they
+  // read. Hiding them would lose that record here.
+  const answered = $derived<any[]>(
+    (decisions?.requests ?? []).filter((r: any) => isSettled(r) === "yes"),
+  );
+  let showAnswered = $state(false);
   const edges = $derived<any[]>(decisions?.unanswerableOperatorEdges ?? []);
 
 
@@ -261,19 +293,35 @@
         nothing is waiting.
       </p>
     {:else}
-      {#if openRequests.length === 0 && edges.length === 0}
-        <p class="muted">
-          Nothing is waiting on you right now.
-          <span class="mono">{dec?.decided ?? 0}</span> answered decision(s)
-          are on record.
+      {#if ungraded.length}
+        <p class="warnline">
+          ⚠️ <strong>{ungraded.length} of {waiting.length}</strong> row(s) below are shown
+          because this bot could not say whether they are settled — it predates the
+          field, so an answer you gave in conversation would not be reflected here.
+          They are surfaced rather than hidden: a decision that may be waiting must
+          not disappear. This clears itself once the trader picks up the bot-side
+          change (<span class="mono">git-sync</span>, ~5 min after it merges).
         </p>
       {/if}
 
-      {#each openRequests as r (r.objectId + r.id)}
+      {#if waiting.length === 0 && edges.length === 0}
+        <p class="muted">
+          Nothing is waiting on you right now.
+          <span class="mono">{dec?.decided ?? 0}</span> answered decision(s)
+          are on record —
+          <span class="mono">{dec?.decidedViaRoute ?? 0}</span> through this
+          channel and
+          <span class="mono">{dec?.decidedInConversation ?? 0}</span> in
+          conversation.
+        </p>
+      {/if}
+
+      {#each waiting as r (r.objectId + r.id)}
         <div class="drow" class:blocking={r.urgency === "blocking"}>
           <button class="dh" onclick={() => (openDecision = { ...openDecision, [r.id]: !openDecision[r.id] })}>
             <span class="pill ans-{r.answerState}">{(r.answerState ?? "").replace("_", " ")}</span>
             {#if r.urgency}<span class="pill urg">{r.urgency}</span>{/if}
+            {#if r.settled == null}<span class="pill ungraded" title="This bot did not report whether the decision is settled — not a claim that it is open.">settled?</span>{/if}
             <span class="q">{r.question}</span>
             <span class="chev">{openDecision[r.id] ? "▾" : "▸"}</span>
           </button>
@@ -297,16 +345,76 @@
                   button — it needs a written answer in the repo.
                 </p>
               {/if}
-              {#if r.answerState === "in_transit"}
-                <p class="warnline">
-                  Submitted, <strong>not yet decided</strong> — the answer becomes a decision
-                  only when it is committed into the work object.
+              {#if r.answerStateNote}
+                <p class="statenote" class:warnline={r.settled === false}>{r.answerStateNote}</p>
+              {:else if r.settled == null}
+                <p class="statenote warnline">
+                  This bot reported no settled/unsettled grade for this request, so
+                  whether it is still waiting on you is <em>unknown here</em> — read the
+                  work object to be sure.
                 </p>
+              {/if}
+              {#if r.conversationalAnswer}
+                {@const ca = r.conversationalAnswer}
+                <h4>Your answer</h4>
+                <p>
+                  <span class="mono">{ca.verdict}</span>{#if ca.chosen} → <strong>{ca.chosen}</strong>{/if}
+                  {#if ca.answeredAt}<span class="muted"> · {ca.answeredAt}</span>{/if}
+                </p>
+                {#if ca.condition}
+                  <!-- ⚠️ NEVER DROPPED. A verdict recorded without its
+                       condition reads as complete when it is not — OPEN-PRS's
+                       own doctrine, and hiding it here would put that failure
+                       on the operator's own screen. -->
+                  <h4 class="cond">Condition you attached</h4>
+                  <p class="warnline">{ca.condition}</p>
+                {/if}
+                {#if ca.text}<h4>What you said</h4><p>{ca.text}</p>{/if}
               {/if}
             </div>
           {/if}
         </div>
       {/each}
+
+      {#if answered.length}
+        <button class="toggle ansToggle" onclick={() => (showAnswered = !showAnswered)}>
+          {showAnswered ? "Hide" : "Show"} {answered.length} answered decision(s)
+        </button>
+        {#if showAnswered}
+          {#each answered as r (r.objectId + r.id)}
+            <div class="drow ansrow">
+              <button class="dh" onclick={() => (openDecision = { ...openDecision, [r.id]: !openDecision[r.id] })}>
+                <span class="pill ans-{r.answerState}">{(r.answerState ?? "").replaceAll("_", " ")}</span>
+                <span class="q">{r.question}</span>
+                <span class="chev">{openDecision[r.id] ? "▾" : "▸"}</span>
+              </button>
+              {#if openDecision[r.id]}
+                <div class="ddetail">
+                  <div class="muted mono small">{r.objectId} · {r.id}</div>
+                  {#if r.answerStateNote}<p class="statenote">{r.answerStateNote}</p>{/if}
+                  {#if r.conversationalAnswer}
+                    {@const ca = r.conversationalAnswer}
+                    <h4>Your answer</h4>
+                    <p>
+                      <span class="mono">{ca.verdict}</span>{#if ca.chosen} → <strong>{ca.chosen}</strong>{/if}
+                      {#if ca.answeredAt}<span class="muted"> · {ca.answeredAt}</span>{/if}
+                    </p>
+                    {#if ca.condition}
+                      <h4 class="cond">Condition you attached</h4>
+                      <p class="warnline">{ca.condition}</p>
+                    {/if}
+                  {:else if r.answer}
+                    <h4>Your answer</h4>
+                    <p><strong>{r.answer.chosen ?? "(free text)"}</strong>
+                      {#if r.answer.submitted_at}<span class="muted"> · {r.answer.submitted_at}</span>{/if}
+                    </p>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+          {/each}
+        {/if}
+      {/if}
 
       {#if edges.length}
         <!-- Deliberately counted apart from the answerable requests: this is a
@@ -314,6 +422,13 @@
              any UI, because nobody wrote it down as a request. Folding the two
              together would hide exactly that gap. -->
         <h4 class="gap">Blocking you, with no answerable request attached ({edges.length})</h4>
+        <p class="sub muted">
+          ⚠️ These are <strong>not answerable from this page</strong> — they are typed
+          <span class="mono">blocked_on</span> edges with no request behind them, so
+          clearing one needs a repo-side edit. An edge whose answer arrived in
+          conversation will sit here looking live until someone removes it, so treat
+          age here as a prompt to check rather than as a live ask.
+        </p>
         <ul class="edges">
           {#each edges as e}
             <li>
@@ -746,6 +861,14 @@ section { display: flex; flex-direction: column; gap: 12px; }
   .st-in_flight { background: var(--accent); color: #fff; }
   .st-blocked { background: var(--warn, #d19a2f); color: #fff; }
   .ans-not_submitted { background: var(--warn, #d19a2f); color: #fff; }
+  .ans-engaged_not_settled { background: var(--warn, #d19a2f); color: #fff; }
+  .ans-verdict_unrecognised { background: var(--warn, #d19a2f); color: #fff; }
+  .ans-answered_in_conversation { background: var(--panel-2); }
+  .pill.ungraded { background: var(--warn, #d19a2f); color: #fff; }
+  .ansrow { opacity: .9; }
+  .ansToggle { margin-top: 10px; }
+  .statenote { font-size: 12.5px; margin: 6px 0 0 !important; }
+  .cond { color: var(--warn, #d19a2f); }
   .urg { background: var(--panel-2); }
   .ckrow { background: var(--panel); border-radius: 6px; overflow: hidden; }
   .ckrow.dis { box-shadow: inset 3px 0 0 var(--warn, #d19a2f); }
