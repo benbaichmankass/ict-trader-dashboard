@@ -46,6 +46,12 @@
   // payload.
   const chk = $derived(checklist?.summary ?? null);
   const dec = $derived(decisions?.summary ?? null);
+  const sess = $derived(checklist?.sessions ?? null);
+  const lanes = $derived<any[]>(sess?.lanes ?? []);
+  // Named apart for the same reason `chk` and `dec` are: three payloads each
+  // have a `summary`, and one alias covering several is how a reader (and the
+  // api-contract checker) resolves a field against the wrong one.
+  const ssum = $derived(sess?.summary ?? null);
   const items = $derived<any[]>(checklist?.items ?? []);
   const declared = $derived<Record<string, string>>(checklist?.declaredStates ?? {});
 
@@ -264,6 +270,81 @@
     {/if}
   </div>
 
+  <!-- ── LIVE WORK SESSIONS ─────────────────────────────────────────────────
+       Operator, 2026-09-10: "part of that is making the work page on the UI
+       clear so that I can keep track of the work sessions without needing to
+       ask for ad hoc updates all the time."
+
+       ⚠️ EVERY LANE'S STATE IS RENDERED BESIDE HOW STALE THAT READING IS, and
+       that pairing is the whole point of this panel rather than a nicety.
+       `state` in SESSIONS.json DECAYS and nothing decays it — measured
+       2026-09-10, two lanes read `working` while both were idle and completed.
+       A panel showing `state` alone would show dead lanes as running, which is
+       WORSE than no panel: the operator would stop asking precisely because it
+       looks live. The page must also never imply a live feed; `list_sessions`
+       is an mcp__* tool no route holds. -->
+  {#if sess}
+    <div class="panel dec">
+      <h3>Live work sessions ({ssum?.live ?? 0})</h3>
+      {#if sess.present === false}
+        <p class="warnline">
+          ⚠️ The session registry could not be read ({sess.readState}). That is
+          <em>not</em> a statement that no lanes are running.
+        </p>
+      {:else}
+        {#if ssum?.byObservationState?.stale}
+          <div class="warnline">
+            ⚠️ {ssum.byObservationState.stale} of {ssum.live} lane(s)
+            have not been looked at for over {sess.staleAfterMinutes} minutes. Their
+            state below may simply be out of date — it is what someone last wrote,
+            not what the session is doing now.
+          </div>
+        {/if}
+        {#each lanes as l (l.sessionId ?? l.title)}
+          <div class="lane" class:lstale={l.observation?.state !== "recent"}>
+            <div class="lrow">
+              <span class="pill st-{l.state}">{l.state}</span>
+              <span class="id">{l.item ?? "(no item)"}</span>
+              <span class="ttl2">{l.title ?? ""}</span>
+            </div>
+            <div class="lmeta muted">
+              <!-- The age is NEVER shown without the state, and vice versa. -->
+              <span class="obs obs-{l.observation?.state}">
+                last observed
+                {#if l.observation?.ageMinutes != null}
+                  {l.observation.ageMinutes < 90
+                    ? `${Math.round(l.observation.ageMinutes)}m ago`
+                    : `${(l.observation.ageMinutes / 60).toFixed(1)}h ago`}
+                {:else}
+                  — never recorded
+                {/if}
+              </span>
+              {#if l.observation?.fromField}
+                <span class="mono small">via {l.observation.fromField}</span>
+              {/if}
+              {#if l.observation?.basis === "spawn_confirmation"}
+                <span class="small">⚠️ spawn only — nobody has checked it since</span>
+              {/if}
+              {#if l.sessionId}<span class="mono small">…{String(l.sessionId).slice(-6)}</span>{/if}
+            </div>
+            {#if l.blockedOn}
+              <div class="lmeta muted">
+                blocked on: {typeof l.blockedOn === "string" ? l.blockedOn : JSON.stringify(l.blockedOn)}
+              </div>
+            {/if}
+            {#if l.observation?.state !== "recent" && l.observation?.note}
+              <div class="lmeta warnline">{l.observation.note}</div>
+            {/if}
+          </div>
+        {/each}
+        {#if lanes.length === 0}
+          <p class="muted">No lane in the registry is in a working state.</p>
+        {/if}
+      {/if}
+      <div class="sub muted">{sess.note}</div>
+    </div>
+  {/if}
+
   <!-- ── THE CHECKLIST ──────────────────────────────────────────────────── -->
   {#if checklist?.present}
     <div class="panel roll">
@@ -429,6 +510,13 @@
   .detail p { margin: 0; white-space: pre-wrap; color: var(--muted); word-break: break-word; }
   .basis { background: var(--panel-2); border-radius: 5px; padding: 8px 10px; font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
   .basis.warn { color: var(--warn, #d19a2f); }
+  .lane { border-top: 1px solid var(--panel-2); padding: 9px 0; }
+  .lane.lstale { opacity: .82; }
+  .lrow { display: flex; gap: 10px; align-items: baseline; font-size: 13px; }
+  .lmeta { font-size: 11.5px; margin-top: 3px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .obs-stale, .obs-unknown { color: var(--warn, #d19a2f); }
+  .st-working, .st-running { background: var(--accent); color: #fff; }
+  .st-stalled_poked { background: var(--warn, #d19a2f); color: #fff; }
   .toggle { align-self: flex-start; background: var(--panel-2); border: none; color: var(--muted); border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 12.5px; }
   .mono { font-family: ui-monospace, monospace; }
 </style>

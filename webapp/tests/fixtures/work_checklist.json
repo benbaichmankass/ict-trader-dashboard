@@ -269,18 +269,97 @@
     "commitState": "known",
     "commitSha": "7a04372870be",
     "committedAt": "2026-09-10T07:11:46+00:00",
-    "commitAgeHours": 0.85,
+    "commitAgeHours": 1.118,
     "workingTreeDirty": false,
     "treeState": "unknown",
-    "treeHeadSha": "b2739518f",
+    "treeHeadSha": "2768a81e9",
     "treeMainSha": "7a0437287",
     "treeBehindCommits": 0,
     "treeNote": "HEAD carries commits origin/main does not, so what of main this tree reflects could not be established",
-    "stamp": "tree: ⚠️ unknown · b2739518f — HEAD carries commits origin/main does not, so what of main this tree reflects could not be established. Treat everything below as unverified.",
+    "stamp": "tree: ⚠️ unknown · 2768a81e9 — HEAD carries commits origin/main does not, so what of main this tree reflects could not be established. Treat everything below as unverified.",
     "note": "",
     "warnings": [
       "The VM's tree could not be graded against origin/main (HEAD carries commits origin/main does not, so what of main this tree reflects could not be established) — this is *we could not look*, NOT a clean tree. Treat the rows below as unverified."
     ]
   },
-  "_fixture_note": "REAL captured GET /api/bot/work/checklist, 2026-09-10. `items` is TRIMMED to one row per status BASIS plus an unsectioned and an off-vocabulary row, so every branch Workflow.svelte renders has a real row behind it; `summary` is the UNTRIMMED count over all 238 items and deliberately does not match len(items)."
+  "sessions": {
+    "present": true,
+    "readState": "read",
+    "asOf": "2026-09-10T07:06:00Z",
+    "lanes": [
+      {
+        "sessionId": "session_01HyZBZ7DNcu5VQaTmmJK5dL",
+        "title": "MI-173 — pipeline lane pass 3: root-cause the Alpaca sibling-liquidation MECHANISM (MI-170), measurement and proposal only",
+        "item": null,
+        "object": "WO-20260908-AN-ALPACA-CLOSE-OF-ONE-TRADE-CAN",
+        "state": "blocked",
+        "blockedOn": null,
+        "branches": [],
+        "prs": [],
+        "spawnedAt": "2026-09-08T01:36:01Z",
+        "observation": {
+          "state": "stale",
+          "basis": "state_observation",
+          "at": "2026-09-08T06:58:00Z",
+          "fromField": "state_observed_at",
+          "ageMinutes": 2960.8,
+          "note": "⚠️ Nobody has looked at this lane for longer than the manager lease's TTL, so its state may simply be OUT OF DATE rather than wrong. Measured 2026-09-10: two lanes read `working` while both were idle and completed. Do not read the state below as live."
+        }
+      },
+      {
+        "sessionId": "session_01QDXwpPzHmqY33qcCkNRdNR",
+        "title": "Lane 4 RECOVERY — rebase, re-green and un-draft #11519 (the stale-automation sweeper), orphaned when its author went idle",
+        "item": null,
+        "object": "WO-20260909-EVERY-PR-IN-THE-REPO-IS-RED",
+        "state": "working",
+        "blockedOn": null,
+        "branches": [
+          "claude/lane4-stale-automation-landing-20260909"
+        ],
+        "prs": [],
+        "spawnedAt": "2026-09-10T06:08:41Z",
+        "observation": {
+          "state": "stale",
+          "basis": "spawn_confirmation",
+          "at": "2026-09-10T06:09:17Z",
+          "fromField": "confirmed_at",
+          "ageMinutes": 129.5,
+          "note": "⚠️ Nobody has looked at this lane for longer than the manager lease's TTL, so its state may simply be OUT OF DATE rather than wrong. Measured 2026-09-10: two lanes read `working` while both were idle and completed. Do not read the state below as live."
+        }
+      },
+      {
+        "sessionId": "session_017UnyG4ArXmXKpB8rmEGv1j",
+        "title": "MI-139b — APPLY the Tier-3 Bybit close-qty fix (operator approved both parts)",
+        "item": "MI-139-BYBIT-QTYSTEP",
+        "object": "WO-20260906-A-BYBIT-REDUCE-ONLY-CLOSE-IS-REJECTED",
+        "state": "stalled_poked",
+        "blockedOn": null,
+        "branches": [
+          "claude/bybit-close-qty-apply-20260906"
+        ],
+        "prs": [],
+        "spawnedAt": "2026-09-06T10:59:26Z",
+        "observation": {
+          "state": "recent",
+          "basis": "state_observation",
+          "at": "2026-09-10T06:55:00Z",
+          "fromField": "last_observed_at",
+          "ageMinutes": 83.8,
+          "note": "Observed within the manager lease's own TTL, so the state below is as current as this system can make it."
+        }
+      }
+    ],
+    "summary": {
+      "live": 21,
+      "registryRows": 200,
+      "byObservationState": {
+        "recent": 2,
+        "stale": 19,
+        "unknown": 0
+      }
+    },
+    "staleAfterMinutes": 90.0,
+    "note": "Session state is only as fresh as the last MANAGER OBSERVATION written into docs/claude/work/SESSIONS.json. This is NOT a live feed: reading the platform's own session list needs `list_sessions`, an mcp__* tool no API route holds. Read each lane's observation age beside its state."
+  },
+  "_fixture_note": "REAL captured GET /api/bot/work/checklist, 2026-09-10. `items` is TRIMMED to one row per status BASIS plus an unsectioned and an off-vocabulary row, so every branch Workflow.svelte renders has a real row behind it; `summary` is the UNTRIMMED count over all 238 items and deliberately does not match len(items). `sessions.lanes` is likewise trimmed to one lane per (observation state, basis) combination, so every branch the panel renders has a real lane behind it, while sessions.summary stays the untrimmed count."
 }
