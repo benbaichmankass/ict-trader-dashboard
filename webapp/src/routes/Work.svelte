@@ -260,6 +260,24 @@
       {#if fresh.warnings && fresh.warnings.length === 0}
         <div class="okline">
           ✓ Tree <span class="mono">{fresh.treeState}</span>, working copy matches its last commit.
+          <!--
+            ⚠️ `synced` ON ITS OWN IS THE LINE THAT MISLED A READER (MI-262,
+            2026-09-10). It compares the VM's HEAD against its LOCAL
+            origin/main ref, and the VM's sync does `git fetch` then
+            `git reset --hard origin/main` — so the equality holds BY
+            CONSTRUCTION and carries no information about currency. Measured
+            that day: this line read `synced` while the VM was genuinely one
+            commit behind GitHub. All of the staleness is in WHEN IT LAST
+            LOOKED, so that is now rendered beside the verdict rather than
+            left in a `stamp` field nothing displays.
+          -->
+          {#if fresh.mainRefAgeHours != null}
+            Level with <span class="mono">main</span> as of a fetch
+            <strong>{age(fresh.mainRefAgeHours)}</strong> — it may have moved since.
+          {:else}
+            <span class="muted">When it last fetched is <strong>not known here</strong>, so
+            "{fresh.treeState}" cannot say how current it is — this bot may predate the field.</span>
+          {/if}
           <span class="muted">(These conditions were checked — this is not a claim the content is correct.)</span>
         </div>
       {/if}
