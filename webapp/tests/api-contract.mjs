@@ -89,6 +89,30 @@ const BINDINGS = {
     paths: { raw: "", summary: "summary", coverage: "coverage", wip: "wip" },
     rowPaths: { o: "objects", it: "intents" },
   },
+  // Workflow.svelte (MI-238) — the manager checklist + the decision inbox.
+  // Bound BOTH ways, like Work.svelte: `paths` for the $derived aliases off the
+  // whole payload, `rowPaths` for the each-block items.
+  //
+  // ⚠️ THE KEYS THIS ROUTE MUST NOT LOSE ARE THE PROVENANCE ONES, and they are
+  // exactly the kind a renderer drops first because the page still "looks
+  // right" without them: `it.status.basis` (an `in_flight` reached on `agree`
+  // and one reached on `disagree` are the same value and different facts),
+  // `it.sectioned` (whether the Telegram /status readout covers this row at
+  // all), and the whole `freshness` block (a page serving a three-hour-old
+  // checklist must not read identically to a live one). Binding them means a
+  // rename bot-side fails HERE instead of rendering a confident blank.
+  //
+  // Both fixtures are REAL captured responses. ⚠️ Their `items` / `requests`
+  // are TRIMMED for reviewability while their `summary` counts are the
+  // untrimmed originals, so len(items) deliberately does not equal
+  // summary.total — see each file's `_fixture_note`. That does not weaken the
+  // check: this guard asks whether a key EXISTS, never how many rows carry it.
+  "Workflow.svelte": {
+    fixture: "work_checklist.json",
+    root: "checklist",
+    paths: { checklist: "", fresh: "freshness", summary: "summary" },
+    rowPaths: { it: "items" },
+  },
 };
 
 function dig(obj, path) {

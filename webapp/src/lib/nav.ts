@@ -23,6 +23,7 @@ export const SECTIONS: Record<string, string[]> = {
   Activity: ["Positions", "Trades", "Order Packages", "Signals"],
   Roadmap: [],
   Work: [],
+  Workflow: [],
   Learning: [],
   Admin: ["Data Explorer", "Logs", "Health", "Runbooks"],
 };
@@ -52,6 +53,7 @@ export const PAGE_DESC: Record<string, string> = {
   Runbooks: "Operating schematic, the coordination board, and what is due today.",
   Roadmap: "Product-roadmap progress — milestones → sprints → work-session notes.",
   Work: "What is in flight — intents → work objects → steps, with each object's blockers. Read-only; covers the operating-layer build only.",
+  Workflow: "The manager checklist as the managers keep it, with the decisions waiting on you. Collapsed by default — open a row for its full detail. Carries its own as-of stamp: it is as fresh as the last push plus ict-git-sync's ~5-minute pull.",
   Learning: "Trading + AI curriculum with per-resource progress.",
 };
 

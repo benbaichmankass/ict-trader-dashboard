@@ -1,0 +1,286 @@
+{
+  "present": true,
+  "readState": "read",
+  "reason": null,
+  "asOf": "2026-09-10T07:06:00Z",
+  "cycle": "CY-20260903-MANAGER-CONTROL",
+  "managerSession": "session_01HrmZ1RRNM4UnEUaFdrPEjj",
+  "schemaVersion": 1,
+  "declaredStates": {
+    "done": "merged AND its effect observed",
+    "landed_unproven": "merged; effect NOT yet observed on the fleet",
+    "in_flight": "a session is actively working it",
+    "blocked": "waiting on a named thing; see blocked_on",
+    "queued": "scoped and agreed, nobody started it",
+    "triage": "noticed, not yet scoped",
+    "dropped": "deliberately not doing; reason required"
+  },
+  "sessionsRegistryState": "read",
+  "items": [
+    {
+      "id": "MI-01-PING-FORMAT",
+      "title": "Format-B ping system: one owner, three classes, gating",
+      "owner": "manager (SHOULD HAVE BEEN DELEGATED)",
+      "ownerRendered": "manager (SHOULD HAVE BE…",
+      "ownerGrade": "not_a_session",
+      "lane": null,
+      "tier": null,
+      "priority": "DEFERRED",
+      "status": {
+        "value": "landed_unproven",
+        "basis": "state_only",
+        "declaredState": "landed_unproven",
+        "declaredStatus": null,
+        "disagrees": false,
+        "inDeclaredVocabulary": true,
+        "note": "Only `state` is declared. This is the ordinary row and the field every other consumer of this file reads."
+      },
+      "sectioned": true,
+      "fields": {
+        "id": "MI-01-PING-FORMAT",
+        "title": "Format-B ping system: one owner, three classes, gating",
+        "state": "landed_unproven",
+        "owner": "manager (SHOULD HAVE BEEN DELEGATED)",
+        "prs": [
+          10669,
+          10671
+        ],
+        "note": "Merged and CI-green. NOT observed: no ping in this format has been seen arriving anywhere. The operator's own read is the evidence that matters and it has not happened.",
+        "priority": "DEFERRED",
+        "deferred_reason": "Not tied to P1 (handoff) or P2 (overhaul implementation). Keeps its state and evidence; not worked until the priorities are done. A P0 incident overrides this immediately."
+      }
+    },
+    {
+      "id": "MI-135-OBSERVATION-SWEEP",
+      "title": "Phase 1A — the observation sweep: 54 OPEN-ITEMS rows + 28 landed_unproven items have never been looked at on the fleet",
+      "owner": "session_01UaZ9boMDajiCZsjVkr4Fnz",
+      "ownerRendered": "…kr4Fnz",
+      "ownerGrade": "registered",
+      "lane": null,
+      "tier": "1",
+      "priority": "P1_CYCLE",
+      "status": {
+        "value": "landed_unproven",
+        "basis": "disagree",
+        "declaredState": "landed_unproven",
+        "declaredStatus": "done",
+        "disagrees": true,
+        "inDeclaredVocabulary": true,
+        "note": "⚠️ `state` and `status` are both declared and DIFFERENT. `state` is shown because it is what every other consumer reads — that is a rule for picking a value, NOT a finding that `status` is wrong. Which one is right is a question for whoever owns the row; neither field was edited. Measured 2026-09-10: 13 of 244 rows, four of them reading `state: in_flight` against `status: done`."
+      },
+      "sectioned": true,
+      "fields": {
+        "id": "MI-135-OBSERVATION-SWEEP",
+        "title": "Phase 1A — the observation sweep: 54 OPEN-ITEMS rows + 28 landed_unproven items have never been looked at on the fleet",
+        "state": "landed_unproven",
+        "owner": "session_01UaZ9boMDajiCZsjVkr4Fnz",
+        "owns_object": "WO-20260906-THE-OBSERVATION-SWEEP-54-OPEN-ITEMS-ROWS",
+        "priority": "P1_CYCLE",
+        "tier": "1",
+        "note": "#11101 merged; 26/82 items audited, 5 false register claims, 2 unsatisfiable criteria. Residue is MI-142.",
+        "spawned_at": "2026-09-06T08:50Z",
+        "result_2026_09_06": "LANDED via #11101 (b84f490c on main) — VERIFIED by diffing the file, not by the session's claim. 26 of 54 OPEN-ITEMS rows dispositioned: 2 CLOSED on fleet evidence, 17 RE-AFFIRMED with a fresh observation, 7 recorded NOT OBSERVABLE with the reason. verified_at=never fell 17 -> 9. Patched surgically (52 insertions / 52 deletions, row order preserved). The session brief SHRANK by 54 lines because re-observed rows stopped being DUE. ⚠️ THE SESSION'S OWN SUMMARY SAID '#11103 merged' AND THAT WAS THE WRONG PR — #11103 is a 3-file board-relay filing; the sweep landed in #11101. Read the diff, not the summary. 56 of 82 items REMAIN undone and the session is idle at 487k/1M context — needs a fresh session, not a nudge, since it cannot be messaged. FINDINGS IT SURFACED, each needing an owner: alpaca_live's routed real-money leg CANNOT PLACE (both gates read live, every signal journals dry_run_no_order_placed); a 2393% same-book SL over-accumulation on bybit_1/SOLUSDT; one repeating exception is 47% of the entire operator ERROR+ feed (alarm-fatigue P1); per-account arbitration CLOSED on all three criteria; the 10 sunset candidates CLOSED.",
+        "added": "2026-09-06",
+        "status": "done",
+        "updated": "2026-09-06T10:54Z"
+      }
+    },
+    {
+      "id": "MI-149-REGISTER-WRITERS",
+      "title": "Scaffold the guarded registers so a write cannot be wrong: OPEN-ITEMS, MANAGER-CHECKLIST, pr-landing",
+      "owner": null,
+      "ownerRendered": "—",
+      "ownerGrade": "unowned",
+      "lane": null,
+      "tier": null,
+      "priority": null,
+      "status": {
+        "value": "queued",
+        "basis": "status_only",
+        "declaredState": null,
+        "declaredStatus": "queued",
+        "disagrees": false,
+        "inDeclaredVocabulary": true,
+        "note": "Only `status` is declared — no `state`. ⚠️ Nothing else in the repo reads `status` on this file, so this row is invisible to the Telegram /status sections and to scripts/ops/manager_view.py. Measured 2026-09-10: 65 of 244 rows are in this position."
+      },
+      "sectioned": true,
+      "fields": {
+        "id": "MI-149-REGISTER-WRITERS",
+        "status": "queued",
+        "owner": null,
+        "opened": "2026-09-06",
+        "title": "Scaffold the guarded registers so a write cannot be wrong: OPEN-ITEMS, MANAGER-CHECKLIST, pr-landing",
+        "note": "OPERATOR 2026-09-06: 'your job is to manage the queue so that we don't lose cycles to these kinds of mistakes'. SEVEN guard failures on the manager's own PRs in one day, every one a field omission on a register write, every one found by CI ~2 min after the PR opened. backlog_append.py proves the pattern and is the ONLY one that exists. OPEN-ITEMS.json additionally does not round-trip at any json.dumps setting, so it can only be hand-spliced. Guards must NOT be weakened - the fix is upstream of them. Row: BL-20260906-EVERY-REGISTER-WRITE-IS-A-GUESS-THEN-A-CI-ROUND-TRIP. Highest queue-throughput item: the manager gates five sub-sessions.",
+        "updated": "2026-09-06T13:40Z"
+      }
+    },
+    {
+      "id": "MI-215-REVIEW-PACKET-MUST-TAKE-EDGE-FROM-BACKTESTS-NOT-A-LIVE-WINDOW",
+      "title": "The strategy-review packet grades edge off live in-window n, which the binding promotion-evidence rule forbids",
+      "owner": "session_01MrTjuoRpBb7spyQLydXmmT",
+      "ownerRendered": "…ydXmmT",
+      "ownerGrade": "registered",
+      "lane": null,
+      "tier": "tier_3",
+      "priority": "high",
+      "status": {
+        "value": "in_flight",
+        "basis": "agree",
+        "declaredState": "in_flight",
+        "declaredStatus": "in_flight",
+        "disagrees": false,
+        "inDeclaredVocabulary": true,
+        "note": "`state` and `status` are both declared and identical. Nothing to reconcile."
+      },
+      "sectioned": true,
+      "fields": {
+        "id": "MI-215-REVIEW-PACKET-MUST-TAKE-EDGE-FROM-BACKTESTS-NOT-A-LIVE-WINDOW",
+        "title": "The strategy-review packet grades edge off live in-window n, which the binding promotion-evidence rule forbids",
+        "state": "in_flight",
+        "owner": "session_01MrTjuoRpBb7spyQLydXmmT",
+        "owns_object": "WO-20260901-PHASE-F",
+        "priority": "high",
+        "tier": "tier_3",
+        "added": "2026-09-09",
+        "note": "OPERATOR-DIRECTED 2026-09-09. ⚠️ THIS NOTE WAS REWRITTEN THE SAME DAY BECAUSE ITS FIRST VERSION WAS THE WRONG SHAPE. It read \"DO NOT RE-ASK THE WINDOW/FLOOR QUESTION IN ANY FORM\", and the operator rejected that framing outright: \"you keep adding guards in the shape of forbidding questions from being asked - this is incorrect. the problem isn't the question, it's the underlying misunderstanding of infra and processes, and not asking questions isn't what fixes that - it just makes it more likely that you will f****** again in the future because you're not asking the right question... it's that you don't understand how the system works. that's what we need to fix here, not the question\". THE PROHIBITION IS RETRACTED. Ask whatever you need to, window and floor included. Banning a question suppresses the symptom and leaves the misunderstanding intact, so the next session fails in a NEW way instead of asking a better question. THE THING TO CARRY IS THE MODEL, NOT A RULE: (1) EDGE is established OFFLINE — this repo has extensive backtesting infrastructure built for exactly that (purged walk-forward CV, replay_pregate_fleet, the point-in-time backfills), and that is where 'does this strategy work' is answered. (2) LIVE data establishes MECHANICS ONLY — that executions match the simulator — which canon says needs 1-2 executed trades, not calendar time. (3) SLOW LIVE ACCRUAL IS A FEATURE OF THE SYSTEM, NOT A BARRIER TO OVERCOME: a leg closing ~1.2 trades a week is not a problem to engineer around, and `none_gradeable` on a live window is not a defect. (4) Fewer legs does NOT raise trades-per-leg, and on paper accounts every leg runs regardless — the manager recommended that lever and the operator rejected it. WHAT THE WORK ACTUALLY IS: the review/validation layer is built on a LIVE-ACCRUAL model of evidence while the system's real evidence engine is the BACKTEST infrastructure. MIN_CLOSED_FOR_ACTION is a symptom of that mismatch, not the defect. The operator's own framing: \"our overall operation is clearly not built to suit the system's structure.\" THE RULE THIS CONTRADICTS ALREADY EXISTS AND IS BINDING: docs/CLAUDE-RULES-CANONICAL.md § 'Promotion evidence — offline edge, live mechanics' (2026-07-26), scope explicitly STRATEGY legs, clause 3 'No gate may require calendar-time accrual to prove edge', and it already names this as 'the recurring drift this rule kills'. THE GUARD HALF MUST ENFORCE THE RULE, NOT A PHRASE: a gate producing a STRATEGY verdict must source its edge from offline evidence. A guard that greps for forbidden words is the same wrong shape one level down. Keep the positive control — a guard silent because it scans nothing is indistinguishable from one silent because all is well. Tier-3 where it changes what a KILL/DEMOTE rests on: propose, do not enact. Retiring a strategy leg is Tier-3 and is not the answer here. Manager does not take this — it is ROUTED to session_01MrTjuoRpBb7spyQLydXmmT, which has been sent this correction directly.",
+        "status": "in_flight",
+        "manager_notes": [
+          "[2026-09-09T23:45:00Z] #11587 (MI-216, the producer) at its FIFTH conflict — every one a manager register write landing under it, which is a QUEUE failure and mine. Slot given to it 23:43Z; the manager's own register PR is written and HELD unpushed until it merges. git merge-tree vs current main: zero conflict markers. It declares landing: hold and awaits ONE manager merge click once CI is green."
+        ]
+      }
+    },
+    {
+      "id": "MI-71",
+      "title": "Decision PRESENTATION on ClaudeBot: options as a readable list, and real multiple choice",
+      "owner": null,
+      "ownerRendered": "—",
+      "ownerGrade": "unowned",
+      "lane": null,
+      "tier": "2 (touches the Telegram bridge; no order path, no strategy config, no risk caps)",
+      "priority": "DEFERRED",
+      "status": {
+        "value": "deferred",
+        "basis": "state_only",
+        "declaredState": "deferred",
+        "declaredStatus": null,
+        "disagrees": false,
+        "inDeclaredVocabulary": false,
+        "note": "Only `state` is declared. This is the ordinary row and the field every other consumer of this file reads."
+      },
+      "sectioned": false,
+      "fields": {
+        "id": "MI-71",
+        "title": "Decision PRESENTATION on ClaudeBot: options as a readable list, and real multiple choice",
+        "state": "deferred",
+        "priority": "DEFERRED",
+        "owner": null,
+        "tier": "2 (touches the Telegram bridge; no order path, no strategy config, no risk caps)",
+        "raised_by": "operator, 2026-09-02, in conversation, EXPLICITLY not urgent: 'Also not urgent, but something that I do want us to have ... somewhere in our work plan.'",
+        "observed": "Operator, on the live decision prompt: 'the point with the buttons is that it's very shortened, a little cut off ... maybe there's more of a list and I can click the options, maybe some would be multiple choice. I think that button is a good first step, but probably not the end of where this design needs to go.' So the ASK half of the decision round-trip works and its PRESENTATION is the limit.",
+        "⚠️_the_truncation_is_the_LABEL_not_the_callback_data": "DO NOT go looking for a callback_data size bug -- it is already solved and re-solving it would waste the session. `callback_data` is 26 bytes FIXED (`wdec:<12 hex>:<8 hex>`) against Telegram's 64-byte cap, and it carries a DIGEST of the option KEY, deliberately never a positional index. What the operator sees cut off is the BUTTON LABEL, which Telegram renders narrow and elides. Those are different layers.",
+        "the_shape_to_build": {
+          "1_options_as_a_numbered_list_in_the_MESSAGE_BODY": "Put the full option text in the message body as a numbered list -- where there is room for it -- and reduce each button to its number. The body is not width-constrained the way a button is, so the option a person is choosing between becomes readable without touching the callback contract at all. This is the cheap half and it is probably most of the win.",
+          "2_multiple_choice_is_NOT_one_press": "[!] A single inline keyboard press submits ONE value, so multi-select is not a formatting change -- it needs a TOGGLE keyboard: each tap flips an option's mark and re-renders the keyboard, and an explicit Submit sends the set. That means holding PARTIAL, UNSUBMITTED state between taps, which the current design deliberately does not have. Decide where that state lives BEFORE building it; a half-submitted answer that looks submitted is the forward-failure the transit contract exists to refuse.",
+          "3_free_text_is_still_a_separate_step": "Unchanged and deliberately not half-built: inline buttons cannot carry arbitrary text. A request declaring no options is still SENT (so a blocking question is never invisible) and says plainly that it needs an answer on the SPA or in the repo."
+        },
+        "what_must_not_regress": "The four never-collapsed answer states (`not_submitted`/`in_transit`/`committed`/`unreadable`); the option token staying a KEY DIGEST rather than an index (an index silently records a different answer if the object is reordered between send and tap); the fail-closed write gate; and the confirmation continuing to read 'Submitted -- NOT yet decided'.",
+        "why_deferred": "P1 is the handoff capability and P2 is the overhaul implementation. This is a UX improvement to a channel that already works end-to-end -- the round-trip was observed complete on 2026-09-02. The operator said not urgent and this records that as a decision, not as an oversight.",
+        "refs": [
+          "#10793",
+          "WO-20260901-PHASE-H",
+          "MI-59"
+        ]
+      }
+    },
+    {
+      "id": "MI-40-STALE-PING-ROWS-WILL-REFIRE-WITH-BODIES-ONCE-THE-RENDERER-IS-FIXED",
+      "title": "21 stale queue rows will re-fire WITH bodies once #10747 lands and the VM is re-provisioned",
+      "owner": null,
+      "ownerRendered": "—",
+      "ownerGrade": "unowned",
+      "lane": null,
+      "tier": null,
+      "priority": "DEFERRED",
+      "status": {
+        "value": "ready",
+        "basis": "state_only",
+        "declaredState": "ready",
+        "declaredStatus": null,
+        "disagrees": false,
+        "inDeclaredVocabulary": false,
+        "note": "Only `state` is declared. This is the ordinary row and the field every other consumer of this file reads."
+      },
+      "sectioned": true,
+      "fields": {
+        "id": "MI-40-STALE-PING-ROWS-WILL-REFIRE-WITH-BODIES-ONCE-THE-RENDERER-IS-FIXED",
+        "title": "21 stale queue rows will re-fire WITH bodies once #10747 lands and the VM is re-provisioned",
+        "state": "ready",
+        "detail": "docs/claude/pending-pings.jsonl holds 21 rows that render today as bare event labels. #10747 makes the renderer emit real bodies. The dedupe ledger that suppresses re-sends (runtime_logs/pending_pings_delivered) is VM-LOCAL and gitignored, so a re-provision would replay all 21 -- this time with content -- as one burst on the channel we just made trustworthy.",
+        "operator_decision": "2026-09-02: MARK THEM DELIVERED, KEEP THE ROWS. The operator chose the record-preserving option over pruning, on the grounds that these 21 rows ARE the evidence base for the 42%-bare-label finding and pruning them would destroy the proof of the bug just as it is fixed. The stamp must say WHICH state it is asserting: they were delivered EMPTY, and stamping a bare 'delivered' would be a false claim.",
+        "blocked_on": {
+          "kind": "object",
+          "ref": "PR #10747",
+          "since": "2026-09-02T05:24:18Z"
+        },
+        "note": "Dispatch AFTER #10747 merges -- it touches scripts/notify_on_pull.py and would conflict.",
+        "owner": null,
+        "⚠️_I_MARKED_THIS_OWNED_BEFORE_IT_WAS": "CORRECTED 2026-09-02T09:20Z. I set state=in_flight and owner='subagent:stale-ping-delivered-stamp' in the same edit that unblocked it, and then DID NOT SPAWN. For ~5 minutes the checklist asserted an owner that did not exist. ⚠️ That is the same class as MI-15 (the registry claiming sessions it did not have) and it is worse in this direction: a row reading in_flight WITH AN OWNER is one a successor skips, so a false owner does not just lose information, it actively diverts attention away from real work. State is `ready` — unblocked, decided, nobody on it.",
+        "why_not_spawned_yet": "Two sub-sessions cannot share one git working tree: they would fight over checkouts and `git add -A` from either can sweep the other's uncommitted files into the wrong branch — a hazard that already nearly bit this session, whose `git status` surfaced the AVAX agent's in-progress test file on an unrelated workflow branch. Agent worktree isolation was ATTEMPTED and REFUSED here: 'Cannot create agent worktree: not in a git repository' — the session's cwd is /home/user while the repo is /home/user/Metis-Insights. So this waits for the AVAX sub-session to finish, or goes to a cloud session with its own container (create_session), which must be REGISTERED IN SESSIONS.json in the same action.",
+        "risk_is_real_but_not_imminent": "Firing requires the VM-local gitignored ledger to be LOST (re-provision / re-clone / fresh data dir). It is not on a timer. So deferring is defensible; leaving a false owner on it was not.",
+        "priority": "DEFERRED",
+        "deferred_reason": "Not tied to P1 (handoff) or P2 (overhaul implementation). Keeps its state and evidence; not worked until the priorities are done. A P0 incident overrides this immediately."
+      }
+    }
+  ],
+  "summary": {
+    "total": 238,
+    "byStatus": {
+      "landed_unproven": 46,
+      "blocked": 8,
+      "queued": 63,
+      "in_flight": 24,
+      "done": 70,
+      "ready": 9,
+      "deferred": 2,
+      "waiting": 2,
+      "superseded": 5,
+      "unassigned": 2,
+      "operator_approved": 2,
+      "filed": 1,
+      "failed": 1,
+      "filed_not_taken": 2,
+      "duplicate_of_MI-180": 1
+    },
+    "byBasis": {
+      "state_only": 155,
+      "status_only": 65,
+      "agree": 5,
+      "disagree": 13,
+      "undeclared": 0
+    },
+    "disagreeing": 13,
+    "statusOnly": 65,
+    "offDeclaredVocabulary": 27,
+    "unsectioned": 18,
+    "nonObjectEntriesDropped": 0
+  },
+  "freshness": {
+    "path": "docs/claude/work/MANAGER-CHECKLIST.json",
+    "commitState": "known",
+    "commitSha": "7a04372870be",
+    "committedAt": "2026-09-10T07:11:46+00:00",
+    "commitAgeHours": 0.85,
+    "workingTreeDirty": false,
+    "treeState": "unknown",
+    "treeHeadSha": "b2739518f",
+    "treeMainSha": "7a0437287",
+    "treeBehindCommits": 0,
+    "treeNote": "HEAD carries commits origin/main does not, so what of main this tree reflects could not be established",
+    "stamp": "tree: ⚠️ unknown · b2739518f — HEAD carries commits origin/main does not, so what of main this tree reflects could not be established. Treat everything below as unverified.",
+    "note": "",
+    "warnings": [
+      "The VM's tree could not be graded against origin/main (HEAD carries commits origin/main does not, so what of main this tree reflects could not be established) — this is *we could not look*, NOT a clean tree. Treat the rows below as unverified."
+    ]
+  },
+  "_fixture_note": "REAL captured GET /api/bot/work/checklist, 2026-09-10. `items` is TRIMMED to one row per status BASIS plus an unsectioned and an off-vocabulary row, so every branch Workflow.svelte renders has a real row behind it; `summary` is the UNTRIMMED count over all 238 items and deliberately does not match len(items)."
+}

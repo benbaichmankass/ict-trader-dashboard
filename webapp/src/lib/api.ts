@@ -181,6 +181,21 @@ export const api = {
   roadmap: (signal?: AbortSignal) => get<any>("/api/bot/roadmap", signal),
   work: (signal?: AbortSignal) => get<any>("/api/bot/work", signal),
 
+  // The manager checklist, graded by the bot. ⚠️ `status.value` and
+  // `status.basis` arrive ALREADY RECONCILED — the file carries two competing
+  // status fields (`state` and `status`, 13 of 244 rows disagreeing as of
+  // 2026-09-10) and `src/runtime/manager_status.py::effective_state` is their
+  // ONE owner. Do NOT merge them again here or in a component: a second merge
+  // is a second definition of an item's status, free to drift from the one the
+  // manager guards read.
+  workChecklist: (signal?: AbortSignal) =>
+    get<any>("/api/bot/work/checklist", signal),
+
+  // The decision inbox — what is waiting on the operator. Read-only; the
+  // submit route is token-gated and fail-closed and is not called from here.
+  workDecisions: (signal?: AbortSignal) =>
+    get<any>("/api/bot/work/decisions", signal),
+
   // Prop (Breakout manual-bridge) — isolated journal, never blended into real/paper.
   propStatus: (accountId = "breakout_1", signal?: AbortSignal) =>
     get<any>(`/api/bot/prop/status?account_id=${encodeURIComponent(accountId)}`, signal),

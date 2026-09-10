@@ -12,6 +12,7 @@
   import Insights from "./routes/Insights.svelte";
   import Roadmap from "./routes/Roadmap.svelte";
   import Work from "./routes/Work.svelte";
+  import Workflow from "./routes/Workflow.svelte";
   import Prop from "./routes/Prop.svelte";
   import Health from "./routes/Health.svelte";
   import Logs from "./routes/Logs.svelte";
@@ -120,6 +121,8 @@
         <Roadmap />
       {:else if $nav.section === "Work"}
         <Work />
+      {:else if $nav.section === "Workflow"}
+        <Workflow />
       {:else if isSpecial($nav.section)}
         <Placeholder page={$nav.section} />
       {:else if $nav.detail == null}
