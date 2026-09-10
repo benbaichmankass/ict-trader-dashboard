@@ -1,0 +1,205 @@
+{
+  "present": true,
+  "reason": null,
+  "requests": [
+    {
+      "id": "DR-20260908-CLEAR-THE-LOUD-TRADE-PRIORITISATION-ROW",
+      "objectId": "WO-20260908-BUILD-THE-N-BOOK-RANKING-KEY-HARNESS",
+      "askedBy": {
+        "sessionId": "session_01ML8uLRrKLMmzR9fFywTWv5",
+        "sessionUrl": "https://claude.ai/code/session_01ML8uLRrKLMmzR9fFywTWv5",
+        "recordedAt": null,
+        "note": null
+      },
+      "askedByState": "recorded",
+      "push": null,
+      "resumeContext": null,
+      "resumeState": "unstated",
+      "question": "OI-20260831-TRADE-PRIORITISATION-IS-LIVE-BUT-UNPROVEN-AND-ITS-AB-HARNESS-DOES-NOT-EXIST is a `loud` row whose clears_when has three clauses. (2) and (3) are met in full and its own text says a NULL closes it. Clause (1) says \"scripts/backtest_system.py grows an N-book mode\", and the capability was built as a parity-asserted SIBLING instead, for the landing-surface reason in `deviation_from_done_condition`. Should the row be removed?",
+      "options": [
+        {
+          "key": "reword_clause_1_then_remove",
+          "label": "Reword clause (1) to name the CAPABILITY, then remove the row",
+          "implication": "Makes the next reader's test the one that matters - does the capability exist and is it drift-proof - rather than which file it lives in, and then closes an answered question. RECOMMENDED."
+        },
+        {
+          "key": "remove_the_row",
+          "label": "Remove the row as it stands",
+          "implication": "The register stops carrying an answered question. Correct if the substance is what clears_when meant. The evidence is committed and the write-up is linked from the design file, so nothing is lost by removal."
+        },
+        {
+          "key": "keep_it_open_until_backtest_system_itself_carries_the_mode",
+          "label": "Keep it open until scripts/backtest_system.py itself carries the mode",
+          "implication": "Reads the clause literally. Costs an open `loud` row that every session must report on while the question behind it is answered - the alarm-fatigue shape this repo treats as its own P1."
+        }
+      ],
+      "allowsFreeText": true,
+      "urgency": "routine",
+      "askedOn": "2026-09-08",
+      "context": "The row is left OPEN with a full `observation` recording exactly what was built, measured and deviated from, so whoever decides is deciding on the evidence rather than on a summary. Removing a `loud` row is a judgement about a deviation from a written condition, and a sub-session that cannot put the deviation to anyone should not make it silently.",
+      "answer": null,
+      "objectTitle": "Give backtest_system.py an N-book mode and a ranking-key arm, then measure whether arbitration ORDER drives outcome at all",
+      "objectLifecycle": "done",
+      "parentIntent": "IN-20260903-TRADING-SYSTEM-HEALTH",
+      "answerState": "not_submitted",
+      "transit": {
+        "submissionId": null,
+        "submittedAt": null,
+        "ageSeconds": null,
+        "stale": null
+      }
+    },
+    {
+      "id": "DR-20260908-SHOULD-SCRIPTS-BACKTEST-STAR-BE-IN-THE-TIER1-SURFACE",
+      "objectId": "WO-20260908-BUILD-THE-N-BOOK-RANKING-KEY-HARNESS",
+      "askedBy": {
+        "sessionId": "session_01ML8uLRrKLMmzR9fFywTWv5",
+        "sessionUrl": "https://claude.ai/code/session_01ML8uLRrKLMmzR9fFywTWv5",
+        "recordedAt": null,
+        "note": null
+      },
+      "askedByState": "recorded",
+      "push": null,
+      "resumeContext": null,
+      "resumeState": "unstated",
+      "question": "check_pr_landing.py's TIER1_SURFACE allows scripts/{ci,ops,research,reports}/** but not scripts/*.py, so the repo's research harnesses (scripts/backtest_*.py) cannot be touched by a self-landing Tier-1 PR - even though the canonical Tier-1 examples list explicitly names \"Backtest tooling that does not alter live runtime behavior\". This shaped a real design decision this session. Should scripts/backtest_*.py join TIER1_SURFACE?",
+      "options": [
+        {
+          "key": "add_it",
+          "label": "Add scripts/backtest_*.py to TIER1_SURFACE",
+          "implication": "Research-harness work self-lands like the rest of the research surface, matching the canonical Tier-1 example list. It widens an allowlist whose whole polarity is fail-closed, so it deserves a deliberate read rather than a nod."
+        },
+        {
+          "key": "leave_it",
+          "label": "Leave the allowlist as it is",
+          "implication": "Every harness change keeps needing a human. The costlier failure is not the delay: it is that sessions route around it by DUPLICATING the harness, which is the drift this repo has already paid for twice."
+        }
+      ],
+      "allowsFreeText": true,
+      "urgency": "routine",
+      "askedOn": "2026-09-08",
+      "context": "Editing check_pr_landing.py is LANDING_MACHINERY, so R12 holds such a change for a human by design and it cannot ride the PR that surfaced it, whatever its merit.",
+      "answer": null,
+      "objectTitle": "Give backtest_system.py an N-book mode and a ranking-key arm, then measure whether arbitration ORDER drives outcome at all",
+      "objectLifecycle": "done",
+      "parentIntent": "IN-20260903-TRADING-SYSTEM-HEALTH",
+      "answerState": "not_submitted",
+      "transit": {
+        "submissionId": null,
+        "submittedAt": null,
+        "ageSeconds": null,
+        "stale": null
+      }
+    },
+    {
+      "id": "DEC-20260910-EXIT-EVAL-60S-REMEDY",
+      "objectId": "WO-20260910-ROOT-CAUSE-THE-EXIT-EVAL-60S-BREACHES",
+      "askedBy": {
+        "sessionId": "session_01Ww2pZVK5VUqV8xFFtTs9B1",
+        "sessionUrl": "https://claude.ai/code/session_01Ww2pZVK5VUqV8xFFtTs9B1",
+        "recordedAt": "2026-09-10T06:5x:00Z",
+        "note": "The investigating lane. NOT a re-ask of DEC-20260909-M20-EXIT-EVAL-NEAR-MISS, which was about INSTRUMENTATION and is answered and discharged; this is the CAUSE question that decision explicitly left open (\"investigate_the_tail ... is a separate question about CAUSE, where this decision is about INSTRUMENTATION\")."
+      },
+      "askedByState": "recorded",
+      "push": null,
+      "resumeContext": null,
+      "resumeState": "unstated",
+      "question": "The exit-eval 60s promise is breached on 6.2% of restarts (20 of 325 post-fix, max 210.4s) and on 14 within-process intervals in 18 days. Both causes are now named. Two exact Tier-2 remedies are ready, independent of each other, each with a one-env-flip rollback. Which, if any, should be armed - and is the restart boundary in scope for the 60s promise at all?",
+      "options": [
+        {
+          "key": "r2_only",
+          "label": "Arm R2 only - the per-pass IB circuit breaker",
+          "implication": "The larger effect on the larger live residual. Once one IB fetch returns a pinned-thread queue timeout, skip the remaining IB packages in THAT pass. Changes NOTHING about what any package receives - a skipped package gets the same candles=None it would have got 29s later - it bounds the cost of an outcome already determined. Pass cost in the reset window falls from n x 29s to ~35s. Rollback EXIT_LOOP_IB_BREAKER_DISABLED. Cost: during a transient (non-outage) queue timeout, later IB packages are skipped for one pass and retried 30s later."
+        },
+        {
+          "key": "both",
+          "label": "Arm R2 and R1",
+          "implication": "R1 additionally moves _start_exit_loop above _apply_per_account_leverage in src/main.py::main() - measured 2.0-10.0s off the startup term, median ~3s, and it is the 10s tail it targets. Must stay AFTER boot_reconcile so a pass cannot evaluate a journal row the reconciler is about to void. Rollback EXIT_LOOP_EARLY_START_DISABLED. Cost: the cold first pass then overlaps the leverage pre-flight on a 2-core box."
+        },
+        {
+          "key": "r1_only",
+          "label": "Arm R1 only",
+          "implication": "Touches only startup ordering and no fetch behaviour - the smaller blast radius of the two - but it addresses the persistent 6.2% restart-gap tail and leaves the reset-window residual entirely."
+        },
+        {
+          "key": "decide_the_scope_instead",
+          "label": "Record a DECIDED on whether the restart boundary is in scope, and arm nothing",
+          "implication": "A legitimate answer. The restart gap is 19-60s by construction, so keeping the 60s promise across a restart means changing one of the four measured terms - there is no version of the current design that comfortably clears it. If the boundary is declared out of scope, that must be RECORDED with its consequence stated (756 s/day unevaluated), never left looking like a fix about to happen."
+        }
+      ],
+      "allowsFreeText": true,
+      "urgency": "routine",
+      "askedOn": "2026-09-10",
+      "context": "MEASURED 2026-09-10T06:13Z from GET /api/bot/exit-interval/soak (whole-file summary + breached_only=true&limit=2000, both COMPLETE censuses: 1218 of 1218 breach rows, 444 of 444 measured boundaries), plus four /api/diag/journalctl restart windows and a 1000-row /api/diag/log_file tail. RESTART GAP: min 17.5s, median 40.5s, p90 56.0s, p95 60.9s post-fix; it decomposes as residual cadence sleep 0-30s + systemd downtime ~0.3s + startup-to-thread 6-15s + cold first pass 12.7-16.9s, reconciling exactly on all four measured boundaries - i.e. 19-60s BY CONSTRUCTION against a 60s requirement, with essentially no headroom, at 18.1 restarts/day. Total exposure 756 s/day (12.6 min/day, 0.875% of wall clock) in which no open position's exit is evaluated - and 93.8% of that is from COMPLIANT restarts, so the breach rate understates it. WITHIN-PROCESS: 97.0% of the 1218 predate 2026-08-22; the live residual is 14 breaches in 18 days, 10 of them in the 04:00-05:00Z IBKR reset window, where each IB-routed package pays a serialized 29.0s pinned-thread queue timeout so a pass costs n_IB_packages x 29s and crosses 60s at THREE packages.",
+      "answer": null,
+      "objectTitle": "The exit-eval 60s breaches have TWO different causes - a closed within-process episode plus a live IBKR-reset-window residual, and a structural restart gap with no headroom",
+      "objectLifecycle": "waiting",
+      "parentIntent": "IN-20260903-TRADING-SYSTEM-HEALTH",
+      "answerState": "not_submitted",
+      "transit": {
+        "submissionId": null,
+        "submittedAt": null,
+        "ageSeconds": null,
+        "stale": null
+      }
+    }
+  ],
+  "unanswerableOperatorEdges": [
+    {
+      "objectId": "WO-20260908-RECONCILE-THE-BYBIT-1-ETHUSDT-ORPHAN-TRADE",
+      "objectTitle": "Reconcile the bybit_1 ETHUSDT orphan trade 5569",
+      "objectLifecycle": "waiting",
+      "ref": "Tier-2 OK to change _bybit_position_protection's book selection and _recently_closed_adopted_orphan's exit_reason allowlist (src/runtime/order_monitor.py — closes live positions and gates the adopt path)",
+      "since": "2026-09-08",
+      "note": null
+    },
+    {
+      "objectId": "WO-20260908-TRADE-SCOPE-THE-ALPACA-CLOSE-OPERATION-AND",
+      "objectTitle": "Trade-scope the Alpaca close operation (and modify_protective)",
+      "objectLifecycle": "waiting",
+      "ref": "The Alpaca close-confirmation MEASUREMENT — reserved to #11312 by #11279's own approval scope",
+      "since": "2026-09-08",
+      "note": null
+    }
+  ],
+  "summary": {
+    "awaitingOperator": 3,
+    "awaitingCommit": 0,
+    "decided": 23,
+    "byAnswerState": {
+      "not_submitted": 3,
+      "in_transit": 0,
+      "committed": 23,
+      "unreadable": 0
+    },
+    "requestCount": 26,
+    "malformedRequestsDropped": 0,
+    "unanswerableOperatorEdgeCount": 2,
+    "staleOpenWindows": 0,
+    "staleAfterSeconds": 3600,
+    "byAskedByState": {
+      "recorded": 17,
+      "unrecorded": 5,
+      "malformed": 4
+    },
+    "pushBack": {
+      "delivered": 0,
+      "sessionGone": 0,
+      "notYetDelivered": 14,
+      "committedWithNoAsker": 9
+    }
+  },
+  "transit": {
+    "state": "absent",
+    "error": null,
+    "path": "/home/user/Metis-Insights/runtime_logs/work_decision_transit.jsonl",
+    "rowsRead": 0
+  },
+  "writeGate": {
+    "state": "closed_no_token",
+    "acceptsWrites": false,
+    "note": "DASHBOARD_API_TOKEN is UNSET, so POST /api/bot/work/decision refuses with 503. This is FAIL-CLOSED and deliberate (the prop.py polarity), not an outage: a dropped .env value closes writes rather than reopening an anonymous write hole."
+  },
+  "note": "The repo is the source of truth. This route reports `committed` ONLY from an `answer` block on the work object in the repo — never from the transit log — so an answer that does not commit leaves its question UNANSWERED. Transit fails BACK, never forward.",
+  "_fixture_note": "REAL captured GET /api/bot/work/decisions, 2026-09-10, `requests` trimmed to 3. Summary counts are the untrimmed originals."
+}
