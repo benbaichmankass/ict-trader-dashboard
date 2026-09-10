@@ -267,19 +267,20 @@
   "freshness": {
     "path": "docs/claude/work/MANAGER-CHECKLIST.json",
     "commitState": "known",
-    "commitSha": "7a04372870be",
-    "committedAt": "2026-09-10T07:11:46+00:00",
-    "commitAgeHours": 1.118,
+    "commitSha": "fddf491f3b15",
+    "committedAt": "2026-09-10T17:33:24+00:00",
+    "commitAgeHours": 0.448,
     "workingTreeDirty": false,
-    "treeState": "unknown",
-    "treeHeadSha": "2768a81e9",
-    "treeMainSha": "7a0437287",
+    "treeState": "synced",
+    "treeHeadSha": "04fde6c13",
+    "treeMainSha": "04fde6c13",
     "treeBehindCommits": 0,
-    "treeNote": "HEAD carries commits origin/main does not, so what of main this tree reflects could not be established",
-    "stamp": "tree: ⚠️ unknown · 2768a81e9 — HEAD carries commits origin/main does not, so what of main this tree reflects could not be established. Treat everything below as unverified.",
+    "mainRefAgeHours": 0.026,
+    "treeNote": "level with the local origin/main ref as of the last fetch 2m ago (FETCH_HEAD mtime); this never fetches, so main may have moved since",
+    "stamp": "tree: synced · 04fde6c13 == origin/main as last fetched 2m ago — this never fetches, so main may have moved since",
     "note": "",
     "warnings": [
-      "The VM's tree could not be graded against origin/main (HEAD carries commits origin/main does not, so what of main this tree reflects could not be established) — this is *we could not look*, NOT a clean tree. Treat the rows below as unverified."
+      "The checklist was last COMMITTED 27m ago. A manager is expected to push it before answering a status request, so this page is 27m behind whatever they are actually working on."
     ]
   },
   "sessions": {
@@ -361,5 +362,5 @@
     "staleAfterMinutes": 90.0,
     "note": "Session state is only as fresh as the last MANAGER OBSERVATION written into docs/claude/work/SESSIONS.json. This is NOT a live feed: reading the platform's own session list needs `list_sessions`, an mcp__* tool no API route holds. Read each lane's observation age beside its state."
   },
-  "_fixture_note": "REAL captured GET /api/bot/work/checklist, 2026-09-10. `items` is TRIMMED to one row per status BASIS plus an unsectioned and an off-vocabulary row, so every branch Workflow.svelte renders has a real row behind it; `summary` is the UNTRIMMED count over all 238 items and deliberately does not match len(items). `sessions.lanes` is likewise trimmed to one lane per (observation state, basis) combination, so every branch the panel renders has a real lane behind it, while sessions.summary stays the untrimmed count."
+  "_fixture_note": "REAL captured GET /api/bot/work/checklist. `items` is TRIMMED to one row per status BASIS plus an unsectioned and an off-vocabulary row, so every branch Workflow.svelte renders has a real row behind it; `summary` is the UNTRIMMED count over all 238 items and deliberately does not match len(items). `sessions.lanes` is likewise trimmed to one lane per (observation state, basis) combination, so every branch the panel renders has a real lane behind it, while sessions.summary stays the untrimmed count. ⚠️ The `freshness` block was RE-CAPTURED 2026-09-10T17:5xZ from the DEPLOYED route after Metis-Insights#11716 (MI-262) landed as 5f5292a0f and the VM restarted onto 04fde6c13 (git_sha == git_sha_on_disk, restart_pending false, and 5f5292a0f verified an ANCESTOR of 04fde6c13). It carries `mainRefAgeHours` because the live route now serves it — CAPTURED, never hand-added. That distinction is the whole point: a fixture edited to spell a key the producer does not emit passes the binding while proving nothing, which is BL-20260910-API-CONTRACT-FIXTURE-CAN-BE-AHEAD-OF-THE-DEPLOYED-BOT-SO-IT-CANNOT-CATCH-A-CONSUMER-READING-A-FIELD-NOTHING-SERVES-YET. This capture is also why ict-trader-dashboard#214 was held red rather than unblocked by an edit. Its `warnings` carries a REAL 15-minute-threshold warning (checklist 26m old), so the warnline branch has genuine content behind it."
 }
