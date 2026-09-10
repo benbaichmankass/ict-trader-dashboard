@@ -83,12 +83,37 @@ const BINDINGS = {
   // tends to drop: coverage.complete (the store is PARTIAL), wip.enforced (the
   // ceiling is DECLARED, not kept), and o.blockedOnState (a claim vs silence).
   // Binding them means a rename bot-side fails here instead of rendering blank.
-  "Work.svelte": {
-    fixture: "work_store.json",
-    root: "raw",
-    paths: { raw: "", summary: "summary", coverage: "coverage", wip: "wip" },
-    rowPaths: { o: "objects", it: "intents" },
-  },
+  // ⚠️ TWO BINDINGS, because this ONE route reads TWO payloads. MI-238 folded
+  // the manager checklist, the decision inbox and the live-sessions panel into
+  // this page rather than adding a second work page beside it — the operator
+  // asked for one place to look, and two adjacent nav entries called "Work" and
+  // "Workflow" is exactly the ambiguity that defeats it.
+  //
+  // The reads deliberately stay in this ROUTE file rather than moving to
+  // components/: this checker only scans src/routes, so extracting them would
+  // silently drop their contract coverage — losing the guard that already
+  // caught two defects on this page (a `reason` key that vanished from the
+  // checklist route's healthy envelope, and a `summary` alias resolving against
+  // the wrong payload).
+  "Work.svelte": [
+    {
+      fixture: "work_store.json",
+      root: "raw",
+      paths: { raw: "", coverage: "coverage", wip: "wip" },
+      rowPaths: { o: "objects", it: "intents" },
+    },
+    {
+      fixture: "work_checklist.json",
+      root: "checklist",
+      // Three payloads on this page each have a `summary`, so the aliases are
+      // named for their SOURCE (`chk` / `dec` / `ssum`). A bare `summary` alias
+      // is how a field gets resolved against the wrong one — which is the
+      // second defect this checker caught here.
+      paths: { checklist: "", fresh: "freshness", chk: "summary",
+               sess: "sessions", ssum: "sessions.summary" },
+      rowPaths: { row: "items", l: "sessions.lanes" },
+    },
+  ],
   // Workflow.svelte (MI-238) — the manager checklist + the decision inbox.
   // Bound BOTH ways, like Work.svelte: `paths` for the $derived aliases off the
   // whole payload, `rowPaths` for the each-block items.
@@ -107,12 +132,6 @@ const BINDINGS = {
   // untrimmed originals, so len(items) deliberately does not equal
   // summary.total — see each file's `_fixture_note`. That does not weaken the
   // check: this guard asks whether a key EXISTS, never how many rows carry it.
-  "Workflow.svelte": {
-    fixture: "work_checklist.json",
-    root: "checklist",
-    paths: { checklist: "", fresh: "freshness", summary: "summary" },
-    rowPaths: { it: "items" },
-  },
 };
 
 function dig(obj, path) {
@@ -299,14 +318,19 @@ function main() {
   const present = new Set(readdirSync(ROUTES));
   let problems = [];
   let checked = 0;
-  for (const [routeFile, binding] of Object.entries(BINDINGS)) {
+  for (const [routeFile, declared] of Object.entries(BINDINGS)) {
     if (!present.has(routeFile)) {
       problems.push(`binding declared for ${routeFile}, which does not exist`);
       continue;
     }
-    const r = checkRoute(routeFile, binding);
-    problems = problems.concat(r.problems);
-    checked += r.checked;
+    // A route may declare ONE binding or a LIST of them — a route that reads
+    // two payloads needs two. Normalising here keeps every existing
+    // single-binding entry byte-identical in meaning.
+    for (const binding of (Array.isArray(declared) ? declared : [declared])) {
+      const r = checkRoute(routeFile, binding);
+      problems = problems.concat(r.problems);
+      checked += r.checked;
+    }
   }
   if (checked === 0) {
     // Never report a green over an empty population.
