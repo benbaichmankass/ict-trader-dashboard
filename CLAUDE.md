@@ -35,20 +35,39 @@ Read-only — polls the bot's REST API and renders stats, positions,
 signals, closed trades, logs, and health. Hosted on Streamlit Community
 Cloud (free), auto-redeploys from `main`.
 
-**Two production frontends serve this repo (correction 2026-08-04):** the
-**Streamlit app** (this file's subject — `streamlit_app.py`, Streamlit Community
-Cloud, auto-redeploys from `main`) at
-`https://ict-trader-dashboard-z67ryan2ttrxjdvk6ozcjc.streamlit.app/`, **and** the
-newer **Svelte SPA** under `webapp/` hosted on **GitHub Pages**
-(`https://benbaichmankass.github.io/ict-trader-dashboard/`, browser-direct to the
-bot API over HTTPS, auto-deployed on every push to `main` by
-`.github/workflows/pages.yml`). **The bot's Telegram system-report ping now
-deep-links into the SPA** — `…github.io/ict-trader-dashboard/?report=<id>` — per
-the bot repo's authoritative `CLAUDE.md` § "Dashboard consumer" (which is the
-source of truth). Both frontends read the same `?report=` scheme, so the
-Streamlit app (`_consume_report_deeplink`) still resolves a report deep-link too.
-The `webapp/` SPA carries its own `webapp/README.md`; sections below describe the
-Streamlit app specifically unless noted.
+> ### ⚠️ CORRECTION (2026-09-11): the **Svelte SPA is the only live consumer**
+>
+> This file said *"Two production frontends serve this repo (correction
+> 2026-08-04)"* and described the Streamlit app as production. **That has been
+> stale since 2026-09-01**, when the operator retired the Streamlit dashboard
+> and the Android app from the live feed
+> (`BL-20260901-RETIRE-ANDROID-AND-STREAMLIT-FROM-THE-LIVE-FEED`). The
+> authoritative statement is the bot repo's
+> [`CLAUDE.md`](https://github.com/benbaichmankass/Metis-Insights/blob/main/CLAUDE.md)
+> § "Dashboard consumer (adopted 2026-05-12 · **single consumer since
+> 2026-09-01**)", which instructs sessions to *"treat any [annotation] that
+> survives elsewhere as stale, and fix them where you find them rather than
+> reasoning from them."* This is that fix; it corrects the header only, and the
+> Streamlit-specific sections below are left standing as the record of a
+> surface that still exists in the repo.
+>
+> **Why it matters beyond tidiness:** the single-consumer fact is the
+> precondition for gating the read surface (the bot's Phase H). Reasoning from
+> "two frontends must both keep working" would argue against a gate that has
+> already landed.
+
+**The live consumer** is the **Svelte SPA** under `webapp/`, hosted on **GitHub
+Pages** (`https://benbaichmankass.github.io/ict-trader-dashboard/`,
+browser-direct to the bot API over HTTPS through Caddy, auto-deployed on every
+push to `main` by `.github/workflows/pages.yml`). The bot's Telegram
+system-report ping deep-links into it —
+`…github.io/ict-trader-dashboard/?report=<id>`. The `webapp/` SPA carries its own
+[`webapp/README.md`](./webapp/README.md).
+
+**The Streamlit app** (`streamlit_app.py`, Streamlit Community Cloud,
+auto-redeploys from `main`) is still in the repo and still builds, but is **off
+the live feed**. Sections below marked as describing it are kept as reference for
+that code, not as a claim that it is a production frontend.
 
 - Entry point: [`streamlit_app.py`](./streamlit_app.py)
 - Deploy + local-dev steps: [`README.md`](./README.md)
@@ -124,6 +143,77 @@ complaint). Now:
 When adding a page: put it in `_PAGE_REFRESH_S` **only** if it renders live
 state worth auto-updating, and never auto-refresh a page containing a form.
 
+## SPA session auth — one header, one store, one form (2026-09-11)
+
+**Almost every endpoint this app reads is ungated and works signed out.** One
+tab is not: the **Data Explorer** reads `/api/bot/db/tables` and
+`/api/bot/db/table/{name}`, which the bot gates behind `Depends(require_session)`
+and refuses with **401 before opening any database**. That fail-closed behaviour
+is correct and must not be "fixed" by loosening the bot — before the gate landed,
+an unauthenticated `GET /api/bot/db/table/trades` returned real rows over 41
+columns against `total: 5589` on a public host.
+
+**What was actually broken, and it was the CLIENT.** Measured 2026-09-11 across
+all 40 `.svelte`/`.ts`/`.js` files under `webapp/src`: there was no token store,
+no login UI, and the single `fetch` sent `{ Accept: "application/json" }` and
+nothing else. The SPA **could not send a bearer at all**, so the tab was dark
+regardless of the host.
+
+**The fix is four small pieces, and it is small for exactly one reason** — the
+SPA has **ONE network chokepoint**, `webapp/src/lib/api.ts::get<T>()`, through
+which every REST path passes:
+
+| piece | where |
+|---|---|
+| token store (localStorage, mirrors `config.ts`'s shape) | `webapp/src/lib/auth.ts` |
+| the bearer header | `api.ts::get` → `authHeaders()` |
+| login form (in the Settings panel) | `webapp/src/components/LoginPanel.svelte` |
+| 401 → clear the token, return the viewer to the form | `auth.ts::handleUnauthorized` + `App.svelte`'s `$effect` on `authPrompt` |
+
+⚠️ **That chokepoint is an INVARIANT, not a fact about one commit.** A second
+`fetch` added anywhere under `webapp/src` will silently not carry the bearer, and
+any gated route it calls goes dark the same quiet way — no build, type or test
+failure. **`webapp/tests/auth-bearer.mjs` (CI job `webapp-auth-bearer`) makes
+that a build failure**, with exactly one exemption: `POST /api/auth/login` in
+`lib/auth.ts`, pinned to that file AND that literal path.
+
+**Secrets discipline.** The password is a function argument to `login()`, sent
+once over HTTPS, and dropped — never stored, never logged, never in a URL. Only
+the bot's 1-hour HS256 JWT is persisted (`ict.authSession`). `getAuthToken()`
+withholds a token already past expiry, which is a UX shortcut and **not** a
+security check — the bot verifies the signature and `exp` and is the only thing
+that decides.
+
+**⚠️ Three facts, and only the operator can supply the second.** Say which you
+established rather than collapsing them:
+
+1. **The client can send a bearer.** This is what shipped here.
+2. **The host can mint one.** Needs `JWT_SIGNING_KEY`, `ALLOWED_EMAIL` and
+   `WEBAPP_PASSWORD_SHA256` on the bot VM — an operator action with a Tier-2
+   `set-env`, per the bot repo's
+   [`docs/runbooks/restore-webapp-auth.md`](https://github.com/benbaichmankass/Metis-Insights/blob/main/docs/runbooks/restore-webapp-auth.md).
+   **Measured 2026-09-11:** a well-formed login with the correct email and a
+   deliberately wrong password returned **500 `auth_unavailable`**, so at least
+   one env is still missing. ⚠️ Probe with a *well-formed* body — an empty one
+   returns 422 from Pydantic before the handler runs and measures nothing.
+3. **The tab renders.** A human loading the deployed SPA and seeing rows. This
+   cannot be true until (2) lands, and a green CI run establishes none of the
+   three.
+
+**⚠️ `/ws/market` is out of all of this.** It is not gated today, and a browser
+`WebSocket` cannot send an `Authorization` header at all. If the read gate ever
+widens to the socket, it needs a query-param or subprotocol scheme — a genuine
+auth build with a new credential surface, not a header. `auth-bearer.mjs`
+deliberately REPORTS the socket rather than ignoring it, so the exclusion stays
+visible instead of becoming an unexamined silence.
+
+**⚠️ Attaching `Authorization` makes these requests non-simple**, so the browser
+sends a CORS preflight it did not send before. Probed 2026-09-11: the live host
+answers `OPTIONS /api/bot/db/tables` from the Pages origin with
+`access-control-allow-headers: … Authorization …`, so the preflight passes.
+Bot-side CORS is load-bearing for the SPA — a CORS mistake now breaks the only
+consumer there is.
+
 ## Architecture
 
 ```
@@ -186,7 +276,12 @@ The dashboard PR is autonomous; the bot-side endpoint is Tier-3 per
 
 ```
 streamlit_app.py       — the Streamlit dashboard (single file, ~9500 lines)
-webapp/                — the Svelte 5 + Vite SPA (2nd production frontend; GitHub Pages, see .github/workflows/pages.yml)
+webapp/                — the Svelte 5 + Vite SPA — THE live consumer (GitHub Pages, see .github/workflows/pages.yml)
+  src/lib/api.ts       — the ONE network chokepoint; attaches the session bearer
+  src/lib/auth.ts      — session-token store + login() + the 401 handler
+  src/components/LoginPanel.svelte — the login form (rendered in the Settings panel)
+  tests/*.mjs          — three zero-dep CI checkers, each with a --self-test
+  tests/manual/        — browser e2e (Playwright; NOT in CI)
 requirements.txt       — Python deps (streamlit, streamlit-autorefresh, requests, pandas, plotly, yfinance)
 .streamlit/config.toml — theme + privacy
 README.md              — deploy + dev steps
@@ -338,7 +433,7 @@ Nested expanders are illegal in Streamlit, so the in-row "Show all" + config use
 | Promotion | `/api/bot/shadow/stats`, `/api/bot/shadow/drift`, `/api/bot/trades/scores`, `/api/bot/trades/closed` — shadow-model promotion-readiness tracker (per-model volume, days-in-shadow, score range, "wired" check, KS/PSI drift, win/loss score edge) |
 | Backtesting | `/api/bot/backtests/sweeps` (strategy-improvement / validation sweeps mirrored from the trainer VM — renders each run's `SUMMARY.md` table + raw per-variant metrics), `/api/bot/backtests` (on-demand `/test` runs) |
 | Strategies | `/api/bot/strategies` + `/api/bot/trades/closed` + `/api/bot/strategies/{name}/review` — live-runtime view: pipeline-running banner + per-strategy status (Running / Loaded·stale / Configured·not-loaded / Disabled) and account routing (which accounts run it, live/dry), lifetime stats, **trades·24h + a cumulative realised-P&L curve** (client-side from the closed-trade window), config, changelog. **M7 review packet** (gate doc: bot repo `docs/strategy-review-gate.md`) renders per-strategy: coloured action badge (`KILL`/`DEMOTE_SHADOW`/`TUNE`/`HOLD`/`PROMOTE`), n_closed / win_rate / expectancy / pnl_total, the matrix's `reasons[]`, Tier-3 SLA due-by when present, and a collapsed full-JSON drill-down. Renders a ghost caption pointing at the `generate-strategy-review-packets` operator action when no packet has been generated yet. |
-| Data Explorer | `/api/bot/db/tables`, `/api/bot/db/table/{name}` — read-only browse of the **federated canonical store**: the live trader's `trade_journal.db` AND the trainer-store sidecar `trainer_store.db` (trainer/ML lifecycle data: training_cycle, dataset_builds, db_pulls, model_registry, experiment_runs, backtest_sweeps). Each table is tagged with its owning `db`; reads pass `?db=` so the API routes to the right DB. Schema overview, table picker, per-column filter (eq/ne/gt/lt/gte/lte/like), ordering, and pagination |
+| Data Explorer | `/api/bot/db/tables`, `/api/bot/db/table/{name}` — ⚠️ **the only `require_session`-gated pages in the app**: both routes 401 without an `Authorization: Bearer` *before opening any DB*, so this tab needs a signed-in session (Settings → Session; see § "SPA session auth"). Read-only browse of the **federated canonical store**: the live trader's `trade_journal.db` AND the trainer-store sidecar `trainer_store.db` (trainer/ML lifecycle data: training_cycle, dataset_builds, db_pulls, model_registry, experiment_runs, backtest_sweeps). Each table is tagged with its owning `db`; reads pass `?db=` so the API routes to the right DB. Schema overview, table picker, per-column filter (eq/ne/gt/lt/gte/lte/like), ordering, and pagination |
 | Health | `/api/bot/health/services`, `/api/bot/health/latest` |
 | Reports | `/api/bot/reports` (index) + `/api/bot/reports/{id}` (one report's HTML) — **a log of links to the consolidated `/system-report` executive reports** (the bot-side master skill that runs health + performance + ML together per window). A window filter (All/since-last/daily/weekly/monthly), a newest-first table (generated/window/roll-up grade/headline), and an inline viewer that embeds the selected report's self-contained responsive HTML via `components.html` (plus a **Download HTML** button — the report HTML is self-contained, so the download/inline render is the human-usable path, independent of repo visibility). **Deep link:** a `?report=<id>` query param opens this page with that report pre-selected and rendered (`_consume_report_deeplink` in `main()` + the pre-select in `page_reports`) — this is the link the bot's Telegram system-report ping points at, so tapping the ping lands directly on the report. **Read-only** — the dashboard never generates a report; it renders what the bot committed under `comms/reports/`. |
 | Logs | `/api/bot/logs` |

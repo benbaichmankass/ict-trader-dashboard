@@ -5,6 +5,25 @@
 // an em-dash downstream.
 
 import { getBotApiUrl } from "./config";
+import { authHeaders, handleUnauthorized } from "./auth";
+
+/**
+ * A read the bot refused for want of a session. Thrown instead of the generic
+ * `Error` so a route can tell "you are not signed in" from "the endpoint is
+ * broken" and offer the form rather than a raw status line.
+ */
+export class AuthRequiredError extends Error {
+  readonly status: number;
+  constructor(status: number, path: string) {
+    super(
+      status === 403
+        ? `Not allowlisted for ${path} (403).`
+        : `Sign-in required for ${path} (401).`,
+    );
+    this.name = "AuthRequiredError";
+    this.status = status;
+  }
+}
 
 export interface BotStats {
   pnl24h?: number | null;
@@ -122,9 +141,23 @@ export interface Strategy {
   description?: { short?: string | null } | null;
 }
 
+// THE app's one network chokepoint: every REST path below goes through here,
+// so attaching the bearer here attaches it everywhere. `authHeaders()` adds
+// `Authorization: Bearer` only when a usable token is held — the ~35 ungated
+// routes are unaffected and keep working signed out, exactly as before.
+//
+// ⚠️ If you add a second `fetch` anywhere under `webapp/src`, it will NOT carry
+// the bearer and any gated route it calls will 401. `webapp/tests/auth-bearer.mjs`
+// makes that a build failure rather than a silently dark tab.
 async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   const url = `${getBotApiUrl()}${path}`;
-  const res = await fetch(url, { signal, headers: { Accept: "application/json" } });
+  const res = await fetch(url, { signal, headers: authHeaders() });
+  if (res.status === 401 || res.status === 403) {
+    // Drop the dead session and surface the form. Throwing a distinct type
+    // lets the route render a sign-in affordance instead of a status line.
+    handleUnauthorized(res.status, path);
+    throw new AuthRequiredError(res.status, path);
+  }
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${path}`);
   return (await res.json()) as T;
 }

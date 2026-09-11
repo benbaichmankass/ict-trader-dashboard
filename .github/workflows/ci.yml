@@ -132,3 +132,36 @@ jobs:
         run: node webapp/tests/ws-frame-scope.mjs --self-test
       - name: A symbol-scoped WS frame must never define row membership
         run: node webapp/tests/ws-frame-scope.mjs
+
+  webapp-auth-bearer:
+    # Third sibling of webapp-api-contract / webapp-ws-frame-scope, and the same
+    # class again: a request that is well-formed in every way except the one
+    # thing that decides whether it returns data.
+    #
+    # What it catches, concretely: the SPA's single `fetch` sent
+    # `{ Accept: "application/json" }` and nothing else, so it could not send a
+    # bearer AT ALL. The bot gates `/api/bot/db/tables` and
+    # `/api/bot/db/table/{name}` behind `require_session` and 401s a bearer-less
+    # request before opening any DB — so the Data Explorer was dark, and
+    # nothing could notice: the call compiled, the route rendered, the build
+    # was green, and the only symptom was a 401 inside a panel.
+    #
+    # What it PROTECTS going forward is the property that made the fix small:
+    # the SPA has ONE network chokepoint (`api.ts::get`), so attaching the
+    # header there attaches it everywhere. A second `fetch` added later would
+    # silently not carry it. This job makes that a build failure.
+    #
+    # Zero dependencies (plain node). `--self-test` plants the historical defect
+    # and requires the checker to catch it, and the checker REFUSES to report
+    # success over an empty population — a gate that cannot fail proves nothing.
+    name: webapp-auth-bearer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Prove the checker can fail
+        run: node webapp/tests/auth-bearer.mjs --self-test
+      - name: Every call to the bot API must carry the session bearer
+        run: node webapp/tests/auth-bearer.mjs

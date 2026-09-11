@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api } from "../lib/api";
+  import { api, AuthRequiredError } from "../lib/api";
   import { num, DASH } from "../lib/format";
+  import { requestLogin } from "../lib/auth";
 
   let tables = $state<any[]>([]);
   let selected = $state<string | null>(null);
@@ -11,17 +12,24 @@
   let loadingTables = $state(true);
   let loadingRows = $state(false);
   let error = $state<string | null>(null);
+  // Separated from `error` deliberately: "you are not signed in" is an
+  // actionable state with a button, not a failure line. These two routes are
+  // the SPA's only `require_session`-gated reads, so this is the only tab that
+  // can land here.
+  let needsAuth = $state(false);
 
   const LIMIT = 50;
 
   async function loadTables() {
     loadingTables = true;
     error = null;
+    needsAuth = false;
     try {
       const raw = await api.dbTables();
       tables = raw?.tables ?? [];
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      if (e instanceof AuthRequiredError) needsAuth = true;
+      else error = e instanceof Error ? e.message : String(e);
     } finally {
       loadingTables = false;
     }
@@ -32,7 +40,8 @@
     try {
       page = await api.dbTable(name, { db: db ?? undefined, limit: LIMIT, offset });
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      if (e instanceof AuthRequiredError) needsAuth = true;
+      else error = e instanceof Error ? e.message : String(e);
       page = null;
     } finally {
       loadingRows = false;
@@ -64,11 +73,24 @@
 
 <section>
   <h2>Data Explorer <span class="muted sub">· federated read-only (trade_journal + trainer_store)</span></h2>
-  {#if error}
-    <div class="err panel">{error}</div>
-  {/if}
-
-  {#if loadingTables}
+  {#if needsAuth}
+    <div class="panel pad gate">
+      <div class="ph">This tab needs a signed-in session</div>
+      <p class="muted">
+        The federated store is gated server-side — <span class="mono">/api/bot/db/tables</span>
+        and <span class="mono">/api/bot/db/table/{"{name}"}</span> refuse an unauthenticated
+        read before opening any database. Every other tab in this app reads ungated
+        endpoints and is unaffected.
+      </p>
+      <button class="save" onclick={() => requestLogin("The Data Explorer needs a signed-in session.")}>
+        Sign in
+      </button>
+    </div>
+  {:else}
+    {#if error}
+      <div class="err panel">{error}</div>
+    {/if}
+    {#if loadingTables}
     <div class="muted pad">Loading tables…</div>
   {:else}
     <div class="panel pad">
@@ -111,6 +133,7 @@
         {/if}
       </div>
     {/if}
+    {/if}
   {/if}
 </section>
 
@@ -134,4 +157,7 @@
   th, td { padding: 6px 9px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--border); }
   th { color: var(--muted); font-weight: 500; position: sticky; top: 0; background: var(--panel); }
   .err { padding: 10px 12px; color: var(--neg); }
+  .gate { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+  .gate p { margin: 0; font-size: 12.5px; line-height: 1.5; }
+  .save { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 8px 14px; cursor: pointer; }
 </style>
