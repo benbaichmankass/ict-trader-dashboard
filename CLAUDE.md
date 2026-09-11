@@ -30,10 +30,19 @@ reference (architecture, API contract, tabs).
 
 ## What this is
 
-Streamlit dashboard for the ICT Trading Bot's FastAPI on the VPS.
-Read-only — polls the bot's REST API and renders stats, positions,
-signals, closed trades, logs, and health. Hosted on Streamlit Community
-Cloud (free), auto-redeploys from `main`.
+The front end for the ICT Trading Bot's FastAPI on the VPS. Read-only — reads
+the bot's REST API and renders stats, positions, signals, closed trades, logs,
+and health. (Two narrow observability writes; see the banner at the top.)
+
+⚠️ **This paragraph used to open "Streamlit dashboard … Hosted on Streamlit
+Community Cloud"** — the stalest sentence in the file, since it was the first
+thing any session read and it named the retired consumer as the whole product.
+It survived the 2026-09-11 sweep that corrected the rest of this file because
+that sweep's grep was **case-sensitive** and the line reads "Hosted", not
+"hosted". Recorded rather than quietly fixed: a negative result from a probe
+that cannot match its target is indistinguishable from a clean bill of health,
+which is the exact failure the bot repo's RULE ONE warns about. Case-fold your
+sweeps, and give them a positive control.
 
 > ### ⚠️ CORRECTION (2026-09-11): the **Svelte SPA is the only live consumer**
 >
@@ -546,6 +555,24 @@ Dashboard-specific rendering rules (these are ours, not the bot's contract):
   an FVG renders as its two bounding price-lines.
 
 ## Local dev
+
+**The live consumer (the SPA) — this is the one you almost certainly want:**
+
+```bash
+cd webapp && npm ci
+npm run dev            # against the live HTTPS bot (the built-in default)
+npm run check          # svelte-check
+node tests/api-contract.mjs && node tests/ws-frame-scope.mjs && node tests/auth-bearer.mjs
+```
+
+Full detail, including the session/login flow, is in
+[`webapp/README.md`](./webapp/README.md). The SPA's API base URL is set at
+runtime in **Settings → Bot API base URL** (localStorage) or at build time via
+`VITE_BOT_API_URL` — **not** via `BOT_API_URL`, which is the Streamlit app's env
+var and does nothing for the SPA.
+
+**The Streamlit app** (off the live feed — run it only when working on
+`streamlit_app.py` itself):
 
 ```bash
 pip install -r requirements.txt
