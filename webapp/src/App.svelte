@@ -24,10 +24,24 @@
   import Runbooks from "./routes/Runbooks.svelte";
   import SectionLanding from "./components/SectionLanding.svelte";
   import Placeholder from "./components/Placeholder.svelte";
+  import LoginPanel from "./components/LoginPanel.svelte";
   import { nav, gotoSection, gotoDetail, SECTION_NAMES, SECTIONS, isSpecial, IMPLEMENTED_PAGES } from "./lib/nav";
   import { getBotApiUrl, setBotApiUrl } from "./lib/config";
+  import { authPrompt, session, initSession } from "./lib/auth";
+
+  // Re-seed the session store from localStorage before anything fetches, so the
+  // first render already knows whether it can send a bearer.
+  initSession();
 
   let showSettings = $state(false);
+
+  // A gated read that came back 401/403 raises `authPrompt`; opening Settings
+  // is how the form gets in front of the operator. This is the whole "401
+  // handler returns the viewer to the form" path — the store is set in
+  // `auth.ts::handleUnauthorized`, called from the one chokepoint in `api.ts`.
+  $effect(() => {
+    if ($authPrompt) showSettings = true;
+  });
   let sidebarOpen = $state(false);
   let apiUrlInput = $state(getBotApiUrl());
 
@@ -78,7 +92,9 @@
       {/each}
     </div>
     <div class="side-foot">
-      <button class="gear" title="Settings" onclick={() => (showSettings = !showSettings)}>⚙ Settings</button>
+      <button class="gear" title="Settings" onclick={() => (showSettings = !showSettings)}>
+        ⚙ Settings{#if $authPrompt}<span class="lock" title="A tab needs a signed-in session">🔒</span>{:else if $session}<span class="sig" title="Signed in">●</span>{/if}
+      </button>
     </div>
   </aside>
 
@@ -110,6 +126,7 @@
           <button class="save" onclick={saveSettings}>Save &amp; reload</button>
         </div>
         <p class="muted">Browser-direct HTTPS to the bot. Leave blank for the built-in default.</p>
+        <LoginPanel />
       </div>
     {/if}
 
@@ -174,6 +191,8 @@
   .side-foot { border-top: 1px solid var(--border); padding-top: 8px; }
   .gear { width: 100%; text-align: left; background: none; border: none; color: var(--muted); padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }
   .gear:hover { color: var(--text); }
+  .lock { margin-left: 6px; }
+  .sig { margin-left: 6px; color: var(--pos); }
 
   .main-wrap { flex: 1; min-width: 0; display: flex; flex-direction: column; max-width: 1120px; }
   .topbar { display: flex; align-items: center; gap: 10px; padding: 12px 16px 6px; }
