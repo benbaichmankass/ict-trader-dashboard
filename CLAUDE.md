@@ -73,27 +73,50 @@ that code, not as a claim that it is a production frontend.
 - Deploy + local-dev steps: [`README.md`](./README.md)
 - Migration history: [PR #32](https://github.com/benbaichmankass/ict-trader-dashboard/pull/32)
 
-## One Streamlit *Community-Cloud* app — `main` only (adopted 2026-06-22) — READ BEFORE BUILDING UI
+## Ship straight to `main` and verify live — no preview app (adopted 2026-06-22) — READ BEFORE BUILDING UI
 
-> **Scope note (2026-08-04):** "one app" here means the **Streamlit** deploy has a
-> single Community-Cloud instance (no preview app). It is NOT the only frontend —
-> the `webapp/` Svelte SPA is a second production frontend on GitHub Pages (see the
-> two-frontends note above). This section governs Streamlit-app UI changes.
+> **Scope note (corrected 2026-09-11).** This note previously read *"It is NOT
+> the only frontend — the `webapp/` Svelte SPA is a second production frontend
+> … (see the two-frontends note above)"*. Both halves were wrong by the time
+> you read them: the SPA is the **only** live consumer (2026-09-01), and the
+> "two-frontends note above" no longer exists — it was replaced by the
+> correction at the top of this file. A cross-reference to a deleted note is
+> worse than no note, because it reads as corroboration. **The production
+> deploy this section governs is the SPA on GitHub Pages.**
 
-There is **one** Streamlit Community Cloud app, tracking **`main`**. It
-auto-redeploys on every merge to `main`. The earlier two-app setup (a separate
-preview app on a standing `claude/web-app-preview` branch, adopted 2026-05-25)
-was **retired 2026-06-22** at the operator's direction — it added a branch to
-keep in sync and an extra eyeball step for no real benefit.
+There is **no preview app and no staging branch.** The earlier two-app setup (a
+separate preview app on a standing `claude/web-app-preview` branch, adopted
+2026-05-25) was **retired 2026-06-22** at the operator's direction — it added a
+branch to keep in sync and an extra eyeball step for no real benefit. Likewise
+there is a single Streamlit Community-Cloud instance tracking `main`, though
+Streamlit is off the live feed (see the correction at the top).
 
 **Workflow for ANY dashboard UI/feature change** (this is the rule — follow it):
 1. Build the change on a feature branch and open the PR against `main`.
-2. Once CI is green, **merge to `main`** — the production app auto-redeploys
-   within a minute or two.
-3. **Verify live on the production app** after it redeploys. Because the
-   dashboard can't be rendered from a sandbox/CI, the live app is the
-   verification step — so check it right after merge and fix-forward if
-   anything is off.
+2. Once CI is green, **merge to `main`** — `.github/workflows/pages.yml`
+   rebuilds and redeploys the SPA on any `webapp/**` change, usually within a
+   couple of minutes. (The Streamlit instance also redeploys; it is not the
+   thing to verify.)
+3. **Verify live after it redeploys**, and fix-forward if anything is off.
+
+**⚠️ "Verify live" has two halves, and only one of them needs a human**
+(established 2026-09-11 while shipping the SPA auth work):
+
+- **The deploy carried your code** — checkable from a sandbox, and you should
+  check it rather than assuming a green `pages.yml` means shipped. Fetch the
+  live `index.html`, read the hashed bundle name out of it, fetch that bundle,
+  and grep it for strings unique to your change **plus a negative control**
+  (a string that must be absent) so the probe can distinguish present from
+  absent. A green deploy job says the upload succeeded, not that the artifact
+  contains your commit.
+- **The page renders correctly** — this one does need a human on a real
+  browser. Driving the deployed site headlessly from a sandbox does **not**
+  work: the agent proxy resets the browser's tunnelled connections (measured
+  2026-09-11 — `net::ERR_CONNECTION_RESET` on the Pages URL, with the proxy's
+  own relay log showing `ws_closed_mid_exchange`), even though `curl` through
+  the same proxy is fine. A headless run against a **local** build plus a mock
+  API does work and is worth doing (`webapp/tests/manual/auth-e2e.mjs`), but it
+  is not the same fact — say which one you established.
 
 Do **not** recreate a preview app or a `claude/web-app-preview` branch. If a
 change is risky enough that you'd want to stage it, gate it behind a feature
@@ -216,21 +239,55 @@ consumer there is.
 
 ## Architecture
 
+> **⚠️ CORRECTED 2026-09-11.** This section described the **Streamlit**
+> transport and claimed *"no mixed-content block, no CORS surface, no
+> transport-layer intermediaries"* and that the failure set *"collapses to"*
+> three things. That was true of Streamlit's server-side hop and is **wrong
+> about the live path** — Streamlit came off the feed 2026-09-01. The bot
+> repo's `CLAUDE.md` § "Dashboard consumer" states this directly: the older
+> claim "described Streamlit only and is now simply wrong — nothing is left for
+> it to describe." It mattered concretely: the same file now documents that a
+> CORS preflight gates the SPA's authenticated reads, which a "no CORS surface"
+> claim two sections away flatly contradicts.
+
+**The live path** — the SPA calls the bot **browser-direct**, so the transport
+is real and load-bearing:
+
 ```
-Browser ──HTTPS──▶ Streamlit Community Cloud (Python) ──HTTP──▶ Bot FastAPI :8001
-                                                                 (141.145.193.91)
+Browser ──HTTPS──▶ GitHub Pages (static SPA)
+   │
+   └────HTTPS───▶ Caddy on the live VM ──▶ localhost:8001 Bot FastAPI
+                  (ict-bot.duckdns.org,              (141.145.193.91)
+                   Let's Encrypt cert)
 ```
 
-Streamlit's Python server makes the upstream call directly. The browser
-only sees Streamlit's HTTPS-rendered page, so there's no mixed-content
-block, no CORS surface, no transport-layer intermediaries. The list of
-things that can break the dashboard collapses to:
+Because the page is HTTPS and the call is made by the browser, a plain-HTTP
+upstream would be **hard-blocked as mixed content** — hence Caddy and the
+DuckDNS hostname (`deploy/caddy/Caddyfile` in the bot repo). `reverse_proxy`
+transparently upgrades WebSockets, so `/ws/market` streams WSS through Caddy
+too. **CORS is load-bearing** (`src/web/api/main.py` bot-side): a CORS mistake
+breaks the only consumer there is.
 
-- Streamlit Cloud being down (free-tier SLA, ~ok)
+What can break the live dashboard — **six** modes, not three:
+
+- GitHub Pages being down, or a failed `pages.yml` deploy
 - The VM's FastAPI being down (`ict-web-api.service`)
-- This script's code
+- **Caddy** being down (`caddy.service`)
+- **The DuckDNS record** going stale
+- **Let's Encrypt cert renewal** failing
+- The SPA's own code
 
-No tunnel, no worker, no rewrite, no V8 isolate.
+⚠️ The last three are new relative to the retired Streamlit path, and
+`ict-web-api-watchdog` does **not** cover Caddy. `caddy.service` is not an
+`ict-*` unit and ships no `deploy/` file, so it is allowlisted in the bot's
+diag `_CANONICAL_UNITS` by hand; nothing yet watches cert expiry or the DuckDNS
+record.
+
+**The retired Streamlit path**, recorded only so the old note above is not read
+as still live: Streamlit's Python server made a **plain-HTTP**, server-to-server
+call to `http://141.145.193.91:8001`, for which CORS was genuinely not
+load-bearing and mixed content genuinely could not apply. There is now one
+transport, and it is Caddy's.
 
 ## Why not React + Vercel (history)
 
