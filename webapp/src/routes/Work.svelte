@@ -159,9 +159,33 @@
   // possibly-answered decision costs the operator a glance, hiding a
   // genuinely-waiting one is the defect MI-254 exists to fix. Fail toward
   // surfacing.
+  // ⚠️ `actionable` COMES FROM THE BOT TOO (decision_subject.is_actionable) —
+  // do not re-derive it here, for exactly the reason `settled` is not
+  // re-derived above. `settled` alone stopped being the test at MI-258: a
+  // question nobody answered, about a row that no longer exists, is not work
+  // either. DR-20260908-CLEAR-THE-LOUD-TRADE-PRIORITISATION-ROW asks whether
+  // to remove an OPEN-ITEMS row that was deleted on 2026-09-09, and it sat in
+  // this list as work waiting on the operator for more than a day.
+  //
+  // ⚠️ THREE STATES, NEVER TWO — the same trap `isSettled` records one comment
+  // up. `actionable` is ABSENT on a bot that predates MI-258, and a strict
+  // true/false pair would send every row on an older bot to NEITHER bucket.
+  // `ungraded` is "WE COULD NOT TELL", and it rides WITH the waiting rows.
+  const isActionable = (r: any) =>
+    r?.actionable === true ? "yes" : r?.actionable === false ? "no" : "ungraded";
+  // MOOT: the bot says NOT settled AND NOT actionable — nobody answered, and
+  // there is nothing left to answer about. Composed from two facts the bot
+  // owns rather than from `subjectState`, so this page never becomes a second
+  // definition of "gone".
+  const isMoot = (r: any) => isSettled(r) === "no" && isActionable(r) === "no";
   const waiting = $derived<any[]>(
-    (decisions?.requests ?? []).filter((r: any) => isSettled(r) !== "yes"),
+    (decisions?.requests ?? []).filter((r: any) => isSettled(r) !== "yes" && !isMoot(r)),
   );
+  // ⚠️ SHOWN, NOT DELETED. MI-258's own bar: "a question that was asked and
+  // became moot is a record, and the reason it became moot is the useful
+  // part." It leaves the top of the list without leaving the page.
+  const moot = $derived<any[]>((decisions?.requests ?? []).filter(isMoot));
+  let showMoot = $state(false);
   const ungraded = $derived<any[]>(
     (decisions?.requests ?? []).filter((r: any) => isSettled(r) === "ungraded"),
   );
@@ -340,6 +364,12 @@
             <span class="pill ans-{r.answerState}">{(r.answerState ?? "").replace("_", " ")}</span>
             {#if r.urgency}<span class="pill urg">{r.urgency}</span>{/if}
             {#if r.settled == null}<span class="pill ungraded" title="This bot did not report whether the decision is settled — not a claim that it is open.">settled?</span>{/if}
+            {#if r.subjectState === "subject_unknown"}
+              <!-- ⚠️ SURFACED, NOT SUPPRESSED. A declared subject the bot could
+                   not resolve is *we did not look* — it keeps the question on
+                   this list, and says why it could not be checked. -->
+              <span class="pill ungraded" title={r.subjectBasis ?? ""}>subject?</span>
+            {/if}
             <span class="q">{r.question}</span>
             <span class="chev">{openDecision[r.id] ? "▾" : "▸"}</span>
           </button>
@@ -393,6 +423,48 @@
           {/if}
         </div>
       {/each}
+
+      {#if moot.length}
+        <button class="toggle ansToggle" onclick={() => (showMoot = !showMoot)}>
+          {showMoot ? "Hide" : "Show"} {moot.length} question(s) that stopped being
+          questions
+        </button>
+        {#if showMoot}
+          <p class="muted small">
+            Nobody answered these and there is nothing left to answer about — the
+            thing each one asks about no longer exists. They are
+            <strong>not</strong> counted as waiting on you, and they are kept here
+            because the reason a question became moot is the useful part.
+          </p>
+          {#each moot as r (r.objectId + r.id)}
+            <div class="drow ansrow">
+              <button class="dh" onclick={() => (openDecision = { ...openDecision, [r.id]: !openDecision[r.id] })}>
+                <span class="pill ans-moot">moot</span>
+                <span class="pill ans-{r.answerState}">{(r.answerState ?? "").replaceAll("_", " ")}</span>
+                <span class="q">{r.question}</span>
+                <span class="chev">{openDecision[r.id] ? "▾" : "▸"}</span>
+              </button>
+              {#if openDecision[r.id]}
+                <div class="ddetail">
+                  <div class="muted mono small">{r.objectId} · {r.id}</div>
+                  {#if r.subjectNote}<p class="statenote">{r.subjectNote}</p>{/if}
+                  {#if r.subject}
+                    <h4>What it asked about</h4>
+                    <p><span class="mono">{r.subject.kind}</span> ·
+                       <span class="mono">{r.subject.ref}</span></p>
+                    {#if r.subject.note}<p class="muted small">{r.subject.note}</p>{/if}
+                  {/if}
+                  <!-- The BASIS, never just the verdict: which register was read,
+                       and what it said. A `gone` with no basis is a withdrawal
+                       nobody can audit. -->
+                  {#if r.subjectBasis}<p class="muted small mono">{r.subjectBasis}</p>{/if}
+                  {#if r.answerStateNote}<p class="statenote">{r.answerStateNote}</p>{/if}
+                </div>
+              {/if}
+            </div>
+          {/each}
+        {/if}
+      {/if}
 
       {#if answered.length}
         <button class="toggle ansToggle" onclick={() => (showAnswered = !showAnswered)}>
@@ -880,6 +952,8 @@ section { display: flex; flex-direction: column; gap: 12px; }
   .st-blocked { background: var(--warn, #d19a2f); color: #fff; }
   .ans-not_submitted { background: var(--warn, #d19a2f); color: #fff; }
   .ans-engaged_not_settled { background: var(--warn, #d19a2f); color: #fff; }
+  /* Deliberately NOT the answered colour: nobody answered these. */
+  .ans-moot { background: var(--muted, #6b7280); color: #fff; }
   .ans-verdict_unrecognised { background: var(--warn, #d19a2f); color: #fff; }
   .ans-answered_in_conversation { background: var(--panel-2); }
   .pill.ungraded { background: var(--warn, #d19a2f); color: #fff; }
