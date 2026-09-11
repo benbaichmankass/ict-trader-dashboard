@@ -58,7 +58,16 @@
         "submittedAt": null,
         "ageSeconds": null,
         "stale": null
-      }
+      },
+      "subject": {
+        "kind": "open_item",
+        "ref": "OI-20260831-TRADE-PRIORITISATION-IS-LIVE-BUT-UNPROVEN-AND-ITS-AB-HARNESS-DOES-NOT-EXIST",
+        "note": "The question IS \"should this row be removed?\", so the row is the subject and its existence settles whether anything remains to decide. It was removed from docs/claude/OPEN-ITEMS.json on 2026-09-09 by ba5fccc1a (#11509) — established by `git log -S` over the file and by confirming its absence at 001b842bb and every head since, NOT by reading the PR title. Declared by hand because MI-258 measured a prose scan at a 75% false-positive rate on this exact corpus; see src/runtime/decision_subject.py."
+      },
+      "subjectState": "subject_gone",
+      "subjectBasis": "`OI-20260831-TRADE-PRIORITISATION-IS-LIVE-BUT-UNPROVEN-AND-ITS-AB-HARNESS-DOES-NOT-EXIST` is absent from the `open_item` register",
+      "subjectNote": "The thing this asks about no longer exists, so there is nothing left to decide. Kept on the page as a record — the reason it became moot is the useful part.",
+      "actionable": false
     },
     {
       "id": "DEC-20260901-READ-GATE-SEQUENCING",
@@ -115,7 +124,12 @@
         "submittedAt": null,
         "ageSeconds": null,
         "stale": null
-      }
+      },
+      "subject": null,
+      "subjectState": "subject_undeclared",
+      "subjectBasis": "the request declares no `subject`",
+      "subjectNote": "No subject was declared, so there was nothing to check. Not a resolution failure: the question stays on the list.",
+      "actionable": false
     },
     {
       "id": "DR-20260908-SHOULD-SCRIPTS-BACKTEST-STAR-BE-IN-THE-TIER1-SURFACE",
@@ -168,7 +182,71 @@
         "submittedAt": null,
         "ageSeconds": null,
         "stale": null
-      }
+      },
+      "subject": null,
+      "subjectState": "subject_undeclared",
+      "subjectBasis": "the request declares no `subject`",
+      "subjectNote": "No subject was declared, so there was nothing to check. Not a resolution failure: the question stays on the list.",
+      "actionable": false
+    },
+    {
+      "id": "DEC-20260911-WORKFLOW-PAGE-TREE-BEHIND-GITHUB",
+      "objectId": "WO-20260910-THE-LIVE-WORKFLOW-PAGE-MANAGER-CHECKLIST-WITH",
+      "askedBy": {
+        "sessionId": "session_01G4VneSjgv5QT4rMGj4izi5",
+        "sessionUrl": "https://claude.ai/code/session_01G4VneSjgv5QT4rMGj4izi5",
+        "recordedAt": null,
+        "note": null
+      },
+      "askedByState": "recorded",
+      "push": null,
+      "resumeContext": null,
+      "resumeState": "unstated",
+      "question": "MI-262 criterion (2) — \"a tree that is behind reads as behind\" — CANNOT be met the way it is written, and it has been open since 2026-09-10. Establishing that the VM is behind GITHUB requires a fetch, and GET /api/bot/work/checklist deliberately performs none: fetching on an API request path is the wedge class this repo has paid for twice. Do you want the fetch moved OFF the request path, or the criterion retired as a recorded decision?",
+      "options": [
+        {
+          "key": "retire_the_criterion",
+          "label": "Retire criterion (2) — the provenance half is the answer",
+          "implication": "RECOMMENDED. Records that \"behind GitHub\" is answered by the age of the last fetch rather than by a commit count, which is what #11716 already delivers and what is already rendering. Costs nothing, ships nothing, and MI-262 can then close on criterion (1) alone — which IS observed. ⚠️ The accepted residual: the page can tell you it has not looked recently, and can never tell you how far behind it is. A VM fetching on schedule but failing to pull would read fresh."
+        },
+        {
+          "key": "fetch_off_the_request_path",
+          "label": "Move the fetch off the request path (a timer writes a receipt)",
+          "implication": "Tier-2. A systemd timer on the live VM does `git fetch` on its own clock and writes a receipt the route READS — no network on the request path, and the page can then state a real behind-count. ⚠️ Buys a new failure mode this page currently does not have: a timer that stops firing. CLAUDE.md records that scheduled carriers here fire late or skip days (probes +4h53m, work-digest 5 firings against 24 declared), so the receipt needs its own staleness grade or it becomes the frozen-board failure one level down."
+        },
+        {
+          "key": "fold_into_git_sync",
+          "label": "Have ict-git-sync write the receipt it already knows",
+          "implication": "Tier-2, and cheaper than a new timer because ict-git-sync ALREADY fetches every ~5 minutes — it is the one carrier measured to work here. It would stamp what it saw; the route reads the stamp. ⚠️ I have NOT read that unit's script this session, so whether it can cheaply emit a behind-count is UNVERIFIED — do not read this option as costed."
+        }
+      ],
+      "allowsFreeText": true,
+      "urgency": "routine",
+      "askedOn": "2026-09-11",
+      "context": "WHAT IS ALREADY TRUE, so this is not re-asking something answered. #11716 (5f5292a0f) shipped the PROVENANCE half and it is OBSERVED on the deployed route: treeNote now reads \"level with the local origin/main ref AS OF THE LAST FETCH <n>m ago (FETCH_HEAD mtime); this never fetches, so main may have moved since\", and mainRefAgeHours is None — never 0.0 — when we cannot establish when we last fetched. So `synced` already justifies itself and a VM that STOPPED fetching announces itself through a growing mainRefAgeHours. What is NOT true is the literal criterion: behind_commits counts against the LOCAL origin/main ref, and scripts/deploy_pull_restart.sh does `git fetch` then `git reset --hard origin/main`, so on the live VM that equality holds BY CONSTRUCTION — the zero is guaranteed, not measured. ⚠️ I am NOT proposing to fetch on the request path under any option; that is off the table for the reason above and is not one of the choices.",
+      "answer": null,
+      "conversationalAnswer": null,
+      "subject": {
+        "kind": "checklist_item",
+        "ref": "MI-262-THE-WORKFLOW-PAGE-STALENESS-WARNING-IS-CALIBRATED-AT-3H-AND-THE-OPERATOR-COMPLAINED-AT-1H",
+        "note": "The row that carries the unmet criterion. If it is ever closed or renamed, this question is about something that no longer exists and should stop being shown as work."
+      },
+      "objectTitle": "The live Workflow page: manager checklist with collapsible rows + the decisions waiting on the operator",
+      "objectLifecycle": "in_flight",
+      "parentIntent": "IN-20260903-TRADING-SYSTEM-HEALTH",
+      "answerState": "not_submitted",
+      "answerStateNote": "",
+      "transit": {
+        "submissionId": null,
+        "submittedAt": null,
+        "ageSeconds": null,
+        "stale": null
+      },
+      "subjectState": "subject_live",
+      "subjectBasis": "`MI-262-THE-WORKFLOW-PAGE-STALENESS-WARNING-IS-CALIBRATED-AT-3H-AND-THE-OPERATOR-COMPLAINED-AT-1H` is present in the `checklist_item` register",
+      "subjectNote": "The thing this asks about still exists.",
+      "settled": false,
+      "actionable": true
     }
   ],
   "unanswerableOperatorEdges": [
@@ -204,7 +282,7 @@
     "decidedViaRoute": 23,
     "decidedInConversation": 2,
     "byAnswerState": {
-      "not_submitted": 0,
+      "not_submitted": 1,
       "in_transit": 0,
       "committed": 23,
       "unreadable": 0,
@@ -212,7 +290,7 @@
       "engaged_not_settled": 1,
       "verdict_unrecognised": 0
     },
-    "requestCount": 26,
+    "requestCount": 27,
     "malformedRequestsDropped": 0,
     "unanswerableOperatorEdgeCount": 3,
     "staleOpenWindows": 0,
@@ -227,7 +305,15 @@
       "sessionGone": 0,
       "notYetDelivered": 14,
       "committedWithNoAsker": 9
-    }
+    },
+    "bySubjectState": {
+      "subject_live": 1,
+      "subject_undeclared": 25,
+      "subject_unknown": 0,
+      "subject_gone": 1
+    },
+    "mootUnanswered": 1,
+    "actionableCount": 1
   },
   "transit": {
     "state": "absent",
@@ -241,5 +327,5 @@
     "note": "DASHBOARD_API_TOKEN is UNSET, so POST /api/bot/work/decision refuses with 503. This is FAIL-CLOSED and deliberate (the prop.py polarity), not an outage: a dropped .env value closes writes rather than reopening an anonymous write hole."
   },
   "note": "The repo is the source of truth. This route reports `committed` ONLY from an `answer` block on the work object in the repo — never from the transit log — so an answer that does not commit leaves its question UNANSWERED. Transit fails BACK, never forward.",
-  "_fixture_note": "REAL captured GET /api/bot/work/decisions, 2026-09-10, AFTER MI-254. `requests` is TRIMMED to one row per answerState so every branch Work.svelte renders has a real row behind it — including answered_in_conversation (which carries a load-bearing `condition`) and engaged_not_settled. `summary` is the UNTRIMMED count over all 26 requests and deliberately does not match len(requests)."
+  "_fixture_note": "REAL captured GET /api/bot/work/decisions, 2026-09-10, AFTER MI-254, with the MI-258 subject keys added 2026-09-11. `requests` is TRIMMED to one row per answerState so every branch Work.svelte renders has a real row behind it -- including answered_in_conversation (which carries a load-bearing `condition`) and engaged_not_settled. `summary` is the UNTRIMMED count over all requests and deliberately does not match len(requests). !! THE MI-258 KEYS (subject, subjectState, subjectBasis, subjectNote, actionable, and summary.bySubjectState / mootUnanswered / actionableCount) WERE NOT CAPTURED OFF THE LIVE VM, because the bot half was not deployed when this was written. They were COMPUTED BY THE REAL MODULES (src/runtime/decision_subject.py) against the REAL committed work store, for these same real request ids -- not hand-written, which would encode the same assumption the consumer might have got wrong. Re-capture them live once the bot half deploys. !! ROW ORDER IS LOAD-BEARING IN TWO DIFFERENT WAYS -- READ BOTH BEFORE EDITING. (1) COVERAGE: DEC-20260911-... is subject_live + actionable:true (a question that IS work) and DR-20260908-CLEAR-... is subject_gone + actionable:false while settled:false (the MOOT row -- unanswered, and nothing left to answer about). Drop either and the branch that renders it is bound to nothing. (2) POSITION: api-contract.mjs binds `ca` to the literal path `requests.2.conversationalAnswer`, so INDEX 2 MUST STAY the answered_in_conversation row carrying a real `condition`. The new row was appended LAST for exactly this reason -- inserting it at index 0 was tried first and broke that binding immediately (`resolves to nothing`), which is the checker working. Append new rows; do not insert. !! THE `summary` IS RECOMPUTED, NOT CAPTURED, as of 2026-09-11. Patching only the new keys onto the 2026-09-10 capture left it INTERNALLY INCONSISTENT (byAnswerState summed to 26 against a requestCount of 27), so the whole block was re-derived over the same real store by the same real graders. !! ONE CONSEQUENCE STATED RATHER THAN HIDDEN: this sandbox has no transit log, so it was graded with transit `absent` and `in_transit` is 0 BY CONSTRUCTION here -- not a measurement that no answer is in flight. It matched the live capture anyway, but do not read that zero as evidence."
 }
