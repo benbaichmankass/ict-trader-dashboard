@@ -1,0 +1,342 @@
+{
+  "present": true,
+  "readState": "read",
+  "reason": null,
+  "forDate": "2026-09-21",
+  "generatedAt": "2026-09-21T20:07:51+00:00",
+  "markdown": "# WORK SCHEDULE — 2026-09-21\n\n_Generated `2026-09-21T20:07:51+00:00` by `scripts/ops/render_schedule.py`, served live by `GET /api/bot/work/schedule`._\n\n_**GENERATED — do not hand-edit.** Renders what already exists: cadenced sessions · decisions owed · monitoring coming due · cron cadences._\n\n## CADENCED SESSIONS\n\n- **Daily sync with the operator** — once per day; not time-boxed (operator directive 2026-09-21: no cap on decisions, do not report session length as a metric) _(source: CLAUDE.md § \"The daily sync, and standing authorizations\")_\n  - The manager pushes the six-section brief (GET /api/bot/work/brief) before the sync.\n- **/health-review** — on demand -- no declared fixed interval; a weekly compliance-audit rotation runs inside it, not as its own trigger _(source: .claude/skills/health-review/SKILL.md)_\n  - Technical / pipeline / data health.\n- **/performance-review** — on demand -- no declared fixed interval _(source: .claude/skills/performance-review/SKILL.md)_\n  - Trading + strategy performance, per-decision grading, research pipeline.\n- **/ml-review** — on demand -- no declared fixed interval _(source: .claude/skills/ml-review/SKILL.md)_\n  - Model lifecycle, promotion/demotion against the candidate→shadow→advisory ladder.\n\n## DECISIONS OWED (3)\n\n_Pipeline items DUE with `next_action: ask_operator`. From `scripts/ops/pipeline.py::due()`, never re-derived._\n\n- **PI-20260921-0005** [queued] The dashboard repo (benbaichmankass/ict-trader-dashboard, read-only clone this session, HEAD eaccaaa) has its OWN orphaned readers of the 2026-09-21 reset, independent of anything in this repo's API responses -- fixing src/web/api/routers/work.py's notes (this PR) does not touch these because they are either hardcoded strings or hardcoded links in the SPA's own source, not renders of the API's `note`/`coverage` fields. NOT fixed here -- out of scope, this repo cannot open a PR against the dashboard. Four items: (1) webapp/src/routes/Work.svelte:745 hardcodes the literal string 'A bug to fix still goes to the review backlogs.' inside the coverage-panel template -- the SAME sentence this PR just corrected in work.py's `note` field, duplicated in the frontend where the backend fix cannot reach it. (2) webapp/src/routes/Runbooks.svelte:16-53 hardcodes FIVE reference links under `${REPO}/blob/main/docs/claude/...`: issues/6927 ('Claude coordination board'), DUE.md, PROBES.json, OPEN-ITEMS.json, operator-owed-register.json -- all four *.json/*.md paths were moved to docs/archive/2026-09-21-operating-reset/registers/ by this repo's reset, so all four links now 404 on GitHub (main no longer has docs/claude/OPEN-ITEMS.json etc.); the coordination-board issue link may also be stale depending on #6927's current state (this session could not resolve docs/claude/board-pointer.json to check -- it is itself archived, see PI-20260921-0002). (3) webapp/src/lib/nav.ts:52 describes the Runbooks page as covering 'the coordination board, and what is due today' -- both retired. (4) webapp/src/routes/Work.svelte:551 comment references SESSIONS.json's decay behavior as a live concern; harmless (a code comment, not operator-facing), noted for completeness only. · rerun: `git -C <dashboard-clone> grep -n -i 'board-pointer\\|OPEN-ITEMS.json\\|SESSIONS.json\\|MERGE-QUEUE.json\\|coordination.board\\|session-board.json\\|MANAGER-LEASE.json\\|review.backlog\\|OPEN-PRS.json\\|DUE.md\\|PROBES.json\\|operator-owed-register.json' -- webapp/src`\n- **PI-20260921-E01** [queued] docs/claude/work/OPEN-PRS.json was archived by the 2026-09-21 operating reset (docs/archive/2026-09-21-operating-reset/work/OPEN-PRS.json) and docs/claude/work/README.md correctly says so ('Do not resurrect them'). But three consumers were NOT disarmed and are still LIVE, unlike due-list.yml/probes.yml/error-feed-digest.yml/pr-queue-watch.yml/constraint-readout.yml/scope-overlap-audit.yml (all of which had their schedules commented out in the same reset): (a) .github/workflows/reconcile-open-prs.yml triggers on `push: branches: [main]` — unconditional, fires on every push, confirmed by dated .github/merge-slots/automation-reconcile-open-prs-*.json artifacts from today (2026-09-21); (b) .github/workflows/stale-automation-sweep.yml still carries an un-commented `cron: '17 */2 * * *'`; (c) both call scripts/ops/reconcile_open_prs.py / scripts/ops/open_pr_record.py / scripts/ops/sweep_stale_automation_prs.py, whose RECORD_PATH is docs/claude/work/OPEN-PRS.json. This is NOT the 'writer fails loudly' case this row's note assumed: open_pr_record.py:read_record() returns (None, True) for a missing file — 'read succeeded, nothing there' — so a run against the archived path is silently indistinguishable from a healthy run that found zero rows ('MOST RUNS WILL MOVE NOTHING, AND THAT IS CORRECT' per the workflow's own comment). Not fixed here: pulling on it needs someone to decide whether the PR-settlement tracking OPEN-PRS.json did is superseded by MANAGER-CHECKLIST.json's `prs` field or genuinely dropped. [!] ID REASSIGNED AT MERGE 2026-09-21 BY THE MANAGER. The E9 lane filed this as PI-20260921-0003 while, concurrently and invisibly to it, a DIFFERENT finding was being filed under that same id on main. Neither session could see the other: each minted the next free number from the store it read at startup. Merging as filed would have SILENTLY DISPLACED one of the two, because load() folds to last-record-wins and --check reports `clean` either way. Nothing about this finding changed; only its id. The tool defect is PI-20260921-M04 and has its own lane. · rerun: `git grep -lI 'OPEN-PRS.json' -- ':!docs/archive/**' ':!.github/pr-landing/**' ':!.github/pr-automerge-requests/**' ':!.github/merge-slots/**'`\n- **PI-20260921-M08** [routed] R6 IS DEFERRED, NOT SETTLED: 'should the system trade at all right now' was answered 'keep the roster as-is, decide after D1/R1' by the operator on 2026-09-21, with the measurement in front of them — lifetime real-money expectancy -0.3231R over n=431, against a corpus that is fee-only and optimistic by an unknown amount (+0.57R on the one leg anyone checked). [!] THIS ROW EXISTS BECAUSE A DEFERRAL WITH NO DUE CONDITION IS HOW A DECISION GETS SILENTLY SETTLED. 'Decide after X' is precisely the shape the follow-through pipeline was built for: nothing about the answer makes it ask for attention again, and the corpus re-run is days out. Without this row the question quietly becomes 'yes, keep trading', forever, by default and without anyone choosing it. [!] WHEN IT COMES BACK, the question is NOT re-asked cold — it is re-asked WITH the re-run corpus's verdict, which is the whole point of waiting. [!] THE derisk_only MANDATES ARE NOT BLOCKED by this deferral: they read live measurement, not the corpus, and their worst case removes exposure. A leg going net-negative on the mirror can still be pulled meanwhile. · rerun: `python3 -c \"import json;d=json.load(open('docs/claude/work/MANAGER-CHECKLIST.json'));r=[i for i in d['items'] if i['id']=='R1'][0];print('R1 state:',r['state'])\"; # THE DEFERRAL EXPIRES when R1 reaches landed_unproven or done`\n\n## MONITORING COMING DUE (93)\n\n_The rest of `pipeline.py::due()` — items due whose `next_action` is not `ask_operator`._\n\n- **OI-20260826-DIAG-IB-ORDER-READ-IS-STALE** [queued] /api/diag/ib_open_orders serves a STALE, monotonically-growing order view. Do not conclude an order's absence or presence from it. · next: `check_observation`\n- **OI-20260826-MGC-JOURNAL-QTY-DIVERGENT-UNOWNED** [queued] [LOUD] ⚠️ RE-MEASURED 2026-09-08 AND THIS HAS ESCALATED 43x — do not re-quote the 1-lot framing. ib_paper/MGC: the journal now declares 54 lots across TWO open rows while the venue holds 11 — a 43-lot gap, not one lot — and a live 43-lot protective STOP rests against the unbacked row. The original 2026-08-26 reading (journal 51 vs venue 50) is preserved in `detail` as the record of what was true then. · next: `check_observation`\n\n_(remaining monitoring-due bullets elided for fixture size — real capture had 93 in total; see _fixture_note)_\n\n## CRON CADENCES (18)\n\n_Read out of `.github/workflows/*.yml`'s real `on.schedule` trigger — a commented-out cron is correctly absent._\n\n- **alpaca-settlement-soak-watch** (`alpaca-settlement-soak-watch.yml`) — `30 14 * * 1-5`\n- **broker-bracket-reconcile** (`broker-bracket-reconcile.yml`) — `40 */6 * * *`\n- **diag-relay-sweep** (`diag-relay-sweep.yml`) — `0 6 * * *`\n- **doc-audit-weekly** (`doc-audit-weekly.yml`) — `0 12 * * 1`\n- **econ-calendar-produce** (`econ-calendar-produce.yml`) — `30 22 * * *`\n- **econ-event-study** (`econ-event-study.yml`) — `10 23 * * 0`\n- **Health Snapshot** (`health-snapshot.yml`) — `0 */6 * * *`\n- **macro-producer-liveness** (`macro-producer-liveness.yml`) — `0 12 * * *`\n- **macro-valuation-snapshot** (`macro-valuation-snapshot.yml`) — `30 7 * * *`\n- **main-tree-watch** (`main-tree-watch.yml`) — `37 * * * *`\n- **oci-inventory** (`oci-inventory.yml`) — `0 6 * * 1`\n- **purge-artifacts** (`purge-artifacts.yml`) — `0 3 * * *`\n- **replay-pregate-nightly** (`replay-pregate-nightly.yml`) — `0 4 * * *`\n- **research-backtest-augment** (`research-backtest-augment.yml`) — `0 6 * * 1`\n- **research-queue-dispatch** (`research-queue-dispatch.yml`) — `20 6 * * *`\n- **stale-automation-sweep** (`stale-automation-sweep.yml`) — `17 */2 * * *`\n- **strategy-review-packets** (`strategy-review-packets.yml`) — `40 4 * * *`\n- **trainer-capture-watch** (`trainer-capture-watch.yml`) — `23 */6 * * *`\n\n---\n\n---\n\n## INPUTS\n\n| input | state | path |\n|---|---|---|\n| `pipeline` | `read` | `docs/claude/work/PIPELINE.jsonl` |\n| `cadencedSessions` | `read` | `docs/claude/work/SCHEDULE.json` |\n| `workflows` | `read` | `.github/workflows/*.yml` |\n\n⚠️ **`coverageComplete` is `false`.** This reads the pipeline store, `SCHEDULE.json` and the workflow files. It does not read the checklist, `config/mandates.yaml`, or any live VM/session state. A reader treating it as the whole of \"what is scheduled\" has misread it.\n",
+  "cadencedSessions": {
+    "state": "read",
+    "sessions": [
+      {
+        "id": "daily-sync",
+        "title": "Daily sync with the operator",
+        "cadence": "once per day; not time-boxed (operator directive 2026-09-21: no cap on decisions, do not report session length as a metric)",
+        "source": "CLAUDE.md § \"The daily sync, and standing authorizations\"",
+        "note": "The manager pushes the six-section brief (GET /api/bot/work/brief) before the sync."
+      },
+      {
+        "id": "health-review",
+        "title": "/health-review",
+        "cadence": "on demand -- no declared fixed interval; a weekly compliance-audit rotation runs inside it, not as its own trigger",
+        "source": ".claude/skills/health-review/SKILL.md",
+        "note": "Technical / pipeline / data health."
+      },
+      {
+        "id": "performance-review",
+        "title": "/performance-review",
+        "cadence": "on demand -- no declared fixed interval",
+        "source": ".claude/skills/performance-review/SKILL.md",
+        "note": "Trading + strategy performance, per-decision grading, research pipeline."
+      },
+      {
+        "id": "ml-review",
+        "title": "/ml-review",
+        "cadence": "on demand -- no declared fixed interval",
+        "source": ".claude/skills/ml-review/SKILL.md",
+        "note": "Model lifecycle, promotion/demotion against the candidate→shadow→advisory ladder."
+      }
+    ]
+  },
+  "decisionsOwed": [
+    {
+      "due_when": {
+        "check_every_days": 14,
+        "clears_when": "A dashboard-repo PR removes/redirects the four Runbooks.svelte reference links and the Work.svelte hardcoded 'review backlogs' sentence, or replaces them with links into docs/archive/2026-09-21-operating-reset/ (explicitly historical) or into the live successors (PIPELINE.jsonl / MANAGER-CHECKLIST.json).",
+        "kind": "observation"
+      },
+      "id": "PI-20260921-0005",
+      "next_action": "ask_operator",
+      "origin": {
+        "kind": "audit",
+        "ref": "E9 / this PR (build lane, session_01JVPxS3XjMyiN3J3HpQPkNq) -- dashboard repo, read-only clone",
+        "rerun": "git -C <dashboard-clone> grep -n -i 'board-pointer\\|OPEN-ITEMS.json\\|SESSIONS.json\\|MERGE-QUEUE.json\\|coordination.board\\|session-board.json\\|MANAGER-LEASE.json\\|review.backlog\\|OPEN-PRS.json\\|DUE.md\\|PROBES.json\\|operator-owed-register.json' -- webapp/src"
+      },
+      "state": "queued",
+      "what": "The dashboard repo (benbaichmankass/ict-trader-dashboard, read-only clone this session, HEAD eaccaaa) has its OWN orphaned readers of the 2026-09-21 reset, independent of anything in this repo's API responses -- fixing src/web/api/routers/work.py's notes (this PR) does not touch these because they a... [trimmed for fixture size — 1466 more chars in the real capture]"
+    },
+    {
+      "due_when": {
+        "check_every_days": 14,
+        "clears_when": "Either docs/claude/work/OPEN-PRS.json is recreated and kept current, or reconcile-open-prs.yml / stale-automation-sweep.yml are disarmed the way the other six retired-register readers were (comment out the trigger, workflow_dispatch only), or an operator decision records that PR-settlement tracking is intentionally dropped under the new model.",
+        "kind": "observation"
+      },
+      "id": "PI-20260921-E01",
+      "next_action": "ask_operator",
+      "origin": {
+        "kind": "audit",
+        "ref": "E9 / this PR (build lane, session_01JVPxS3XjMyiN3J3HpQPkNq)",
+        "rerun": "git grep -lI 'OPEN-PRS.json' -- ':!docs/archive/**' ':!.github/pr-landing/**' ':!.github/pr-automerge-requests/**' ':!.github/merge-slots/**'"
+      },
+      "state": "queued",
+      "what": "docs/claude/work/OPEN-PRS.json was archived by the 2026-09-21 operating reset (docs/archive/2026-09-21-operating-reset/work/OPEN-PRS.json) and docs/claude/work/README.md correctly says so ('Do not resurrect them'). But three consumers were NOT disarmed and are still LIVE, unlike due-list.yml/probes.... [trimmed for fixture size — 1777 more chars in the real capture]"
+    },
+    {
+      "due_when": {
+        "check_every_days": 3,
+        "clears_when": "R1 (the corpus re-run with cost defaults ON) has landed AND the operator has been re-asked R6 with that corpus's verdict in front of them, and has answered. Verified by their recorded answer on the R6 row, not by R1 landing alone — R1 landing is what makes the question ASKABLE, not what answers it.",
+        "kind": "observation"
+      },
+      "id": "PI-20260921-M08",
+      "loud": true,
+      "next_action": "ask_operator",
+      "origin": {
+        "kind": "operator",
+        "ref": "operator decision 2026-09-21, R6, answered in a four-question popup with the measurement stated",
+        "rerun": "python3 -c \"import json;d=json.load(open('docs/claude/work/MANAGER-CHECKLIST.json'));r=[i for i in d['items'] if i['id']=='R1'][0];print('R1 state:',r['state'])\"; # THE DEFERRAL EXPIRES when R1 reaches landed_unproven or done"
+      },
+      "routed_to": "checklist row R6, which owns the question, plus §2 of the daily brief where it stays visible to the operator until R1 lands and it can be re-asked with a verdict. Routed rather than left queued so it has a named owner; the 3-day cadence keeps it on the page rather than letting \"decide after R1\" drift into \"decided\".",
+      "state": "routed",
+      "what": "R6 IS DEFERRED, NOT SETTLED: 'should the system trade at all right now' was answered 'keep the roster as-is, decide after D1/R1' by the operator on 2026-09-21, with the measurement in front of them — lifetime real-money expectancy -0.3231R over n=431, against a corpus that is fee-only and optimistic... [trimmed for fixture size — 821 more chars in the real capture]"
+    }
+  ],
+  "monitoringDue": [
+    {
+      "due_when": {
+        "check_every_days": 7,
+        "clears_when": "The route builds a FRESH client per read and a measurement shows it agreeing with a known-current view. Needs a real gateway to verify, so it cannot be closed from a sandbox.",
+        "kind": "observation",
+        "last_checked": "2026-09-06"
+      },
+      "id": "OI-20260826-DIAG-IB-ORDER-READ-IS-STALE",
+      "next_action": "check_observation",
+      "origin": {
+        "kind": "audit",
+        "ref": "docs/archive/2026-09-21-operating-reset/registers/OPEN-ITEMS.json#OI-20260826-DIAG-IB-ORDER-READ-IS-STALE",
+        "rerun": "python3 -c \"import json; d=json.load(open('docs/archive/2026-09-21-operating-reset/registers/OPEN-ITEMS.json')); items=d['items'] if isinstance(d, dict) else d; print(json.dumps(next(i for i in items if i.get('id')=='OI-20260826-DIAG-IB-ORDER-READ-IS-STALE'), indent=2))\""
+      },
+      "state": "queued",
+      "what": "/api/diag/ib_open_orders serves a STALE, monotonically-growing order view. Do not conclude an order's absence or presence from it."
+    },
+    {
+      "due_when": {
+        "check_every_days": 2,
+        "clears_when": "UNCHANGED IN KIND, SHARPENED BY THE ESCALATION. Either (a) the journal rows are reconciled to the venue quantity — for the current instance that means trade 5531 disposed of by an OPERATOR decision, not by a session — or (b) an IB-side journal-vs-venue divergence detector EXISTS and reports on this position, i.e. the netting-attribution reconciler covers interactive_brokers. ⚠️ A later read that happens to agree does NOT clear it, and neither does the position closing — that makes the divergence unobservable rather than resolved. ⚠️ AND THE OVER-COVER PAGE GOING QUIET CLEARS NOTHING: it keys on DISJOINT OCA GROUPS, so it falls silent the moment one group is cancelled while the journal is still wrong.",
+        "kind": "observation",
+        "last_checked": "2026-09-13"
+      },
+      "id": "OI-20260826-MGC-JOURNAL-QTY-DIVERGENT-UNOWNED",
+      "next_action": "check_observation",
+      "origin": {
+        "kind": "audit",
+        "ref": "docs/archive/2026-09-21-operating-reset/registers/OPEN-ITEMS.json#OI-20260826-MGC-JOURNAL-QTY-DIVERGENT-UNOWNED",
+        "rerun": "python3 -c \"import json; d=json.load(open('docs/archive/2026-09-21-operating-reset/registers/OPEN-ITEMS.json')); items=d['items'] if isinstance(d, dict) else d; print(json.dumps(next(i for i in items if i.get('id')=='OI-20260826-MGC-JOURNAL-QTY-DIVERGENT-UNOWNED'), indent=2))\""
+      },
+      "state": "queued",
+      "what": "[LOUD] ⚠️ RE-MEASURED 2026-09-08 AND THIS HAS ESCALATED 43x — do not re-quote the 1-lot framing. ib_paper/MGC: the journal now declares 54 lots across TWO open rows while the venue holds 11 — a 43-lot gap, not one lot — and a live 43-lot protective STOP rests against the unbacked row. The original 2... [trimmed for fixture size — 104 more chars in the real capture]"
+    },
+    {
+      "due_when": {
+        "check_every_days": 2,
+        "clears_when": "BOTH: (a) a NEW disjoint-group over-cover is detected and PAGES the operator through outcomes.jsonl — verified by finding the row in /api/bot/logs?level=error, not by reading the code; and (b) cancel-ib-order is exercised against the real gateway and reports a cancel's outcome correctly. A synthetic test passing is NOT either half.",
+        "kind": "observation",
+        "last_checked": "2026-09-12"
+      },
+      "id": "OI-20260826-MHG-OVER-COVER-MECHANISM-UNVERIFIED",
+      "next_action": "check_observation",
+      "origin": {
+        "kind": "audit",
+        "ref": "docs/archive/2026-09-21-operating-reset/registers/OPEN-ITEMS.json#OI-20260826-MHG-OVER-COVER-MECHANISM-UNVERIFIED",
+        "rerun": "python3 -c \"import json; d=json.load(open('docs/archive/2026-09-21-operating-reset/registers/OPEN-ITEMS.json')); items=d['items'] if isinstance(d, dict) else d; print(json.dumps(next(i for i in items if i.get('id')=='OI-20260826-MHG-OVER-COVER-MECHANISM-UNVERIFIED'), indent=2))\""
+      },
+      "state": "queued",
+      "what": "The MHG disjoint-OCA over-cover was CLEARED by hand; the mechanism that should have caught and reported it is NOT yet proven."
+    },
+    {
+      "due_when": {
+        "check_every_days": 3,
+        "clears_when": "A session that was NOT pointed at this mechanism by its prompt reports on a due monitoring item, citing the CLAUDE.md brief as where it saw it. WARNING: the handoff prompt written at the end of this session names the MHG item explicitly, so the FIRST session after this one cannot be the clean test -- it has been told. The uncontaminated observation is a later session that arrived cold. Record which it was.",
+        "kind": "observation",
+        "last_checked": "2026-09-12"
+      },
+      "id": "OI-20260826-SESSION-BRIEF-NEVER-READ-BY-A-FRESH-SESSION",
+      "next_action": "check_observation",
+      "origin": {
+        "kind": "audit",
+        "ref": "docs/archive/2026-09-21-operating-reset/registers/OPEN-ITEMS.json#OI-20260826-SESSION-BRIEF-NEVER-READ-BY-A-FRESH-SESSION",
+        "rerun": "python3 -c \"import json; d=json.load(open('docs/archive/2026-09-21-operating-reset/registers/OPEN-ITEMS.json')); items=d['items'] if isinstance(d, dict) else d; print(json.dumps(next(i for i in items if i.get('id')=='OI-20260826-SESSION-BRIEF-NEVER-READ-BY-A-FRESH-SESSION'), indent=2))\""
+      },
+      "state": "queued",
+      "what": "The generated SESSION-BRIEF block in CLAUDE.md is the mechanism this session shipped in place of a cap and an adjective, and NO fresh session has ever read it. Shipped and working are different states; only a real session acting on the block settles it."
+    },
+    {
+      "due_when": {
+        "check_every_days": 3,
+        "clears_when": "A stray-group cancel is OBSERVED on ib_paper — naming the trade, the stray group cancelled and the group preserved — AND the position's REMAINING protection is confirmed correct afterwards by a FRESH /api/diag/ib_open_orders read (not the stale monotonic cached view, BL-20260826-DIAG-IB-OPEN-ORDERS-SERVES-A-STALE-MONOTONIC-ORDER-VIEW). ⚠️ Observing the cancel proves the DECISION fired, never that the surviving book is right — the one prior auto-remediation of this class cancelled the leg that MATCHED the journal. Alternatively the row clears if the operator decides to DISARM, recorded as that decision. Explicitly NOT sufficient: the env reading back apply/ib_paper (that is deployment), a synthetic test, or the absence of an alarm.",
+        "kind": "observation",
+        "last_checked": "2026-09-12"
+      },
+      "id": "OI-20260826-STRAY-OCA-SWEEP-SHIPPED-BUT-UNARMED",
+      "next_action": "check_observation",
+      "origin": {
+        "kind": "audit",
+        "ref": "docs/archive/2026-09-21-operating-reset/registers/OPEN-ITEMS.json#OI-20260826-STRAY-OCA-SWEEP-SHIPPED-BUT-UNARMED",
+        "rerun": "python3 -c \"import json; d=json.load(open('docs/archive/2026-09-21-operating-reset/registers/OPEN-ITEMS.json')); items=d['items'] if isinstance(d, dict) else d; print(json.dumps(next(i for i in items if i.get('id')=='OI-20260826-STRAY-OCA-SWEEP-SHIPPED-BUT-UNARMED'), indent=2))\""
+      },
+      "state": "queued",
+      "what": "[LOUD] ⚠️ ARMED ON ib_paper 2026-08-31 — THIS ROW'S ID AND ITS OLD SUMMARY BOTH SAY 'UNARMED' AND ARE STALE. The id is deliberately NOT renamed (ROADMAP.md and several backlog rows link it by name); read this summary, not the id. PROTECTION_STRAY_GROUP_MODE=apply + PROTECTION_STRAY_GROUP_ACCOUNTS=ib... [trimmed for fixture size — 450 more chars in the real capture]"
+    },
+    {
+      "due_when": {
+        "check_every_days": 7,
+        "clears_when": "T+1 settlement is MODELLED in code and the model is shown acting — a would-be order that the account could not settle is refused with a logged cause, observed on a real or replayed case, not merely unit-tested. A passing test is not an observation of the live mechanism. This row does NOT clear on the leg going live, and NOT on the funding decision.",
+        "kind": "observation",
+        "last_checked": "2026-08-31"
+      },
+      "id": "OI-20260829-ALPACA-GOLIVE-BLOCKED-ON-T1-SETTLEMENT-MODEL",
+      "next_action": "check_observation",
+      "origin": {
+        "kind": "audit",
+        "ref": "docs/archive/2026-09-21-operating-reset/registers/OPEN-ITEMS.json#OI-20260829-ALPACA-GOLIVE-BLOCKED-ON-T1-SETTLEMENT-MODEL",
+        "rerun": "python3 -c \"import json; d=json.load(open('docs/archive/2026-09-21-operating-reset/registers/OPEN-ITEMS.json')); items=d['items'] if isinstance(d, dict) else d; print(json.dumps(next(i for i in items if i.get('id')=='OI-20260829-ALPACA-GOLIVE-BLOCKED-ON-T1-SETTLEMENT-MODEL'), indent=2))\""
+      },
+      "state": "queued",
+      "what": "[LOUD] alpaca_live go-live: the T+1 model now EXISTS (PR #10408, merged + deployed 2026-08-29, running at `annotate`). The row stays OPEN because `clears_when` requires the model be SHOWN ACTING, and at `annotate` it binds nothing by construction — so shipping it cannot clear this. Operator settled... [trimmed for fixture size — 28 more chars in the real capture]"
+    }
+  ],
+  "crons": {
+    "state": "read",
+    "workflows": [
+      {
+        "workflow": "alpaca-settlement-soak-watch.yml",
+        "name": "alpaca-settlement-soak-watch",
+        "cron": [
+          "30 14 * * 1-5"
+        ]
+      },
+      {
+        "workflow": "broker-bracket-reconcile.yml",
+        "name": "broker-bracket-reconcile",
+        "cron": [
+          "40 */6 * * *"
+        ]
+      },
+      {
+        "workflow": "diag-relay-sweep.yml",
+        "name": "diag-relay-sweep",
+        "cron": [
+          "0 6 * * *"
+        ]
+      },
+      {
+        "workflow": "doc-audit-weekly.yml",
+        "name": "doc-audit-weekly",
+        "cron": [
+          "0 12 * * 1"
+        ]
+      },
+      {
+        "workflow": "econ-calendar-produce.yml",
+        "name": "econ-calendar-produce",
+        "cron": [
+          "30 22 * * *"
+        ]
+      },
+      {
+        "workflow": "econ-event-study.yml",
+        "name": "econ-event-study",
+        "cron": [
+          "10 23 * * 0"
+        ]
+      },
+      {
+        "workflow": "health-snapshot.yml",
+        "name": "Health Snapshot",
+        "cron": [
+          "0 */6 * * *"
+        ]
+      },
+      {
+        "workflow": "macro-producer-liveness.yml",
+        "name": "macro-producer-liveness",
+        "cron": [
+          "0 12 * * *"
+        ]
+      },
+      {
+        "workflow": "macro-valuation-snapshot.yml",
+        "name": "macro-valuation-snapshot",
+        "cron": [
+          "30 7 * * *"
+        ]
+      },
+      {
+        "workflow": "main-tree-watch.yml",
+        "name": "main-tree-watch",
+        "cron": [
+          "37 * * * *"
+        ]
+      },
+      {
+        "workflow": "oci-inventory.yml",
+        "name": "oci-inventory",
+        "cron": [
+          "0 6 * * 1"
+        ]
+      },
+      {
+        "workflow": "purge-artifacts.yml",
+        "name": "purge-artifacts",
+        "cron": [
+          "0 3 * * *"
+        ]
+      },
+      {
+        "workflow": "replay-pregate-nightly.yml",
+        "name": "replay-pregate-nightly",
+        "cron": [
+          "0 4 * * *"
+        ]
+      },
+      {
+        "workflow": "research-backtest-augment.yml",
+        "name": "research-backtest-augment",
+        "cron": [
+          "0 6 * * 1"
+        ]
+      },
+      {
+        "workflow": "research-queue-dispatch.yml",
+        "name": "research-queue-dispatch",
+        "cron": [
+          "20 6 * * *"
+        ]
+      },
+      {
+        "workflow": "stale-automation-sweep.yml",
+        "name": "stale-automation-sweep",
+        "cron": [
+          "17 */2 * * *"
+        ]
+      },
+      {
+        "workflow": "strategy-review-packets.yml",
+        "name": "strategy-review-packets",
+        "cron": [
+          "40 4 * * *"
+        ]
+      },
+      {
+        "workflow": "trainer-capture-watch.yml",
+        "name": "trainer-capture-watch",
+        "cron": [
+          "23 */6 * * *"
+        ]
+      }
+    ],
+    "unreadable": []
+  },
+  "inputs": {
+    "pipeline": "read",
+    "cadencedSessions": "read",
+    "workflows": "read"
+  },
+  "coverageComplete": false,
+  "freshness": {
+    "treeState": "unknown",
+    "treeStamp": "tree: ⚠️ unknown · c5a0ae28e — HEAD carries commits origin/main does not, so what of main this tree reflects could not be established. Treat everything below as unverified.",
+    "note": "Computed live from the working tree on every request (20s cache) — there is no separate generation step to go stale between pushes."
+  },
+  "_monitoringDueTrimmedNote": "real capture had 93 monitoringDue rows; kept first 6 for fixture size, each `what` field also trimmed. See _fixture_note.",
+  "_fixture_note": "REAL capture from GET /api/bot/work/schedule (this session, via work._schedule_payload(), 2026-09-21). decisionsOwed kept in full (only 3 rows) with each `what` trimmed to 300 chars; monitoringDue trimmed to the first 6 of 93 real rows for fixture size; markdown trimmed to CADENCED SESSIONS + DECISIONS OWED + the first two MONITORING COMING DUE bullets + CRON CADENCES + the INPUTS footer, eliding the bulk of the 93 monitoring bullets. crons kept in full (18 rows, small). Same trim convention as work_brief.json."
+}

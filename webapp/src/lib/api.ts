@@ -238,6 +238,15 @@ export const api = {
   // (read/absent/unreadable) that must not be collapsed. Read-only.
   workBrief: (signal?: AbortSignal) => get<any>("/api/bot/work/brief", signal),
 
+  // The work schedule (A9) — cadenced sessions (the daily sync, the three
+  // project-level reviews) · decisions owed · monitoring coming due · cron
+  // cadences, rendered live from SCHEDULE.json + the pipeline store +
+  // .github/workflows/*.yml. Same contract as workBrief: `present: false`
+  // arrives WITH a `reason`, never a 5xx; `inputs` carries a three-way read
+  // state per source (read/absent/unreadable) that must not be collapsed.
+  // Read-only.
+  workSchedule: (signal?: AbortSignal) => get<any>("/api/bot/work/schedule", signal),
+
   // Prop (Breakout manual-bridge) — isolated journal, never blended into real/paper.
   propStatus: (accountId = "breakout_1", signal?: AbortSignal) =>
     get<any>(`/api/bot/prop/status?account_id=${encodeURIComponent(accountId)}`, signal),

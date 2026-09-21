@@ -159,6 +159,21 @@ const BINDINGS = {
       paths: { brief: "", briefInputs: "inputs", briefStats: "pipelineStats",
                briefFresh: "freshness" },
     },
+    // The work schedule (A9) — cadenced sessions · decisions owed ·
+    // monitoring coming due · cron cadences. `schedule` and `scheduleInputs`
+    // are `$derived` aliases off the whole payload (same shape as `brief`/
+    // `briefInputs` above); `s`/`d`/`w` are the each-block item variables
+    // for the three list panels. The fixture is a REAL capture from
+    // `work._schedule_payload()` (2026-09-21), trimmed for size per its own
+    // `_fixture_note` — decisionsOwed kept in full (3 rows), monitoringDue
+    // trimmed to 6 of 93 real rows, crons kept in full (18, small).
+    {
+      fixture: "work_schedule.json",
+      root: "schedule",
+      paths: { schedule: "", scheduleInputs: "inputs" },
+      rowPaths: { s: "cadencedSessions.sessions", d: "decisionsOwed",
+                  w: "crons.workflows" },
+    },
   ],
   // Workflow.svelte (MI-238) — the manager checklist + the decision inbox.
   // Bound BOTH ways, like Work.svelte: `paths` for the $derived aliases off the
