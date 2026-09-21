@@ -149,6 +149,28 @@
     !section0 ? "" : section0Truncated ? section0.slice(0, SECTION0_LIMIT) : section0,
   );
 
+  // ── THE WORK SCHEDULE (A9) ────────────────────────────────────────────
+  //
+  // Renders what already exists rather than a new register: cadenced
+  // sessions (the daily sync, the three project-level reviews), decisions
+  // owed and monitoring coming due (both `scripts/ops/pipeline.py::due()`,
+  // split on `next_action`), and cron cadences read out of the real
+  // `on.schedule` YAML trigger in `.github/workflows/*.yml`.
+  //
+  // Same contract as the brief panel above: `present: false` arrives WITH a
+  // `reason`, never a 5xx, and `inputs` carries a three-way read state per
+  // source (read/absent/unreadable) that must not be collapsed into one
+  // boolean.
+  let schedule = $state<any | null>(null);
+  let scheduleError = $state<string | null>(null);
+  let showFullSchedule = $state(false);
+
+  const scheduleInputs = $derived(schedule?.inputs ?? null);
+  const decisionsOwed = $derived<any[]>(schedule?.decisionsOwed ?? []);
+  const monitoringDue = $derived<any[]>(schedule?.monitoringDue ?? []);
+  const cadencedSessions = $derived<any[]>(schedule?.cadencedSessions?.sessions ?? []);
+  const scheduleCrons = $derived<any[]>(schedule?.crons?.workflows ?? []);
+
   const fresh = $derived(checklist?.freshness ?? null);
   // Named for its SOURCE, not just "summary": the decision inbox has a
   // summary too, and one alias covering both is how a reader (and the
@@ -285,8 +307,9 @@
     // checklist, the decision inbox and the daily brief are four different
     // registers, and one being unreadable is not evidence about the others.
     // A single try/catch would blank all four on any one failure.
-    const [store, ck, dc, br] = await Promise.allSettled([
+    const [store, ck, dc, br, sc] = await Promise.allSettled([
       api.work(), api.workChecklist(), api.workDecisions(), api.workBrief(),
+      api.workSchedule(),
     ]);
     if (store.status === "fulfilled") raw = store.value;
     else error = store.reason instanceof Error
@@ -303,6 +326,14 @@
     brief = br.status === "fulfilled" ? br.value : null;
     briefError = br.status === "rejected"
       ? (br.reason instanceof Error ? br.reason.message : String(br.reason))
+      : null;
+    // Same network-vs-build-failure split as the brief above: a rejected
+    // promise means this page could not REACH the route; `present: false`
+    // means the route reached us and said it could not build the schedule.
+    // Blurring the two would turn "we could not check" into "nothing owed".
+    schedule = sc.status === "fulfilled" ? sc.value : null;
+    scheduleError = sc.status === "rejected"
+      ? (sc.reason instanceof Error ? sc.reason.message : String(sc.reason))
       : null;
     loading = false;
   }
@@ -412,6 +443,93 @@
         </button>
         {#if showFullBrief}
           <pre class="mdblock full">{brief.markdown}</pre>
+        {/if}
+      {/if}
+    {/if}
+  </div>
+
+  <!-- ── THE WORK SCHEDULE (A9) — cadenced sessions · decisions owed ·
+       monitoring coming due · cron cadences. See the comment block above
+       `let schedule` for the contract. ── -->
+  <div class="panel schedulepanel" class:hot={decisionsOwed.length > 0}>
+    <h3>Work schedule{#if schedule?.forDate} <span class="muted mono small">· {schedule.forDate}</span>{/if}</h3>
+    {#if scheduleError}
+      <p class="warnline">
+        ⚠️ Couldn't reach the schedule: <span class="mono">{scheduleError}</span>. This is
+        <em>not</em> a statement that nothing is owed — this page could not check.
+      </p>
+    {:else if loading && !schedule}
+      <p class="muted">Loading…</p>
+    {:else if !schedule}
+      <p class="warnline">The schedule did not load. This is not a statement that nothing is owed.</p>
+    {:else if schedule.present === false}
+      <p class="warnline">
+        ⚠️ <strong>The schedule could not be built ({schedule.readState}).</strong>
+        {#if schedule.reason}<span class="mono"> — {schedule.reason}</span>{/if}
+        This is <em>not</em> the same as nothing being owed — it means this page could not check.
+      </p>
+    {:else}
+      {#if schedule.coverageComplete === false}
+        <p class="sub muted">
+          Reads <span class="mono">docs/claude/work/SCHEDULE.json</span>, the pipeline store, and
+          <span class="mono">.github/workflows/*.yml</span> only — not the checklist,
+          <span class="mono">config/mandates.yaml</span>, or any live VM/session state.
+        </p>
+      {/if}
+
+      <div class="briefstats">
+        <span class="pill" class:warnpill={decisionsOwed.length > 0}>
+          <b>{num(decisionsOwed.length)}</b> decision(s) owed
+        </span>
+        <span class="pill"><b>{num(monitoringDue.length)}</b> monitoring due</span>
+        <span class="pill muted"><b>{num(scheduleCrons.length)}</b> cron cadence(s)</span>
+      </div>
+
+      <!-- Three-way read state per source, verbatim, never collapsed. -->
+      <div class="briefstats">
+        {#each [["schedule declarations", scheduleInputs?.cadencedSessions], ["pipeline", scheduleInputs?.pipeline], ["workflows", scheduleInputs?.workflows]] as [k, v] (k)}
+          <span class="pill src-{v ?? 'missing'}"><span class="mono">{k}</span>: {v ?? "—"}</span>
+        {/each}
+      </div>
+
+      {#if cadencedSessions.length}
+        <h4>Cadenced sessions</h4>
+        <ul class="schedulelist">
+          {#each cadencedSessions as s (s.id ?? s.title)}
+            <li>
+              <b>{s.title ?? s.id}</b> — {s.cadence ?? "—"}
+              {#if s.source}<span class="muted mono small"> ({s.source})</span>{/if}
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="muted">No cadenced sessions declared.</p>
+      {/if}
+
+      {#if decisionsOwed.length}
+        <h4>Decisions owed ({decisionsOwed.length})</h4>
+        <ul class="schedulelist">
+          {#each decisionsOwed as d (d.id)}
+            <li><b class="mono">{d.id}</b> — {d.what}</li>
+          {/each}
+        </ul>
+      {/if}
+
+      {#if scheduleCrons.length}
+        <h4>Cron cadences ({scheduleCrons.length})</h4>
+        <ul class="schedulelist">
+          {#each scheduleCrons as w (w.workflow)}
+            <li><span class="mono">{w.name}</span> — <span class="mono">{(w.cron ?? []).join(", ")}</span></li>
+          {/each}
+        </ul>
+      {/if}
+
+      {#if schedule.markdown}
+        <button class="toggle" onclick={() => (showFullSchedule = !showFullSchedule)}>
+          {showFullSchedule ? "Hide" : "Show"} the full rendered schedule
+        </button>
+        {#if showFullSchedule}
+          <pre class="mdblock full">{schedule.markdown}</pre>
         {/if}
       {/if}
     {/if}
@@ -1165,5 +1283,11 @@ section { display: flex; flex-direction: column; gap: 12px; }
      the only thing allowed to shorten it. The optional full §1-§5 dump
      (behind its own explicit toggle click) is fine to cap and scroll. */
   .mdblock.full { max-height: 640px; overflow-y: auto; }
+
+  /* — A9: work schedule — */
+  .schedulepanel { padding: 14px; border-left: 3px solid var(--accent); }
+  .schedulepanel.hot { border-left-color: var(--warn, #d19a2f); }
+  .schedulelist { margin: 4px 0 8px; padding-left: 18px; font-size: 13px; line-height: 1.6; }
+  .schedulelist li { margin: 2px 0; }
 
 </style>
