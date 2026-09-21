@@ -229,6 +229,15 @@ export const api = {
   workDecisions: (signal?: AbortSignal) =>
     get<any>("/api/bot/work/decisions", signal),
 
+  // The daily brief (A3) — six fixed sections rendered live from the pipeline
+  // store, the checklist, and config/mandates.yaml. §0 (what came due) + the
+  // §5 unrouted count are the forcing function for the follow-through
+  // pipeline (A7): this is the ONLY consumer that puts them on the
+  // operator's own page. `present: false` arrives WITH a `reason` — never a
+  // 5xx — and `inputs` carries a three-way read state per source
+  // (read/absent/unreadable) that must not be collapsed. Read-only.
+  workBrief: (signal?: AbortSignal) => get<any>("/api/bot/work/brief", signal),
+
   // Prop (Breakout manual-bridge) — isolated journal, never blended into real/paper.
   propStatus: (accountId = "breakout_1", signal?: AbortSignal) =>
     get<any>(`/api/bot/prop/status?account_id=${encodeURIComponent(accountId)}`, signal),

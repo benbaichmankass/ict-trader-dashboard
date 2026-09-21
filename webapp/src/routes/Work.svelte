@@ -90,6 +90,65 @@
   let openDecision = $state<Record<string, boolean>>({});
   let showDone = $state(false);
 
+  // ── THE DAILY BRIEF (A3) ──────────────────────────────────────────────
+  //
+  // A7 built the follow-through pipeline's store, its due-ness logic and
+  // `render_section_0()` — none of that closed A7, because reaching it still
+  // required someone to CHOOSE to run it (reason (5) in
+  // docs/plans/OPERATING-PLAN-2026-09-21.md § 3b: a due-list rendered by
+  // machinery read by machinery read by nobody, the exact failure that
+  // killed the old `DUE.md`). This panel is the consumer that closes it: an
+  // unrouted item shows on this page every day until someone routes it, and
+  // that count is a number the operator sees without asking.
+  //
+  // ⚠️ Rendered FIRST, above the checklist and the decision inbox, and NEVER
+  // behind a toggle — that placement is the whole point. §1-§5 of the brief
+  // may be collapsed (see `showFullBrief`); §0 and the unrouted count may
+  // not, per this repo's own build brief for this panel.
+  //
+  // ⚠️ Headline numbers (due / unrouted / items / records / unreadable) are
+  // read from `pipelineStats` — never parsed out of the markdown — so a
+  // rename of a pipeline field fails the build (api-contract.mjs) instead of
+  // quietly going blank. Only §0's own PROSE has no structured form to read
+  // (the route ships it as rendered markdown, not a due-items array), so
+  // that one piece is extracted from `markdown` and shown as-is.
+  let brief = $state<any | null>(null);
+  let briefError = $state<string | null>(null);
+  let expandSection0 = $state(false);
+  let showFullBrief = $state(false);
+
+  const briefInputs = $derived(brief?.inputs ?? null);
+  const briefStats = $derived(brief?.pipelineStats ?? null);
+  const briefFresh = $derived(brief?.freshness ?? null);
+
+  // Extracts the "## §0 — WHAT CAME DUE" block from the full six-section
+  // markdown, dropping its own heading line (this panel renders its own
+  // heading above the block — showing the same markdown heading twice reads
+  // as broken, not as honest) and the trailing "---" divider that belongs to
+  // the NEXT section's template, not this one.
+  function extractSection0(md: string | null | undefined): string | null {
+    if (!md) return null;
+    const start = md.indexOf("## §0");
+    if (start === -1) return null;
+    const nextIdx = md.indexOf("\n## §", start + 5);
+    let section = nextIdx === -1 ? md.slice(start) : md.slice(start, nextIdx);
+    section = section.replace(/\n-{3,}\s*$/, "").trimEnd();
+    const nl = section.indexOf("\n");
+    return (nl === -1 ? "" : section.slice(nl + 1)).trim();
+  }
+
+  const section0 = $derived(extractSection0(brief?.markdown));
+  // A truncation may never be able to hide: the char count of what is
+  // hidden is always printed beside the notice, and "show all" is always one
+  // click, never a second page.
+  const SECTION0_LIMIT = 4000;
+  const section0Truncated = $derived(
+    !!section0 && section0.length > SECTION0_LIMIT && !expandSection0,
+  );
+  const shownSection0 = $derived(
+    !section0 ? "" : section0Truncated ? section0.slice(0, SECTION0_LIMIT) : section0,
+  );
+
   const fresh = $derived(checklist?.freshness ?? null);
   // Named for its SOURCE, not just "summary": the decision inbox has a
   // summary too, and one alias covering both is how a reader (and the
@@ -223,11 +282,11 @@
     loading = true;
     error = null;
     // Settled INDEPENDENTLY, deliberately: the work store, the manager
-    // checklist and the decision inbox are three different registers, and one
-    // being unreadable is not evidence about the others. A single try/catch
-    // would blank all three on any one failure.
-    const [store, ck, dc] = await Promise.allSettled([
-      api.work(), api.workChecklist(), api.workDecisions(),
+    // checklist, the decision inbox and the daily brief are four different
+    // registers, and one being unreadable is not evidence about the others.
+    // A single try/catch would blank all four on any one failure.
+    const [store, ck, dc, br] = await Promise.allSettled([
+      api.work(), api.workChecklist(), api.workDecisions(), api.workBrief(),
     ]);
     if (store.status === "fulfilled") raw = store.value;
     else error = store.reason instanceof Error
@@ -237,6 +296,14 @@
       ? (ck.reason instanceof Error ? ck.reason.message : String(ck.reason))
       : null;
     decisions = dc.status === "fulfilled" ? dc.value : null;
+    // A network-level failure here (thrown by `get<T>`) is a DIFFERENT gap
+    // than `present: false` (which the route already returns WITH a reason
+    // for a build failure) — this page must not blur "couldn't reach the
+    // route" into "the route said it couldn't build the brief".
+    brief = br.status === "fulfilled" ? br.value : null;
+    briefError = br.status === "rejected"
+      ? (br.reason instanceof Error ? br.reason.message : String(br.reason))
+      : null;
     loading = false;
   }
   onMount(load);
@@ -261,6 +328,94 @@
     </button>
   </div>
 
+
+  <!-- ── TODAY'S BRIEF (A3) — §0 + the unrouted count, ALWAYS first, NEVER
+       behind a toggle. See the comment block above `let brief` for why. ── -->
+  <div class="panel briefpanel" class:hot={(briefStats?.unrouted ?? 0) > 0}>
+    <h3>Today's brief{#if brief?.forDate} <span class="muted mono small">· {brief.forDate}</span>{/if}</h3>
+    {#if briefError}
+      <p class="warnline">
+        ⚠️ Couldn't reach the brief: <span class="mono">{briefError}</span>. This is
+        <em>not</em> a statement that nothing is due — this page could not check.
+      </p>
+    {:else if loading && !brief}
+      <p class="muted">Loading…</p>
+    {:else if !brief}
+      <p class="warnline">The brief did not load. This is not a statement that nothing is due.</p>
+    {:else if brief.present === false}
+      <p class="warnline">
+        ⚠️ <strong>The brief could not be built ({brief.readState}).</strong>
+        {#if brief.reason}<span class="mono"> — {brief.reason}</span>{/if}
+        This is <em>not</em> the same as nothing being due — it means this page could not check,
+        and it is never rendered as an empty due-list.
+      </p>
+    {:else}
+      {#if brief.coverageComplete === false}
+        <p class="sub muted">
+          Reads the pipeline store, the checklist, and <span class="mono">config/mandates.yaml</span>
+          only — not <span class="mono">src/</span>, either VM, or anything else. Not the whole of
+          the system's state.
+        </p>
+      {/if}
+
+      <div class="briefstats">
+        <span class="pill" class:warnpill={(briefStats?.unrouted ?? 0) > 0}>
+          <b>{num(briefStats?.unrouted)}</b> unrouted
+        </span>
+        <span class="pill"><b>{num(briefStats?.due)}</b> due</span>
+        <span class="pill muted">
+          <b>{num(briefStats?.items)}</b> item(s) · {num(briefStats?.records)} record(s)
+        </span>
+        {#if (briefStats?.unreadable ?? 0) > 0}
+          <span class="pill warnpill">⚠️ {num(briefStats?.unreadable)} unreadable record(s)</span>
+        {/if}
+      </div>
+
+      <!-- Three-way read state per source, verbatim, never collapsed — "we
+           read it and it was empty" and "we could not read it" are different
+           facts. -->
+      <div class="briefstats">
+        {#each [["pipeline", briefInputs?.pipeline], ["checklist", briefInputs?.checklist], ["mandates", briefInputs?.mandates]] as [k, v] (k)}
+          <span class="pill src-{v ?? 'missing'}"><span class="mono">{k}</span>: {v ?? "—"}</span>
+        {/each}
+      </div>
+
+      {#if section0}
+        <h4>§0 — what came due</h4>
+        <pre class="mdblock">{shownSection0}{section0Truncated ? "…" : ""}</pre>
+        {#if section0.length > SECTION0_LIMIT}
+          <p class="warnline">
+            ⚠️ {section0Truncated
+              ? `Truncated — ${num(section0.length - SECTION0_LIMIT)} character(s) hidden.`
+              : "Showing the full section."}
+            <button class="toggle" onclick={() => (expandSection0 = !expandSection0)}>
+              {expandSection0 ? "Show less" : "Show all"}
+            </button>
+          </p>
+        {/if}
+      {:else}
+        <p class="muted">
+          No §0 content in this brief's markdown — that is a rendering gap on this page, not a
+          claim that nothing is due (see the counts above).
+        </p>
+      {/if}
+
+      {#if briefFresh}
+        <div class="sub muted">
+          {briefFresh.note} <span class="mono">{briefFresh.treeStamp}</span>
+        </div>
+      {/if}
+
+      {#if brief.markdown}
+        <button class="toggle" onclick={() => (showFullBrief = !showFullBrief)}>
+          {showFullBrief ? "Hide" : "Show"} the full six-section brief (§1–§5)
+        </button>
+        {#if showFullBrief}
+          <pre class="mdblock full">{brief.markdown}</pre>
+        {/if}
+      {/if}
+    {/if}
+  </div>
 
   <!-- ── THE AS-OF STAMP. Never optional: a stale page must announce itself. ── -->
   {#if fresh}
@@ -984,5 +1139,31 @@ section { display: flex; flex-direction: column; gap: 12px; }
   .toggle { align-self: flex-start; background: var(--panel-2); border: none; color: var(--muted); border-radius: 6px; padding: 7px 12px; cursor: pointer; font-size: 12.5px; }
   .mono { font-family: ui-monospace, monospace; }
   .storeh { margin: 18px 0 0; font-size: 14px; }
+
+  /* — A3b: Today's brief — */
+  .briefpanel { padding: 14px; border-left: 3px solid var(--accent); }
+  .briefpanel.hot { border-left-color: var(--warn, #d19a2f); }
+  .briefstats { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+  .pill.warnpill { background: var(--warn, #d19a2f); color: #fff; }
+  .pill.src-read { background: var(--panel-2); }
+  .pill.src-absent, .pill.src-unreadable, .pill.src-partial { background: var(--warn, #d19a2f); color: #fff; }
+  .pill.src-missing { opacity: .6; }
+  .mdblock {
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: ui-monospace, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    background: var(--panel-2);
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin: 4px 0;
+  }
+  /* §0 is never in an internal scrollbox — that would hide content behind a
+     scroll with no printed count, which is exactly what the truncation rule
+     above exists to prevent. Character-limit truncation (with its count) is
+     the only thing allowed to shorten it. The optional full §1-§5 dump
+     (behind its own explicit toggle click) is fine to cap and scroll. */
+  .mdblock.full { max-height: 640px; overflow-y: auto; }
 
 </style>

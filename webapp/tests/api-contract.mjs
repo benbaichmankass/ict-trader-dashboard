@@ -139,6 +139,26 @@ const BINDINGS = {
                ca: "requests.2.conversationalAnswer" },
       rowPaths: { r: "requests" },
     },
+    // The daily brief (A3b) — §0 + the unrouted count, the follow-through
+    // pipeline's forcing function reaching the operator's own page. `brief`
+    // is read directly (it is a plain `$state`, not a `$derived` alias, same
+    // as `raw` above — the checker matches either). The fixture is a REAL
+    // capture from the live bot (2026-09-21T16:01:15Z); its `markdown` is
+    // trimmed to keep §0 in full and elide §1-§5, which this route never
+    // parses individually — see the fixture's own `_fixture_note`.
+    //
+    // ⚠️ `pipelineStats` (records/items/due/unrouted/unreadable) is bound
+    // because this page reads its HEADLINE NUMBERS there, deliberately, and
+    // never by parsing them out of the markdown string — a rename here must
+    // fail the build, not silently degrade the one panel this repo exists to
+    // make visible. `inputs` is bound because it is a three-way read state
+    // per source that must never collapse.
+    {
+      fixture: "work_brief.json",
+      root: "brief",
+      paths: { brief: "", briefInputs: "inputs", briefStats: "pipelineStats",
+               briefFresh: "freshness" },
+    },
   ],
   // Workflow.svelte (MI-238) — the manager checklist + the decision inbox.
   // Bound BOTH ways, like Work.svelte: `paths` for the $derived aliases off the
