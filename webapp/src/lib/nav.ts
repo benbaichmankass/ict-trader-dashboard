@@ -51,7 +51,7 @@ export const PAGE_DESC: Record<string, string> = {
   Health: "VM / service health + last-tick + snapshot checks.",
   Runbooks: "Operating schematic, the coordination board, and what is due today.",
   Roadmap: "Product-roadmap progress — milestones → sprints → work-session notes.",
-  Work: "THE live workflow page. The manager checklist as the managers keep it (collapsed by default — open a row for full detail), the decisions waiting on you, the live work sessions with how stale each reading is, and the work store underneath. Read-only; carries its own as-of stamp, so it is as fresh as the last push plus ict-git-sync's ~5-minute pull.",
+  Work: "THE live workflow page. Today's daily brief (what came due, and the unrouted count) at the top, then the manager checklist as the managers keep it (collapsed by default — open a row for full detail), the decisions waiting on you, the live work sessions with how stale each reading is, and the work store underneath. Read-only; carries its own as-of stamp, so it is as fresh as the last push plus ict-git-sync's ~5-minute pull.",
   Learning: "Trading + AI curriculum with per-resource progress.",
 };
 
