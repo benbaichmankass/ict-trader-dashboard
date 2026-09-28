@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from "svelte";
   import { api, type BotStats, type Performance, type Position, type Candle, type ClosedTrade } from "../lib/api";
   import { MarketStream, type MarketStatus } from "../lib/ws";
-  import { FUNDING_OPTIONS, WINDOW_OPTIONS } from "../lib/nav";
+  import { FUNDING_OPTIONS, WINDOW_OPTIONS, sinceFor, gotoDetail } from "../lib/nav";
   import { portfolioPaperIds, isPortfolioPaperRow } from "../lib/funding";
   import { money, signClass, DASH, agoFromIso } from "../lib/format";
   import ExecSummary from "../components/ExecSummary.svelte";
@@ -152,6 +152,40 @@
   // Positions scoped to the selected funding class (never blended).
   const shownPositions = $derived(positions.filter((p) => matchesFunding(p)));
   const symOpen = $derived(shownPositions.filter((p) => p.symbol === selected));
+
+  // Last closed trades under the open-positions table — same funding scope as
+  // the rest of this page. Overview has no organize-by/focus control (that's
+  // Streamlit-only, not ported to the SPA), so funding + window is the whole
+  // scope. Reuses the closedTrades this page already fetches (poll(), above)
+  // rather than a new endpoint call; filtered client-side to the window since
+  // that fetch is an unwindowed "last 100" newest-first.
+  function classOfTrade(t: ClosedTrade): string {
+    const c = (t.accountClass ?? "").toLowerCase();
+    if (c === "prop") return "prop";
+    if (c === "paper") return "paper";
+    return "real";
+  }
+  function dirLabel(t: ClosedTrade): string {
+    const d = (t.direction ?? t.side ?? "").toLowerCase();
+    if (d === "sell" || d === "short") return "SHORT";
+    if (d === "buy" || d === "long") return "LONG";
+    return DASH;
+  }
+  const recentClosed = $derived.by(() => {
+    // Prop closed trades come from the prop journal, not /trades/closed —
+    // not wired into this fetch, so show an empty-with-note rather than
+    // mislabel real-money/paper rows as prop (mirrors Trades.svelte).
+    if (funding === "prop") return [];
+    const cutoff = sinceFor(win);
+    const matches = closedTrades.filter((t) => {
+      if (funding === "paper" ? !isPortfolioPaperRow(t, paperIds) : classOfTrade(t) !== funding) return false;
+      if (cutoff && t.closedAt && t.closedAt < cutoff) return false;
+      return true;
+    });
+    return [...matches]
+      .sort((a, b) => (b.closedAt ?? "").localeCompare(a.closedAt ?? ""))
+      .slice(0, 10);
+  });
 
   // REST candle fallback so the chart renders even when the market WebSocket
   // can't connect (sandbox / flaky mobile). The WS's onCandles overwrites this
@@ -332,6 +366,40 @@
     <PositionsTable positions={shownPositions} />
   </div>
 
+  <div class="panel positions">
+    <div class="ph">
+      Last closed trades · {FUNDING_OPTIONS.find((f) => f.value === funding)?.label} · {WINDOW_OPTIONS.find((w) => w.value === win)?.label}
+    </div>
+    {#if funding === "prop"}
+      <div class="muted pad">Prop closed trades come from the prop journal (Prop tab) — not shown here yet.</div>
+    {:else if recentClosed.length === 0}
+      <div class="muted pad">No closed trades in this window.</div>
+    {:else}
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Symbol</th><th>Dir</th><th>Strategy</th><th>Account</th><th class="r">P&L</th><th>Closed</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each recentClosed as t (t.id ?? `${t.symbol}-${t.closedAt}`)}
+              <tr>
+                <td class="sym">{t.symbol}</td>
+                <td class={dirLabel(t) === "SHORT" ? "neg" : "pos"}>{dirLabel(t)}</td>
+                <td class="muted">{t.strategy ?? DASH}</td>
+                <td class="muted">{t.account ?? DASH}</td>
+                <td class="r mono {signClass(t.pnl)}">{money(t.pnl, { sign: true })}</td>
+                <td class="muted">{agoFromIso(t.closedAt)}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+      <button class="more" onclick={() => gotoDetail("Activity", "Trades")}>See all closed trades →</button>
+    {/if}
+  </div>
+
   {#if pnlPoints.length > 1}
     <div class="panel spark">
       <div class="ph">30-day realised P&amp;L (cumulative) · real money</div>
@@ -417,4 +485,25 @@
     padding: 10px 12px;
     color: var(--neg);
   }
+  .scroll { overflow-x: auto; padding: 0 4px 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 10px; text-align: left; white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); font-size: 12px; }
+  tbody tr { border-bottom: 1px solid var(--border); }
+  .r { text-align: right; }
+  .sym { font-weight: 600; }
+  .pad { padding: 16px 12px; }
+  .more {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    border-top: 1px solid var(--border);
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 12.5px;
+    padding: 8px 12px;
+  }
+  .more:hover { text-decoration: underline; }
 </style>

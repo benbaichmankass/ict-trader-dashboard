@@ -11,6 +11,10 @@
   let rows = $state<ClosedTrade[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
+  // Set to the server's total-match count when a window has more rows than we
+  // fetched (walked up to MAX_PAGES pages of PAGE_LIMIT each) — the bot caps
+  // one page at 200 (le=200, trades_closed.py). null = nothing truncated.
+  let truncatedAt = $state<number | null>(null);
 
   function classOf(t: ClosedTrade): string {
     const c = (t.accountClass ?? "").toLowerCase();
@@ -19,9 +23,35 @@
     return "real";
   }
 
+  const PAGE_LIMIT = 200; // the bot's hard cap (le=200) on /api/bot/trades/closed
+  const MAX_PAGES = 5; // bounds worst-case fetch cost for a very wide window (All)
+
+  // Walks `offset` past the bot's 200-row page cap using the `X-Has-More`
+  // header (trades_closed.py) rather than silently truncating a wide window.
+  // Stops at MAX_PAGES and reports the server's total so the UI can say so.
+  async function fetchAllClosed(since: string | undefined, includePaper: boolean) {
+    let offset = 0;
+    let all: ClosedTrade[] = [];
+    let total = 0;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const { rows: pageRows, total: pageTotal, hasMore } = await api.closedTradesPage({
+        since,
+        includePaper,
+        limit: PAGE_LIMIT,
+        offset,
+      });
+      all = all.concat(pageRows);
+      total = pageTotal;
+      offset += pageRows.length;
+      if (!hasMore || pageRows.length === 0) return { rows: all, truncated: null as number | null };
+    }
+    return { rows: all, truncated: total };
+  }
+
   async function load() {
     loading = true;
     error = null;
+    truncatedAt = null;
     try {
       // Prop closed trades come from the prop journal, not /trades/closed — not
       // wired into this SPA screen yet, so show an empty-with-note rather than
@@ -34,10 +64,11 @@
       // — the soak roster stays on the Accounts page only. Resolve the portfolio
       // ids from /config; a config read failure falls back to ALL paper so the
       // view is never stranded. S-PAPER-PORTFOLIO.
-      const [raw, cfg] = await Promise.all([
-        api.closedTrades({ since: sinceFor(win), includePaper: funding === "paper", limit: 300 }),
+      const [{ rows: raw, truncated }, cfg] = await Promise.all([
+        fetchAllClosed(sinceFor(win), funding === "paper"),
         funding === "paper" ? api.config().catch(() => null) : Promise.resolve(null),
       ]);
+      truncatedAt = truncated;
       if (funding === "paper") {
         const ids = portfolioPaperIds(cfg);
         rows = (raw ?? []).filter((t) => isPortfolioPaperRow(t, ids));
@@ -110,6 +141,10 @@
 
   {#if untrusted > 0}
     <div class="muted caveat">⚠ {untrusted} of {graded} graded trade(s) carry an unmeasured realized P&L (⚠ mark-substituted / ? unrecorded) — estimates, not broker truth.</div>
+  {/if}
+
+  {#if truncatedAt != null}
+    <div class="muted caveat">Showing the latest {num(rows.length)} of {num(truncatedAt)} closed trades matching this window — narrow the window or funding filter to see the rest.</div>
   {/if}
 
   {#if error}
