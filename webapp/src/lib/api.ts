@@ -149,7 +149,7 @@ export interface Strategy {
 // ⚠️ If you add a second `fetch` anywhere under `webapp/src`, it will NOT carry
 // the bearer and any gated route it calls will 401. `webapp/tests/auth-bearer.mjs`
 // makes that a build failure rather than a silently dark tab.
-async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+async function getRaw(path: string, signal?: AbortSignal): Promise<Response> {
   const url = `${getBotApiUrl()}${path}`;
   const res = await fetch(url, { signal, headers: authHeaders() });
   if (res.status === 401 || res.status === 403) {
@@ -159,7 +159,19 @@ async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
     throw new AuthRequiredError(res.status, path);
   }
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${path}`);
-  return (await res.json()) as T;
+  return res;
+}
+
+async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return (await getRaw(path, signal)).json() as Promise<T>;
+}
+
+function normalizeClosedTrade(r: ClosedTrade): ClosedTrade {
+  // Normalise the bot's field names so every consumer reads pnl/strategy: the
+  // endpoint returns `realizedPnl` (not `pnl`) and carries the strategy in
+  // `pattern` (not `strategy`). Without this, Trades/Accounts/Overview show
+  // Net P&L / Win rate / Strategy as "—" despite real closed trades.
+  return { ...r, pnl: r.pnl ?? r.realizedPnl ?? null, strategy: r.strategy ?? r.pattern ?? null };
 }
 
 export const api = {
@@ -177,19 +189,37 @@ export const api = {
     const q = new URLSearchParams();
     if (opts.since) q.set("since", opts.since);
     if (opts.includePaper) q.set("include_paper", "true");
+    // `/api/bot/trades/closed` caps `limit` at 200 (422 above it — the bot's
+    // own Query(..., le=200), trades_closed.py). Callers that need more than
+    // one page must use `closedTradesPage` below and walk `offset`.
     q.set("limit", String(opts.limit ?? 200));
     return get<ClosedTrade[]>(`/api/bot/trades/closed?${q.toString()}`, signal).then((rows) =>
-      // Normalise the bot's field names so every consumer reads pnl/strategy:
-      // the endpoint returns `realizedPnl` (not `pnl`) and carries the strategy
-      // in `pattern` (not `strategy`). Without this, Trades/Accounts show
-      // Net P&L / Win rate / Strategy as "—" despite real closed trades.
-      (Array.isArray(rows) ? rows : []).map((r) => ({
-        ...r,
-        pnl: r.pnl ?? r.realizedPnl ?? null,
-        strategy: r.strategy ?? r.pattern ?? null,
-      })),
+      (Array.isArray(rows) ? rows : []).map(normalizeClosedTrade),
     );
   },
+  // Same endpoint as `closedTrades`, but surfaces the pagination headers the
+  // bot returns (`X-Total-Count` / `X-Has-More`) so a caller can walk `offset`
+  // past the 200-row cap instead of silently truncating a wide window.
+  closedTradesPage: (
+    opts: { since?: string; includePaper?: boolean; limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ) =>
+    (async () => {
+      const q = new URLSearchParams();
+      if (opts.since) q.set("since", opts.since);
+      if (opts.includePaper) q.set("include_paper", "true");
+      q.set("limit", String(Math.min(opts.limit ?? 200, 200)));
+      q.set("offset", String(opts.offset ?? 0));
+      const res = await getRaw(`/api/bot/trades/closed?${q.toString()}`, signal);
+      const rows = (await res.json()) as ClosedTrade[];
+      const normalized = (Array.isArray(rows) ? rows : []).map(normalizeClosedTrade);
+      const totalHeader = res.headers.get("X-Total-Count");
+      return {
+        rows: normalized,
+        total: totalHeader != null ? Number(totalHeader) : normalized.length,
+        hasMore: res.headers.get("X-Has-More") === "true",
+      };
+    })(),
   // /api/bot/strategies returns per-strategy config + a top-level runtime block;
   // shape varies, so fetch loosely and normalize in the view.
   strategies: (signal?: AbortSignal) => get<any>("/api/bot/strategies", signal),

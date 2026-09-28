@@ -10,7 +10,10 @@
   let win = $state("7d");
   let rows = $state<ClosedTrade[]>([]);
   let loading = $state(true);
+  let loadingMore = $state(false);
   let error = $state<string | null>(null);
+  let hasMore = $state(false);
+  let lastUpdated = $state<number | null>(null);
 
   function classOf(t: ClosedTrade): string {
     const c = (t.accountClass ?? "").toLowerCase();
@@ -19,40 +22,94 @@
     return "real";
   }
 
+  function rowKey(t: ClosedTrade): string {
+    return String(t.id ?? `${t.symbol}-${t.closedAt}`);
+  }
+
+  const PAGE_LIMIT = 200; // the bot's hard cap (le=200) on /api/bot/trades/closed
+
+  // How far into the server's result set (for the current funding/window) we've
+  // already consumed. Not reactive state on purpose — only read/written from
+  // inside loadPage, which loading/loadingMore already serialise.
+  let rawOffset = 0;
+
+  // Fetches ONE batch at `rawOffset` and appends it (or replaces `rows` on a
+  // reset — a funding/window change or an explicit Refresh). Paging is
+  // offset-based against the bot's own `X-Has-More` header (trades_closed.py)
+  // rather than an eager background walk, so a wide window costs exactly the
+  // requests the user asked for via "Load more".
+  async function loadPage(reset: boolean) {
+    if (reset) {
+      rawOffset = 0;
+      rows = [];
+      hasMore = false;
+    }
+    // Prop closed trades come from the prop journal, not /trades/closed — not
+    // wired into this SPA screen yet, so show an empty-with-note rather than
+    // mislabel real-money rows as prop.
+    if (funding === "prop") {
+      hasMore = false;
+      return;
+    }
+    // "Paper" scopes to the live-portfolio-mirror books (paper_role: portfolio)
+    // — the soak roster stays on the Accounts page only. Resolve the portfolio
+    // ids from /config; a config read failure falls back to ALL paper so the
+    // view is never stranded. S-PAPER-PORTFOLIO.
+    const [{ rows: pageRaw, hasMore: more }, cfg] = await Promise.all([
+      api.closedTradesPage({ since: sinceFor(win), includePaper: funding === "paper", limit: PAGE_LIMIT, offset: rawOffset }),
+      funding === "paper" ? api.config().catch(() => null) : Promise.resolve(null),
+    ]);
+    rawOffset += pageRaw.length;
+    hasMore = more;
+    const filtered =
+      funding === "paper"
+        ? pageRaw.filter((t) => isPortfolioPaperRow(t, portfolioPaperIds(cfg)))
+        : pageRaw.filter((t) => classOf(t) === funding);
+    if (reset) {
+      rows = filtered;
+    } else {
+      // De-dupe by id in case rows shift between pages (a close/insert between
+      // "Load more" clicks could otherwise repeat a row across two batches).
+      const seen = new Set(rows.map(rowKey));
+      rows = [...rows, ...filtered.filter((t) => !seen.has(rowKey(t)))];
+    }
+    lastUpdated = Date.now();
+  }
+
   async function load() {
     loading = true;
     error = null;
     try {
-      // Prop closed trades come from the prop journal, not /trades/closed — not
-      // wired into this SPA screen yet, so show an empty-with-note rather than
-      // mislabel real-money rows as prop.
-      if (funding === "prop") {
-        rows = [];
-        return;
-      }
-      // "Paper" scopes to the live-portfolio-mirror books (paper_role: portfolio)
-      // — the soak roster stays on the Accounts page only. Resolve the portfolio
-      // ids from /config; a config read failure falls back to ALL paper so the
-      // view is never stranded. S-PAPER-PORTFOLIO.
-      const [raw, cfg] = await Promise.all([
-        api.closedTrades({ since: sinceFor(win), includePaper: funding === "paper", limit: 300 }),
-        funding === "paper" ? api.config().catch(() => null) : Promise.resolve(null),
-      ]);
-      if (funding === "paper") {
-        const ids = portfolioPaperIds(cfg);
-        rows = (raw ?? []).filter((t) => isPortfolioPaperRow(t, ids));
-      } else {
-        rows = (raw ?? []).filter((t) => classOf(t) === funding);
-      }
+      await loadPage(true);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       rows = [];
+      hasMore = false;
     } finally {
       loading = false;
     }
   }
 
-  // Re-load whenever funding or window changes.
+  async function loadMore() {
+    if (loadingMore || loading || !hasMore) return;
+    loadingMore = true;
+    try {
+      await loadPage(false);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+    } finally {
+      loadingMore = false;
+    }
+  }
+
+  // Refresh: re-fetch the current view now (every fetch already goes through
+  // api.ts — there is no client cache to bypass) and reset paging to the first
+  // batch, WITHOUT touching the user's funding/window selection.
+  function refresh() {
+    load();
+  }
+
+  // Re-load (reset to the first batch) whenever funding or window changes.
   $effect(() => {
     funding;
     win;
@@ -99,8 +156,12 @@
     <div class="controls">
       <Segmented options={FUNDING_OPTIONS} bind:value={funding} />
       <Segmented options={WINDOW_OPTIONS} bind:value={win} />
+      <button class="refresh" onclick={refresh} disabled={loading}>{loading ? "Refreshing…" : "↻ Refresh"}</button>
     </div>
   </div>
+  {#if lastUpdated}
+    <div class="muted small">Updated {agoFromIso(new Date(lastUpdated).toISOString())}</div>
+  {/if}
 
   <div class="summary">
     <div class="s"><span class="muted">Closed</span> <b class="mono">{num(stats.count)}</b></div>
@@ -129,7 +190,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each rows as t (t.id ?? `${t.symbol}-${t.closedAt}`)}
+          {#each rows as t (rowKey(t))}
             <tr>
               <td class="sym">{t.symbol}</td>
               <td class={dirLabel(t) === "SHORT" ? "neg" : "pos"}>{dirLabel(t)}</td>
@@ -142,6 +203,11 @@
           {/each}
         </tbody>
       </table>
+      {#if hasMore}
+        <button class="more" onclick={loadMore} disabled={loadingMore}>{loadingMore ? "Loading…" : "Load more"}</button>
+      {:else if funding !== "prop"}
+        <div class="muted pad small">No more trades.</div>
+      {/if}
     </div>
   {/if}
 </section>
@@ -164,5 +230,30 @@
   .r { text-align: right; }
   .sym { font-weight: 600; }
   .pad { padding: 16px; }
+  .small { font-size: 12px; padding: 8px 4px; }
   .err { padding: 10px 12px; color: var(--neg); }
+  .refresh {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 5px 12px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .refresh:disabled { opacity: 0.6; cursor: default; }
+  .more {
+    display: block;
+    width: 100%;
+    text-align: center;
+    background: var(--panel-2);
+    border: none;
+    border-top: 1px solid var(--border);
+    color: var(--accent);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 10px 12px;
+  }
+  .more:hover { text-decoration: underline; }
+  .more:disabled { opacity: 0.6; cursor: default; text-decoration: none; }
 </style>

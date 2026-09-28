@@ -165,3 +165,33 @@ jobs:
         run: node webapp/tests/auth-bearer.mjs --self-test
       - name: Every call to the bot API must carry the session bearer
         run: node webapp/tests/auth-bearer.mjs
+
+  webapp-limit-cap:
+    # Fourth sibling of webapp-api-contract / webapp-ws-frame-scope /
+    # webapp-auth-bearer, same class again: a request that is well-formed in
+    # every way except the one value that decides whether the bot accepts it.
+    #
+    # What it catches, concretely: Trades.svelte called
+    # `api.closedTrades({ ..., limit: 300 })`. `/api/bot/trades/closed` caps
+    # `limit` at 200 (ict-trading-bot src/web/api/routers/trades_closed.py,
+    # `le=MAX_LIMIT`), so every request from that screen got a 422 and the
+    # Activity → Trades tab was dark for every funding class on every window
+    # — the call compiled, the route rendered, the build was green, and the
+    # only symptom was a 422 behind a "Couldn't load trades" banner.
+    #
+    # Zero dependencies (plain node). `--self-test` plants that exact defect
+    # (and five more shapes: a positional-arg violation, a same-file `const`
+    # a call resolves its limit through, a comment/string false-positive
+    # control, and an empty-population refusal) and requires the checker to
+    # catch each — a gate that cannot fail proves nothing.
+    name: webapp-limit-cap
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Prove the checker can fail
+        run: node webapp/tests/limit-cap.mjs --self-test
+      - name: No hardcoded limit may exceed the bot's declared cap
+        run: node webapp/tests/limit-cap.mjs
