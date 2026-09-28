@@ -88,6 +88,8 @@
 
   let stream: MarketStream | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let refreshing = $state(false);
+  let lastUpdated = $state<number | null>(null);
 
   // The exec summary needs the same inputs Streamlit's _render_exec_summary uses:
   // stats + windowed performance + REST positions + tracked balances (equity) +
@@ -123,8 +125,22 @@
       signals = Array.isArray(sig) ? sig : (sig?.signals ?? sig?.records ?? []);
       closedTrades = Array.isArray(closed) ? closed : [];
       apiError = null;
+      lastUpdated = Date.now();
     } catch (e) {
       apiError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  // Refresh: re-fetch this view's data now (every fetch already goes through
+  // api.ts — there is no client cache to bypass) and reset the closed-trades
+  // "Load more" paging to its first batch, WITHOUT touching the user's
+  // funding/window selection.
+  async function refresh() {
+    refreshing = true;
+    try {
+      await Promise.all([poll(), loadRecentClosed()]);
+    } finally {
+      refreshing = false;
     }
   }
 
@@ -156,9 +172,10 @@
   // Last closed trades under the open-positions table — same funding scope as
   // the rest of this page. Overview has no organize-by/focus control (that's
   // Streamlit-only, not ported to the SPA), so funding + window is the whole
-  // scope. Reuses the closedTrades this page already fetches (poll(), above)
-  // rather than a new endpoint call; filtered client-side to the window since
-  // that fetch is an unwindowed "last 100" newest-first.
+  // scope. Paginated independently of the flat `closedTrades` fetch above
+  // (which feeds the chart's symClosed overlay and isn't window-scoped): a
+  // "Load more" here should pull the NEXT server batch, not just reveal more
+  // of an already-fetched flat 100, so this makes its own paged requests.
   function classOfTrade(t: ClosedTrade): string {
     const c = (t.accountClass ?? "").toLowerCase();
     if (c === "prop") return "prop";
@@ -171,20 +188,86 @@
     if (d === "buy" || d === "long") return "LONG";
     return DASH;
   }
-  const recentClosed = $derived.by(() => {
-    // Prop closed trades come from the prop journal, not /trades/closed —
-    // not wired into this fetch, so show an empty-with-note rather than
-    // mislabel real-money/paper rows as prop (mirrors Trades.svelte).
-    if (funding === "prop") return [];
-    const cutoff = sinceFor(win);
-    const matches = closedTrades.filter((t) => {
-      if (funding === "paper" ? !isPortfolioPaperRow(t, paperIds) : classOfTrade(t) !== funding) return false;
-      if (cutoff && t.closedAt && t.closedAt < cutoff) return false;
-      return true;
-    });
-    return [...matches]
-      .sort((a, b) => (b.closedAt ?? "").localeCompare(a.closedAt ?? ""))
-      .slice(0, 10);
+  function rowKey(t: ClosedTrade): string {
+    return String(t.id ?? `${t.symbol}-${t.closedAt}`);
+  }
+
+  const RECENT_BATCH = 10; // well within the bot's 200-row page cap (trades_closed.py)
+
+  let recentClosedRows = $state<ClosedTrade[]>([]);
+  let recentClosedLoading = $state(true);
+  let recentClosedLoadingMore = $state(false);
+  let recentClosedHasMore = $state(false);
+  let recentClosedError = $state<string | null>(null);
+  let recentClosedOffset = 0; // server-side offset consumed so far; not reactive
+
+  async function loadRecentClosedPage(reset: boolean) {
+    if (reset) {
+      recentClosedOffset = 0;
+      recentClosedRows = [];
+      recentClosedHasMore = false;
+    }
+    // Prop closed trades come from the prop journal, not /trades/closed — not
+    // wired into this fetch, so show an empty-with-note rather than mislabel
+    // real-money/paper rows as prop (mirrors Trades.svelte).
+    if (funding === "prop") {
+      recentClosedHasMore = false;
+      return;
+    }
+    const [{ rows: pageRaw, hasMore }, cfg] = await Promise.all([
+      api.closedTradesPage({
+        since: sinceFor(win),
+        includePaper: funding === "paper",
+        limit: RECENT_BATCH,
+        offset: recentClosedOffset,
+      }),
+      funding === "paper" ? api.config().catch(() => null) : Promise.resolve(null),
+    ]);
+    recentClosedOffset += pageRaw.length;
+    recentClosedHasMore = hasMore;
+    const filtered =
+      funding === "paper"
+        ? pageRaw.filter((t) => isPortfolioPaperRow(t, portfolioPaperIds(cfg)))
+        : pageRaw.filter((t) => classOfTrade(t) === funding);
+    if (reset) {
+      recentClosedRows = filtered;
+    } else {
+      // De-dupe by id — rows can shift between pages between "Load more" clicks.
+      const seen = new Set(recentClosedRows.map(rowKey));
+      recentClosedRows = [...recentClosedRows, ...filtered.filter((t) => !seen.has(rowKey(t)))];
+    }
+  }
+
+  async function loadRecentClosed() {
+    recentClosedLoading = true;
+    recentClosedError = null;
+    try {
+      await loadRecentClosedPage(true);
+    } catch (e) {
+      recentClosedError = e instanceof Error ? e.message : String(e);
+      recentClosedRows = [];
+    } finally {
+      recentClosedLoading = false;
+    }
+  }
+
+  async function loadMoreRecentClosed() {
+    if (recentClosedLoadingMore || recentClosedLoading || !recentClosedHasMore) return;
+    recentClosedLoadingMore = true;
+    try {
+      await loadRecentClosedPage(false);
+    } catch (e) {
+      recentClosedError = e instanceof Error ? e.message : String(e);
+    } finally {
+      recentClosedLoadingMore = false;
+    }
+  }
+
+  // Reset to the first batch whenever funding or window changes.
+  $effect(() => {
+    funding;
+    win;
+    loadRecentClosed();
   });
 
   // REST candle fallback so the chart renders even when the market WebSocket
@@ -291,7 +374,11 @@
   <div class="controls">
     <Segmented options={FUNDING_OPTIONS} bind:value={funding} />
     <Segmented options={WINDOW_OPTIONS} bind:value={win} />
+    <button class="refresh" onclick={refresh} disabled={refreshing}>{refreshing ? "Refreshing…" : "↻ Refresh"}</button>
   </div>
+  {#if lastUpdated}
+    <div class="muted small">Updated {agoFromIso(new Date(lastUpdated).toISOString())}</div>
+  {/if}
 
   {#if apiError}
     <div class="err panel">Couldn't reach the bot API: <span class="mono">{apiError}</span></div>
@@ -370,9 +457,13 @@
     <div class="ph">
       Last closed trades · {FUNDING_OPTIONS.find((f) => f.value === funding)?.label} · {WINDOW_OPTIONS.find((w) => w.value === win)?.label}
     </div>
-    {#if funding === "prop"}
+    {#if recentClosedError}
+      <div class="err pad">Couldn't load closed trades: <span class="mono">{recentClosedError}</span></div>
+    {:else if funding === "prop"}
       <div class="muted pad">Prop closed trades come from the prop journal (Prop tab) — not shown here yet.</div>
-    {:else if recentClosed.length === 0}
+    {:else if recentClosedLoading}
+      <div class="muted pad">Loading…</div>
+    {:else if recentClosedRows.length === 0}
       <div class="muted pad">No closed trades in this window.</div>
     {:else}
       <div class="scroll">
@@ -383,7 +474,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each recentClosed as t (t.id ?? `${t.symbol}-${t.closedAt}`)}
+            {#each recentClosedRows as t (rowKey(t))}
               <tr>
                 <td class="sym">{t.symbol}</td>
                 <td class={dirLabel(t) === "SHORT" ? "neg" : "pos"}>{dirLabel(t)}</td>
@@ -396,6 +487,13 @@
           </tbody>
         </table>
       </div>
+      {#if recentClosedHasMore}
+        <button class="more" onclick={loadMoreRecentClosed} disabled={recentClosedLoadingMore}>
+          {recentClosedLoadingMore ? "Loading…" : "Load more"}
+        </button>
+      {:else}
+        <div class="muted pad small">No more trades.</div>
+      {/if}
       <button class="more" onclick={() => gotoDetail("Activity", "Trades")}>See all closed trades →</button>
     {/if}
   </div>
@@ -493,6 +591,7 @@
   .r { text-align: right; }
   .sym { font-weight: 600; }
   .pad { padding: 16px 12px; }
+  .small { font-size: 12px; }
   .more {
     display: block;
     width: 100%;
@@ -506,4 +605,15 @@
     padding: 8px 12px;
   }
   .more:hover { text-decoration: underline; }
+  .more:disabled { opacity: 0.6; cursor: default; text-decoration: none; }
+  .refresh {
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 5px 12px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .refresh:disabled { opacity: 0.6; cursor: default; }
 </style>
