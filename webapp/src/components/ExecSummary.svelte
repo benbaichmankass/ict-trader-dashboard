@@ -9,10 +9,10 @@
   // other-funding-class one-liner + a compact open-trades table.
   let {
     stats, perf, positions = [], balances = null, config = null, strategies = null,
-    funding = "real", win = "7d",
+    funding = "real", win = "7d", propOverview = null,
   }: {
     stats: BotStats | null; perf: Performance | null; positions?: Position[];
-    balances?: any; config?: any; strategies?: any; funding?: string; win?: string;
+    balances?: any; config?: any; strategies?: any; funding?: string; win?: string; propOverview?: any;
   } = $props();
 
   const WIN_LABEL: Record<string, string> = { "24h": "24h", "7d": "7d", "30d": "30d", all: "all-time" };
@@ -40,7 +40,7 @@
 
   // Total equity for the funding class = sum of that class's tracked balances.
   const equity = $derived.by(() => {
-    if (funding === "prop") return null;
+    if (funding === "prop") return propOverview?.equity?.total_usd ?? null;
     const want = funding === "paper" ? "paper" : "real_money";
     const bals = balances?.balances ?? {};
     let sum = 0, any = false;
@@ -56,9 +56,19 @@
 
   // Open positions for the class (from REST /positions; prop from its own journal — not here).
   // "Paper" keeps only the portfolio-mirror books, not the soak roster.
+  // Prop open trades come from the prop journal via /api/bot/prop/overview
+  // (the manual bridge has no broker positions). Mapped to the Position shape
+  // the shared table renders; uPnL is genuinely unknown (no mark feed) -> null.
+  const propOpen = $derived<Position[]>(
+    (propOverview?.open_trades ?? []).map((t: any) => ({
+      id: `prop-${t.id}`, symbol: t.symbol, side: t.side === "short" ? "sell" : "buy",
+      qty: t.qty, entryPrice: t.entry_price, pattern: "prop", account: t.account_id,
+      unrealizedPnl: null, openedAt: t.opened_at, accountClass: "prop",
+    }) as unknown as Position),
+  );
   const segOpen = $derived(
     funding === "prop"
-      ? []
+      ? propOpen
       : funding === "paper"
         ? positions.filter((p) => isPortfolioPaperRow(p, paperIds))
         : positions.filter((p) => fundingOf(p) === funding),
@@ -79,9 +89,10 @@
         ? null
         : perf,
   );
-  const realized = $derived(segPerf?.totalPnl ?? null);
-  const winRate = $derived(segPerf?.winRate ?? null);
-  const profitFactor = $derived(segPerf?.profitFactor ?? null);
+  const propRealized = $derived(funding === "prop" ? (propOverview?.realized ?? null) : null);
+  const realized = $derived(funding === "prop" ? (propRealized?.total_pnl ?? null) : (segPerf?.totalPnl ?? null));
+  const winRate = $derived(funding === "prop" ? (propRealized?.win_rate ?? null) : (segPerf?.winRate ?? null));
+  const profitFactor = $derived(funding === "prop" ? (propRealized?.profit_factor ?? null) : (segPerf?.profitFactor ?? null));
   // PnL measurement coverage (bot P0.3): shown only when the bot reports the
   // field AND coverage is incomplete — an older bot makes no claim.
   const pnlCoverage = $derived(segPerf?.pnlCoverage ?? null);
@@ -137,12 +148,21 @@
   </div>
 
   {#if funding === "prop"}
-    <div class="propnote">Prop equity + open trades live on the <b>Prop</b> tab (its own journal — never blended into real/paper). Realized/PF read “—” here.</div>
+    <div class="propnote">
+      {#if propOverview?.present}
+        Prop journal (never blended into real/paper) · {propOverview.population}.
+        {#each (propOverview.equity?.accounts ?? []).filter((a: any) => !a.counted_in_total) as a (a.account_id)}
+          <span class="warn"> ⚠ {a.account_id} {a.status_freshness}{a.equity != null ? ` (last ${money(a.equity)}, excluded)` : ""}</span>
+        {/each}
+      {:else}
+        Prop overview unavailable from the bot — see the <b>Prop</b> tab.
+      {/if}
+    </div>
   {/if}
 
   <div class="grid">
     <div class="metric"><div class="k">Total equity</div><div class="v">{equity == null ? DASH : money(equity)}</div></div>
-    <div class="metric"><div class="k">Open trades</div><div class="v">{funding === "prop" ? DASH : num(segOpen.length)}</div></div>
+    <div class="metric"><div class="k">Open trades</div><div class="v">{funding === "prop" && !propOverview?.present ? DASH : num(segOpen.length)}</div></div>
     <div class="metric">
       <div class="k">Realized P&L · {winLabel}</div>
       <div class="v {signClass(realized)}">{realized == null ? DASH : money(realized, { sign: true })}</div>

@@ -27,6 +27,7 @@
   let closedTrades = $state<ClosedTrade[]>([]);
   let news = $state<any>(null);
   let reports = $state<any>(null);
+  let propOverview = $state<any>(null); // /api/bot/prop/overview (Prop book only)
   let pnl30 = $state<Array<{ date?: string; pnl?: number | null }>>([]);
   let candlesBySymbol = $state<Record<string, Candle[]>>({});
   let wsStatus = $state<MarketStatus>("connecting");
@@ -99,7 +100,7 @@
   // onPositions still overwrites this with the live snapshot when it's up.
   async function poll() {
     try {
-      const [s, p, pos, bal, cfg, strat, sig, closed] = await Promise.all([
+      const [s, p, pos, bal, cfg, strat, sig, closed, propOv] = await Promise.all([
         api.stats(),
         api.performance(win),
         api.positions(),
@@ -108,6 +109,8 @@
         api.strategies(),
         api.signals(),
         api.closedTrades({ includePaper: true, limit: 100 }),
+        // Prop lives in its own journal; a failure here must not blank the rest.
+        api.propOverview(win).catch(() => null),
       ]);
       // Glance-card + sparkline data — non-blocking: a failure here must not
       // blank the core overview (each degrades to its own empty state).
@@ -120,6 +123,7 @@
       perf = p;
       positions = pos; // REST is authoritative — the WS only refreshes uPnL below
       balances = bal;
+      propOverview = propOv;
       config = cfg;
       strategies = strat;
       signals = Array.isArray(sig) ? sig : (sig?.signals ?? sig?.records ?? []);
@@ -384,7 +388,7 @@
     <div class="err panel">Couldn't reach the bot API: <span class="mono">{apiError}</span></div>
   {/if}
 
-  <ExecSummary {stats} {perf} {positions} {balances} {config} {strategies} {funding} {win} />
+  <ExecSummary {stats} {perf} {positions} {balances} {config} {strategies} {funding} {win} {propOverview} />
 
   <div class="glances">
     {#if latestReport}

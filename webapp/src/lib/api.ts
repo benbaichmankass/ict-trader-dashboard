@@ -282,6 +282,10 @@ export const api = {
     get<any>(`/api/bot/prop/status?account_id=${encodeURIComponent(accountId)}`, signal),
   propFills: (limit = 50, signal?: AbortSignal) => get<any>(`/api/bot/prop/fills?limit=${limit}`, signal),
   propTickets: (limit = 50, signal?: AbortSignal) => get<any>(`/api/bot/prop/tickets?limit=${limit}`, signal),
+  // Whole prop book for the Overview (equity over fresh accounts, open trades,
+  // windowed realized P&L) — DASH-PROP-OVERVIEW. 404 on a bot older than the endpoint.
+  propOverview: (window = "7d", signal?: AbortSignal) =>
+    get<any>(`/api/bot/prop/overview?window=${encodeURIComponent(window)}`, signal),
   propReconcile: (accountId = "breakout_1", signal?: AbortSignal) =>
     get<any>(`/api/bot/prop/reconcile?account_id=${encodeURIComponent(accountId)}`, signal),
 
