@@ -12,9 +12,20 @@
   let html = $state<string | null>(null);
   let loadingBody = $state(false);
 
+  // UI-UPGRADE-1 item 5: the Work page's "today's brief" rides in this roster
+  // too, at the top (it is usually the newest thing to read). It is a different
+  // document — markdown from /api/bot/work/brief, not a rendered system report —
+  // so it carries its own id and is shown as text. Fetched beside the index and
+  // never allowed to block it: a brief failure just leaves it out.
+  const BRIEF_ID = "__todays_brief__";
+  let brief = $state<any | null>(null);
+
   async function load() {
     loading = true;
     error = null;
+    api.workBrief()
+      .then((b) => { brief = b?.present ? b : null; })
+      .catch(() => { brief = null; });
     try {
       const raw = await api.reports();
       reports = raw?.reports ?? [];
@@ -33,6 +44,11 @@
 
   async function open(id: string) {
     selectedId = id;
+    if (id === BRIEF_ID) {
+      html = null;
+      loadingBody = false;
+      return;
+    }
     loadingBody = true;
     html = null;
     try {
@@ -65,6 +81,16 @@
   {:else}
     <div class="split">
       <div class="list panel">
+        {#if brief}
+          <button class="rowbtn" class:active={selectedId === BRIEF_ID} onclick={() => open(BRIEF_ID)}>
+            <div class="r1">
+              <span class="dot warn"></span>
+              <span class="w">Today's brief</span>
+              <span class="when muted">{brief.snapshot?.ageSeconds != null ? `rendered ${Math.round(brief.snapshot.ageSeconds)}s ago` : "live"}</span>
+            </div>
+            <div class="hl">Daily brief from the Work page — what came due, decisions for you, what moved</div>
+          </button>
+        {/if}
         {#each reports as r (r.id)}
           <button class="rowbtn" class:active={r.id === selectedId} onclick={() => open(r.id)}>
             <div class="r1">
@@ -77,7 +103,9 @@
         {/each}
       </div>
       <div class="viewer panel">
-        {#if loadingBody}
+        {#if selectedId === BRIEF_ID && brief}
+          <pre class="md">{brief.markdown ?? ""}</pre>
+        {:else if loadingBody}
           <div class="muted pad">Loading report…</div>
         {:else if html}
           <iframe title="system report" srcdoc={html}></iframe>
@@ -108,5 +136,6 @@
   .viewer { padding: 0; overflow: hidden; }
   iframe { width: 100%; height: 70vh; border: 0; background: #fff; }
   .pad { padding: 16px; }
+  .md { margin: 0; padding: 16px; max-height: 70vh; overflow: auto; white-space: pre-wrap; font-size: 13px; line-height: 1.45; }
   .err { padding: 10px 12px; color: var(--neg); }
 </style>
