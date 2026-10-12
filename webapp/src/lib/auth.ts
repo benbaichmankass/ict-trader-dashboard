@@ -30,6 +30,7 @@
 
 import { writable } from "svelte/store";
 import { getBotApiUrl } from "./config";
+import { currentToken as currentDeviceToken, clearSession as clearDeviceSession } from "./session";
 
 const LS_KEY = "ict.authSession";
 
@@ -268,7 +269,11 @@ export async function login(email: string, password: string, signal?: AbortSigna
  */
 export function authHeaders(extra?: Record<string, string>): Record<string, string> {
   const headers: Record<string, string> = { Accept: "application/json", ...(extra ?? {}) };
-  const token = getAuthToken();
+  // UI-UPGRADE-1-AUTH: a Google + passkey device session (`ws_…`, 30-day
+  // sliding, revocable) takes precedence; the bot's `require_session` accepts
+  // it as well as the legacy password JWT, and `require_site_session` (the
+  // whole-site gate, default OFF) accepts ONLY it.
+  const token = currentDeviceToken() ?? getAuthToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
 }
@@ -288,6 +293,7 @@ export function authHeaders(extra?: Record<string, string>): Record<string, stri
  */
 export function handleUnauthorized(status: number, path: string): void {
   clearSession();
+  clearDeviceSession();
   authPrompt.set(
     status === 403
       ? `The bot refused the session for ${path} (403 — the account is no longer allowlisted). Sign in again.`

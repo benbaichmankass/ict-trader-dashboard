@@ -25,6 +25,9 @@
   import SectionLanding from "./components/SectionLanding.svelte";
   import Placeholder from "./components/Placeholder.svelte";
   import LoginPanel from "./components/LoginPanel.svelte";
+  import SignIn from "./routes/SignIn.svelte";
+  import Devices from "./routes/Devices.svelte";
+  import { currentToken as currentDeviceToken, onUnauthorized } from "./lib/session";
   import { nav, gotoSection, gotoDetail, SECTION_NAMES, SECTIONS, isSpecial, IMPLEMENTED_PAGES } from "./lib/nav";
   import { getBotApiUrl, setBotApiUrl } from "./lib/config";
   import { authPrompt, session, initSession } from "./lib/auth";
@@ -41,6 +44,14 @@
   // `auth.ts::handleUnauthorized`, called from the one chokepoint in `api.ts`.
   $effect(() => {
     if ($authPrompt) showSettings = true;
+  });
+  // UI-UPGRADE-1-AUTH: Google + passkey device session. Opt-in from Settings
+  // only — the dashboard stays fully usable signed out while the API's
+  // whole-site gate (SITE_AUTH_ENFORCE) is OFF.
+  let deviceSignedIn = $state(currentDeviceToken() != null);
+  let showDeviceSignIn = $state(false);
+  onUnauthorized(() => {
+    deviceSignedIn = false;
   });
   let sidebarOpen = $state(false);
   let apiUrlInput = $state(getBotApiUrl());
@@ -126,6 +137,17 @@
           <button class="save" onclick={saveSettings}>Save &amp; reload</button>
         </div>
         <p class="muted">Browser-direct HTTPS to the bot. Leave blank for the built-in default.</p>
+        <div class="devsession">
+          {#if deviceSignedIn}
+            <p class="muted">Signed in on this device (Google + passkey).</p>
+            <Devices />
+          {:else if showDeviceSignIn}
+            <SignIn onsignedin={() => { deviceSignedIn = true; showDeviceSignIn = false; }} />
+            <button class="save" onclick={() => (showDeviceSignIn = false)}>Cancel</button>
+          {:else}
+            <button class="save" onclick={() => (showDeviceSignIn = true)}>Sign in with Google + passkey</button>
+          {/if}
+        </div>
         <LoginPanel />
       </div>
     {/if}
@@ -207,6 +229,7 @@
   .back { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
 
   .settings { margin: 6px 16px; padding: 14px; }
+  .devsession { margin: 10px 0 14px; display: grid; gap: 8px; justify-items: start; }
   .settings label { display: block; margin-bottom: 6px; color: var(--muted); font-size: 12px; }
   .row { display: flex; gap: 8px; }
   .settings input { flex: 1; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 8px 10px; }
