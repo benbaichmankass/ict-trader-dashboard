@@ -58,12 +58,16 @@
   // "Paper" keeps only the portfolio-mirror books, not the soak roster.
   // Prop open trades come from the prop journal via /api/bot/prop/overview
   // (the manual bridge has no broker positions). Mapped to the Position shape
-  // the shared table renders; uPnL is genuinely unknown (no mark feed) -> null.
+  // the shared table renders. uPnL is the bot's per-trade figure (PROP-TRACKING,
+  // bot #17745): venue-measured (`venue_snapshot` / `venue_position`) or a
+  // labelled mark ESTIMATE (`mark_estimate`, rendered with "est."); null -> "—".
   const propOpen = $derived<Position[]>(
     (propOverview?.open_trades ?? []).map((t: any) => ({
       id: `prop-${t.id}`, symbol: t.symbol, side: t.side === "short" ? "sell" : "buy",
       qty: t.qty, entryPrice: t.entry_price, pattern: "prop", account: t.account_id,
-      unrealizedPnl: null, openedAt: t.opened_at, accountClass: "prop",
+      unrealizedPnl: typeof t.unrealized_pnl === "number" ? t.unrealized_pnl : null,
+      unrealizedPnlSource: t.unrealized_provenance === "estimated" ? "estimate" : (t.unrealized_state ?? null),
+      openedAt: t.opened_at, accountClass: "prop",
     }) as unknown as Position),
   );
   const segOpen = $derived(
@@ -74,9 +78,24 @@
         : positions.filter((p) => fundingOf(p) === funding),
   );
   const openUpnl = $derived.by(() => {
+    // Prop: the bot's BOOK figure, never a client sum of whichever trades happen to carry one. The measured
+    // total first; else the total including labelled mark estimates (shown as "est."); else "—".
+    if (funding === "prop") {
+      const m = propOverview?.unrealized_pnl, e = propOverview?.unrealized_pnl_incl_estimates;
+      if (typeof m === "number") return { sum: m, known: segOpen.length, est: false, partial: null };
+      if (typeof e === "number") return { sum: e, known: segOpen.length, est: true, partial: null };
+      // No book figure (an account's uPnL is unknown): the trades that DO carry one, summed and labelled as a
+      // partial "k of n trades" — never presented as the book total. "—" only when no trade carries a figure.
+      let ps = 0, pk = 0, pe = false;
+      for (const p of segOpen) if (typeof p.unrealizedPnl === "number") {
+        ps += p.unrealizedPnl; pk++; if ((p as any).unrealizedPnlSource === "estimate") pe = true;
+      }
+      return pk ? { sum: ps, known: pk, est: pe, partial: `${pk} of ${segOpen.length} trades` }
+                : { sum: null, known: 0, est: false, partial: null };
+    }
     let sum = 0, known = 0;
     for (const p of segOpen) if (typeof p.unrealizedPnl === "number") { sum += p.unrealizedPnl; known++; }
-    return { sum: known ? sum : null, known };
+    return { sum: known ? sum : null, known, est: false, partial: null };
   });
 
   // Windowed realized P&L / win rate / profit factor for the segment. "Paper"
@@ -170,7 +189,8 @@
     </div>
     <div class="metric">
       <div class="k">Unrealized P&L</div>
-      <div class="v {signClass(openUpnl.sum)}">{openUpnl.sum == null ? DASH : money(openUpnl.sum, { sign: true })}</div>
+      <div class="v {signClass(openUpnl.sum)}">{openUpnl.sum == null ? DASH : money(openUpnl.sum, { sign: true })}{#if openUpnl.est}<span class="est" title="Includes mark estimates: (Bybit mark − entry) × qty, not a venue figure"> est.</span>{/if}</div>
+      {#if openUpnl.partial}<div class="d est" title="Some trades carry no uPnL figure yet; this sums only the ones that do">partial · {openUpnl.partial}</div>{/if}
       {#if unrealPct}<div class="d {signClass(openUpnl.sum)}">{openUpnl.sum != null && openUpnl.sum >= 0 ? "+" : ""}{unrealPct}</div>{/if}
     </div>
     <div class="metric"><div class="k">Win rate · {winLabel}</div><div class="v">{winRate == null ? DASH : pct(winRate)}</div></div>
@@ -235,7 +255,7 @@
                 <td class="r mono">{money(p.entryPrice)}</td>
                 <td class="muted">{p.pattern ?? DASH}</td>
                 <td class="muted">{p.account ?? DASH}</td>
-                <td class="r mono {signClass(p.unrealizedPnl)}">{p.unrealizedPnl == null ? DASH : money(p.unrealizedPnl, { sign: true })}</td>
+                <td class="r mono {signClass(p.unrealizedPnl)}">{p.unrealizedPnl == null ? DASH : money(p.unrealizedPnl, { sign: true })}{#if p.unrealizedPnl != null && (p as any).unrealizedPnlSource === "estimate"}<span class="est" title="Mark estimate: (Bybit mark − entry) × qty, not a venue figure"> est.</span>{/if}</td>
                 <td class="muted">{agoFromIso(p.openedAt)}</td>
               </tr>
             {/each}
@@ -253,6 +273,7 @@
   .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
   .dot.pos { background: var(--pos); } .dot.neg { background: var(--neg); } .dot.warn { background: #e0a800; }
   .propnote { color: var(--muted); font-size: 12.5px; }
+  .est { color: var(--muted); font-size: 11px; font-weight: 400; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .metric { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
   .k { color: var(--muted); font-size: 11.5px; margin-bottom: 4px; }
