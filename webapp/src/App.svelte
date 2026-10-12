@@ -85,6 +85,15 @@
     Runbooks,
   };
 
+  // Settings is reachable from the top bar too: on phones the drawer's footer
+  // can sit under the browser toolbar, and the panel opens in the main column,
+  // so close the drawer and bring the panel into view.
+  function toggleSettings() {
+    showSettings = !showSettings;
+    sidebarOpen = false;
+    if (showSettings) window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   function pickSection(s: string) {
     gotoSection(s);
     sidebarOpen = false;
@@ -103,7 +112,7 @@
       {/each}
     </div>
     <div class="side-foot">
-      <button class="gear" title="Settings" onclick={() => (showSettings = !showSettings)}>
+      <button class="gear" title="Settings" onclick={toggleSettings}>
         ⚙ Settings{#if $authPrompt}<span class="lock" title="A tab needs a signed-in session">🔒</span>{:else if $session}<span class="sig" title="Signed in">●</span>{/if}
       </button>
     </div>
@@ -127,6 +136,9 @@
         <button class="crumb" onclick={() => pickSection($nav.section)}>{$nav.section}</button>
         {#if $nav.detail}<span class="sep">/</span><span class="crumb cur">{$nav.detail}</span>{/if}
       </div>
+      <button class="topgear" title="Settings" aria-label="Settings" onclick={toggleSettings}>
+        ⚙{#if $authPrompt}<span class="lock">🔒</span>{:else if $session}<span class="sig">●</span>{/if}
+      </button>
     </header>
 
     {#if showSettings}
@@ -194,6 +206,7 @@
     position: sticky;
     top: 0;
     height: 100vh;
+    height: 100dvh;
   }
   .brand { display: flex; align-items: center; gap: 8px; font-size: 16px; padding: 4px 8px 14px; }
   .logo { color: var(--accent); }
@@ -238,6 +251,8 @@
 
   footer { padding: 12px 16px; border-top: 1px solid var(--border); font-size: 12px; }
   .scrim { display: none; }
+  .topgear { margin-left: auto; background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 8px; padding: 4px 10px; cursor: pointer; font-size: 15px; }
+  .topgear:hover { color: var(--text); }
 
   @media (max-width: 760px) {
     .sidebar {
