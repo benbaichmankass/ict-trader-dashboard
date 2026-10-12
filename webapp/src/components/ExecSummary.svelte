@@ -82,13 +82,20 @@
     // total first; else the total including labelled mark estimates (shown as "est."); else "—".
     if (funding === "prop") {
       const m = propOverview?.unrealized_pnl, e = propOverview?.unrealized_pnl_incl_estimates;
-      if (typeof m === "number") return { sum: m, known: segOpen.length, est: false };
-      if (typeof e === "number") return { sum: e, known: segOpen.length, est: true };
-      return { sum: null, known: 0, est: false };
+      if (typeof m === "number") return { sum: m, known: segOpen.length, est: false, partial: null };
+      if (typeof e === "number") return { sum: e, known: segOpen.length, est: true, partial: null };
+      // No book figure (an account's uPnL is unknown): the trades that DO carry one, summed and labelled as a
+      // partial "k of n trades" — never presented as the book total. "—" only when no trade carries a figure.
+      let ps = 0, pk = 0, pe = false;
+      for (const p of segOpen) if (typeof p.unrealizedPnl === "number") {
+        ps += p.unrealizedPnl; pk++; if ((p as any).unrealizedPnlSource === "estimate") pe = true;
+      }
+      return pk ? { sum: ps, known: pk, est: pe, partial: `${pk} of ${segOpen.length} trades` }
+                : { sum: null, known: 0, est: false, partial: null };
     }
     let sum = 0, known = 0;
     for (const p of segOpen) if (typeof p.unrealizedPnl === "number") { sum += p.unrealizedPnl; known++; }
-    return { sum: known ? sum : null, known, est: false };
+    return { sum: known ? sum : null, known, est: false, partial: null };
   });
 
   // Windowed realized P&L / win rate / profit factor for the segment. "Paper"
@@ -183,6 +190,7 @@
     <div class="metric">
       <div class="k">Unrealized P&L</div>
       <div class="v {signClass(openUpnl.sum)}">{openUpnl.sum == null ? DASH : money(openUpnl.sum, { sign: true })}{#if openUpnl.est}<span class="est" title="Includes mark estimates: (Bybit mark − entry) × qty, not a venue figure"> est.</span>{/if}</div>
+      {#if openUpnl.partial}<div class="d est" title="Some trades carry no uPnL figure yet; this sums only the ones that do">partial · {openUpnl.partial}</div>{/if}
       {#if unrealPct}<div class="d {signClass(openUpnl.sum)}">{openUpnl.sum != null && openUpnl.sum >= 0 ? "+" : ""}{unrealPct}</div>{/if}
     </div>
     <div class="metric"><div class="k">Win rate · {winLabel}</div><div class="v">{winRate == null ? DASH : pct(winRate)}</div></div>
