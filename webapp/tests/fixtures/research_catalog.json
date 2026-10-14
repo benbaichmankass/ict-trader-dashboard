@@ -1,0 +1,576 @@
+{
+ "total": 606,
+ "matched": 606,
+ "limit": 6,
+ "offset": 0,
+ "sort": "lastActivity",
+ "order": "desc",
+ "facets": {
+  "theme": {
+   "new_strategy_prop": 326,
+   "live_strategy": 138,
+   "none": 56,
+   "ml_health": 32,
+   "regime": 29,
+   "macro": 21,
+   "infra": 4
+  },
+  "status": {
+   "result": 479,
+   "blocked": 59,
+   "dispatched": 41,
+   "due": 15,
+   "retired": 7,
+   "queued": 5
+  },
+  "verdict": {
+   "fail": 196,
+   "indeterminate": 141,
+   "none": 114,
+   "pass": 91,
+   "no_action_warranted": 49,
+   "wiring_only": 15
+  },
+  "goal": {
+   "none": 498,
+   "G4": 49,
+   "G2": 25,
+   "G6": 19,
+   "G1": 12,
+   "G5": 3
+  },
+  "backend": {
+   "runner": 549,
+   "trainer": 54,
+   "gpu": 3
+  },
+  "kind": {
+   "experiment": 586,
+   "deterministic": 19,
+   "inferential": 1
+  },
+  "stuck": {
+   "no": 494,
+   "yes": 112
+  }
+ },
+ "items": [
+  {
+   "id": "RQ-20261013-1414-01",
+   "title": "AI trader / linear family: is a multinomial logit as good as LightGBM on the BTC/ETH/SOL 15m volatility-regime heads? (family has 0 registered models)",
+   "summary": "On the SAME 15m v002 shards, features, purged folds and final-90-day holdout, does a plain numpy multinomial logistic regression (linear_logit family, 0 registered models) come within 0.01 macro-F1 of the incumbent LightGBM regime learner on ALL of BTCUSDT, ETHUSDT and SOLUSDT? If so the regime axis does not need a boosted tree, and a zero-dependency, interpretable head is a live option.",
+   "whyItMatters": "ml_plan_status.py --diversity (2026-10-13): linear_logit has 0 registered models and 0 open plan items; gbdt is 75 of 96 (78%). All three advisory heads are GBDT. Nobody has measured how much of the head's macro-F1 is the tree and how much is just the rolling-vol feature. DATASET PATHS UNVERIFIED FROM THIS SANDBOX: the trainer shards are not reachable here. The 15m v002 BTC/ETH/SOL shards and the base feature names are the ones queued unit RQ-20261012-75b2-19..21 already declare (MEASURED present on the trainer 2026-10-11 per RQ-20261011-9da8-01); a missing column lands as a dead NaN feature or producer_failed, which research-ops must read as a ROUTE FAULT (fix the path, re-queue), never as a verdict.",
+   "kind": "experiment",
+   "cadence": "once",
+   "theme": "ml_health",
+   "priority": 2,
+   "roadmap": [
+    {
+     "id": "M25",
+     "name": "ML promotion and consolidation",
+     "goal": "G4",
+     "goalName": "AI trader (ML and regime knowledge)",
+     "status": "active"
+    }
+   ],
+   "status": "dispatched",
+   "fileStatus": "queued",
+   "dueState": "not_due",
+   "dueReason": "cadence=once and it ran at 2026-10-13T23:04:44+00:00",
+   "blockedReason": null,
+   "stuck": false,
+   "stuckReason": null,
+   "rule": {
+    "id": "RULE-RQ20261013-1414-01-LINEAR-VS-GBDT-REGIME",
+    "registeredAt": "2026-10-13",
+    "registeredBeforeRun": true,
+    "statistic": "Paired per-fold macro-F1 difference (logit minus LightGBM) on identical purged expanding walk-forward folds (5 folds, embargo 96 rows, min_train_frac 0.4) and on the holdout window, per symbol; mean over folds. Applied by ml_bakeoff.py evaluate_rule from this unit's ml_bakeoff.rule.",
+    "text": "PASS (non-inferior) IF logit - lgbm macro-F1 >= -0.010 on the CV mean on ALL THREE symbols AND >= -0.010 on the holdout on all three: a linear head is a registrable alternative family. FAIL IF logit - lgbm < -0.030 on the CV mean on EVERY symbol (the tree is doing real work everywhere; closes only this untuned unweighted logit on these 6 features). INDETERMINATE otherwise (mixed by symbol), or if folds < 3 or an arm is unavailable."
+   },
+   "power": {
+    "state": null,
+    "expectedN": 8640,
+    "minDetectableEffect": 0.05
+   },
+   "verdict": null,
+   "readState": null,
+   "resultNote": null,
+   "metrics": {},
+   "resultCount": 0,
+   "dataUsed": {
+    "workflow": null,
+    "harness": null,
+    "inputs": {
+     "research_unit": "RQ-20261013-1414-01"
+    },
+    "dataInputs": {},
+    "population": null,
+    "n": null,
+    "store": "research/results/"
+   },
+   "backend": "trainer",
+   "estMinutes": 25,
+   "createdAt": "2026-10-13T00:00:00Z",
+   "lastDispatchedAt": "2026-10-13T23:04:44Z",
+   "latestResultAt": null,
+   "lastActivity": "2026-10-13T23:04:44Z",
+   "links": {
+    "unit": "https://github.com/benbaichmankass/Metis-Insights/blob/main/research/queue/RQ-20261013-1414-01.yaml",
+    "results": [],
+    "run": null
+   }
+  },
+  {
+   "id": "RQ-20261013-407c-12",
+   "title": "Session/time-of-day, trend_donchian_eth_4h: does skipping one pre-registered UTC session block (Asia 00-07, US-open 12-16, late 20-23) beat the declared entry net of the full cost stack?",
+   "summary": "M21 round 3 mined only two shared hour pockets (4h donchian hour 0, the 19-20 UTC pocket) and recorded time_of_day = n/a for the 1h/2h families: per-leg hour cells were deliberately NOT mined. This unit does not mine either. It tests three session blocks fixed BEFORE any run for market-structure reasons (Asia low-liquidity, US cash-open volatility, late-US/roll), applied identically to trend_donchian_eth_4h (ETHUSDT 4h). On the pinned 730d window (2024-10-05 .. 2026-10-04 23:59), same cost stack as the evidence builder, does skipping any one block (signal-bar open hour, UTC) beat the declared entry by a material margin, with no worse drawdown and in at least 3 of 4 calendar folds?",
+   "whyItMatters": "Session structure is a cross-asset claim, not a per-leg one: the same three blocks are run on seven crypto legs in seven sibling units (RQ-20261013-407c-10..15 and -19) so a real session effect must reproduce across legs and timeframes, while a lone pass is read as noise. Fees, funding and liquidity all vary by session; if one block is consistently the drag it is a portfolio-wide entry filter, the cheapest structural lever there is.",
+   "kind": "experiment",
+   "cadence": "once",
+   "theme": "regime",
+   "priority": 2,
+   "roadmap": [
+    {
+     "id": "L-REGIME",
+     "name": "Regime program -- know when each strategy is primed",
+     "goal": "G4",
+     "goalName": "AI trader (ML and regime knowledge)",
+     "status": "active"
+    }
+   ],
+   "status": "dispatched",
+   "fileStatus": "queued",
+   "dueState": "not_due",
+   "dueReason": "cadence=once and it ran at 2026-10-13T23:04:44+00:00",
+   "blockedReason": null,
+   "stuck": false,
+   "stuckReason": null,
+   "rule": {
+    "id": "RULE-20261013407C12-SESSION",
+    "registeredAt": "2026-10-13",
+    "registeredBeforeRun": true,
+    "statistic": "Per arm, from the harness's own --json summary of scripts/backtest_trend.py (argv built by regime_debt_matrix.build_harness_cmd, the evidence builder's own, plus the arm's raw tokens; full cost stack: fee + resolved slippage + funding, never a zero default): total_trades, net_total_r, max_drawdown_r, plus net_r per fold over FOUR equal calendar spans of the window (same date boundaries every arm). Arms: B = leg as declared, SA = --skip-hours=0,1,2,3,4,5,6,7, SU = --skip-hours=12,13,14,15,16, SL\u2026",
+    "text": "indeterminate IF the positive control fails or n(B) < 39 (underpowered: no verdict, extend the window or redesign; never FAIL on thin n). A candidate C PASSES iff dR >= 1.5 R AND dDD <= 0 AND fold_wins >= 3 of 4. PASS IF any candidate passes (best = highest dR; the script's generic label reads 'reachable_lever_beats_removed'): a Tier-3 PROPOSAL note on the owning checklist row for the manager, never a config edit; two passing candidates within 0.5 R of each other is a preference, not a finding. FAIL IF none passes (script label 'no_reachable_lever_beats_removed'): the declared skip-hours stands; the axis is recorded honest_negative on this window. The 1.5 R bar, the drawdown clause, the 3-of-4 fold majority and the 39 floor are not changed after any result."
+   },
+   "power": {
+    "state": null,
+    "expectedN": 85,
+    "minDetectableEffect": 0.45
+   },
+   "verdict": null,
+   "readState": null,
+   "resultNote": null,
+   "metrics": {},
+   "resultCount": 0,
+   "dataUsed": {
+    "workflow": null,
+    "harness": null,
+    "inputs": {
+     "research_unit": "RQ-20261013-407c-12"
+    },
+    "dataInputs": {},
+    "population": null,
+    "n": null,
+    "store": "research/results/"
+   },
+   "backend": "runner",
+   "estMinutes": 15,
+   "createdAt": "2026-10-13T00:00:00Z",
+   "lastDispatchedAt": "2026-10-13T23:04:44Z",
+   "latestResultAt": null,
+   "lastActivity": "2026-10-13T23:04:44Z",
+   "links": {
+    "unit": "https://github.com/benbaichmankass/Metis-Insights/blob/main/research/queue/RQ-20261013-407c-12.yaml",
+    "results": [],
+    "run": null
+   }
+  },
+  {
+   "id": "RQ-20261013-407c-13",
+   "title": "Session/time-of-day, eth_pullback_2h: does skipping one pre-registered UTC session block (Asia 00-07, US-open 12-16, late 20-23) beat the declared entry net of the full cost stack?",
+   "summary": "M21 round 3 mined only two shared hour pockets (4h donchian hour 0, the 19-20 UTC pocket) and recorded time_of_day = n/a for the 1h/2h families: per-leg hour cells were deliberately NOT mined. This unit does not mine either. It tests three session blocks fixed BEFORE any run for market-structure reasons (Asia low-liquidity, US cash-open volatility, late-US/roll), applied identically to eth_pullback_2h (ETHUSDT 2h). On the pinned 730d window (2024-10-05 .. 2026-10-04 23:59), same cost stack as the evidence builder, does skipping any one block (signal-bar open hour, UTC) beat the declared entry by a material margin, with no worse drawdown and in at least 3 of 4 calendar folds?",
+   "whyItMatters": "Session structure is a cross-asset claim, not a per-leg one: the same three blocks are run on seven crypto legs in seven sibling units (RQ-20261013-407c-10..15 and -19) so a real session effect must reproduce across legs and timeframes, while a lone pass is read as noise. Fees, funding and liquidity all vary by session; if one block is consistently the drag it is a portfolio-wide entry filter, the cheapest structural lever there is.",
+   "kind": "experiment",
+   "cadence": "once",
+   "theme": "regime",
+   "priority": 3,
+   "roadmap": [
+    {
+     "id": "L-REGIME",
+     "name": "Regime program -- know when each strategy is primed",
+     "goal": "G4",
+     "goalName": "AI trader (ML and regime knowledge)",
+     "status": "active"
+    }
+   ],
+   "status": "dispatched",
+   "fileStatus": "queued",
+   "dueState": "not_due",
+   "dueReason": "cadence=once and it ran at 2026-10-13T23:04:44+00:00",
+   "blockedReason": null,
+   "stuck": false,
+   "stuckReason": null,
+   "rule": {
+    "id": "RULE-20261013407C13-SESSION",
+    "registeredAt": "2026-10-13",
+    "registeredBeforeRun": true,
+    "statistic": "Per arm, from the harness's own --json summary of scripts/backtest_pullback.py (argv built by regime_debt_matrix.build_harness_cmd, the evidence builder's own, plus the arm's raw tokens; full cost stack: fee + resolved slippage + funding, never a zero default): total_trades, net_total_r, max_drawdown_r, plus net_r per fold over FOUR equal calendar spans of the window (same date boundaries every arm). Arms: B = leg as declared, SA = --skip-hours=0,1,2,3,4,5,6,7, SU = --skip-hours=12,13,14,15,16,\u2026",
+    "text": "indeterminate IF the positive control fails or n(B) < 39 (underpowered: no verdict, extend the window or redesign; never FAIL on thin n). A candidate C PASSES iff dR >= 1.0 R AND dDD <= 0 AND fold_wins >= 3 of 4. PASS IF any candidate passes (best = highest dR; the script's generic label reads 'reachable_lever_beats_removed'): a Tier-3 PROPOSAL note on the owning checklist row for the manager, never a config edit; two passing candidates within 0.5 R of each other is a preference, not a finding. FAIL IF none passes (script label 'no_reachable_lever_beats_removed'): the declared skip-hours stands; the axis is recorded honest_negative on this window. The 1.0 R bar, the drawdown clause, the 3-of-4 fold majority and the 39 floor are not changed after any result."
+   },
+   "power": {
+    "state": null,
+    "expectedN": 116,
+    "minDetectableEffect": 0.45
+   },
+   "verdict": null,
+   "readState": null,
+   "resultNote": null,
+   "metrics": {},
+   "resultCount": 0,
+   "dataUsed": {
+    "workflow": null,
+    "harness": null,
+    "inputs": {
+     "research_unit": "RQ-20261013-407c-13"
+    },
+    "dataInputs": {},
+    "population": null,
+    "n": null,
+    "store": "research/results/"
+   },
+   "backend": "runner",
+   "estMinutes": 15,
+   "createdAt": "2026-10-13T00:00:00Z",
+   "lastDispatchedAt": "2026-10-13T23:04:44Z",
+   "latestResultAt": null,
+   "lastActivity": "2026-10-13T23:04:44Z",
+   "links": {
+    "unit": "https://github.com/benbaichmankass/Metis-Insights/blob/main/research/queue/RQ-20261013-407c-13.yaml",
+    "results": [],
+    "run": null
+   }
+  },
+  {
+   "id": "RQ-20261013-407c-14",
+   "title": "Session/time-of-day, xrp_pullback_2h: does skipping one pre-registered UTC session block (Asia 00-07, US-open 12-16, late 20-23) beat the declared entry net of the full cost stack?",
+   "summary": "M21 round 3 mined only two shared hour pockets (4h donchian hour 0, the 19-20 UTC pocket) and recorded time_of_day = n/a for the 1h/2h families: per-leg hour cells were deliberately NOT mined. This unit does not mine either. It tests three session blocks fixed BEFORE any run for market-structure reasons (Asia low-liquidity, US cash-open volatility, late-US/roll), applied identically to xrp_pullback_2h (XRPUSDT 2h). On the pinned 730d window (2024-10-05 .. 2026-10-04 23:59), same cost stack as the evidence builder, does skipping any one block (signal-bar open hour, UTC) beat the declared entry by a material margin, with no worse drawdown and in at least 3 of 4 calendar folds?",
+   "whyItMatters": "Session structure is a cross-asset claim, not a per-leg one: the same three blocks are run on seven crypto legs in seven sibling units (RQ-20261013-407c-10..15 and -19) so a real session effect must reproduce across legs and timeframes, while a lone pass is read as noise. Fees, funding and liquidity all vary by session; if one block is consistently the drag it is a portfolio-wide entry filter, the cheapest structural lever there is.",
+   "kind": "experiment",
+   "cadence": "once",
+   "theme": "regime",
+   "priority": 3,
+   "roadmap": [
+    {
+     "id": "L-REGIME",
+     "name": "Regime program -- know when each strategy is primed",
+     "goal": "G4",
+     "goalName": "AI trader (ML and regime knowledge)",
+     "status": "active"
+    }
+   ],
+   "status": "dispatched",
+   "fileStatus": "queued",
+   "dueState": "not_due",
+   "dueReason": "cadence=once and it ran at 2026-10-13T23:04:44+00:00",
+   "blockedReason": null,
+   "stuck": false,
+   "stuckReason": null,
+   "rule": {
+    "id": "RULE-20261013407C14-SESSION",
+    "registeredAt": "2026-10-13",
+    "registeredBeforeRun": true,
+    "statistic": "Per arm, from the harness's own --json summary of scripts/backtest_pullback.py (argv built by regime_debt_matrix.build_harness_cmd, the evidence builder's own, plus the arm's raw tokens; full cost stack: fee + resolved slippage + funding, never a zero default): total_trades, net_total_r, max_drawdown_r, plus net_r per fold over FOUR equal calendar spans of the window (same date boundaries every arm). Arms: B = leg as declared, SA = --skip-hours=0,1,2,3,4,5,6,7, SU = --skip-hours=12,13,14,15,16,\u2026",
+    "text": "indeterminate IF the positive control fails or n(B) < 39 (underpowered: no verdict, extend the window or redesign; never FAIL on thin n). A candidate C PASSES iff dR >= 1.0 R AND dDD <= 0 AND fold_wins >= 3 of 4. PASS IF any candidate passes (best = highest dR; the script's generic label reads 'reachable_lever_beats_removed'): a Tier-3 PROPOSAL note on the owning checklist row for the manager, never a config edit; two passing candidates within 0.5 R of each other is a preference, not a finding. FAIL IF none passes (script label 'no_reachable_lever_beats_removed'): the declared skip-hours stands; the axis is recorded honest_negative on this window. The 1.0 R bar, the drawdown clause, the 3-of-4 fold majority and the 39 floor are not changed after any result."
+   },
+   "power": {
+    "state": null,
+    "expectedN": 122,
+    "minDetectableEffect": 0.45
+   },
+   "verdict": null,
+   "readState": null,
+   "resultNote": null,
+   "metrics": {},
+   "resultCount": 0,
+   "dataUsed": {
+    "workflow": null,
+    "harness": null,
+    "inputs": {
+     "research_unit": "RQ-20261013-407c-14"
+    },
+    "dataInputs": {},
+    "population": null,
+    "n": null,
+    "store": "research/results/"
+   },
+   "backend": "runner",
+   "estMinutes": 15,
+   "createdAt": "2026-10-13T00:00:00Z",
+   "lastDispatchedAt": "2026-10-13T23:04:44Z",
+   "latestResultAt": null,
+   "lastActivity": "2026-10-13T23:04:44Z",
+   "links": {
+    "unit": "https://github.com/benbaichmankass/Metis-Insights/blob/main/research/queue/RQ-20261013-407c-14.yaml",
+    "results": [],
+    "run": null
+   }
+  },
+  {
+   "id": "RQ-20261013-1414-02",
+   "title": "AI trader / probability quality: do the 15m regime learners beat the class prior on LOG-LOSS, not only on thresholded macro-F1? (the prerequisite for conformal abstention)",
+   "summary": "On the 15m v002 shards (BTC/ETH/SOL), purged CV and holdout, does LightGBM or a numpy logit beat the class-prior probability on LOG-LOSS by at least 0.005 nats on all three symbols? Macro-F1 is an operating-point metric and the volatile label has a ~4.6% base rate (the base-rate cliff, ROADMAP T0.1); log-loss grades the probabilities themselves.",
+   "whyItMatters": "Conformal abstention (RQ-20261011-9da8-03, blocked) and any confidence-gated use of a regime head need calibrated, better-than-prior probabilities. Every queued ML unit grades macro-F1; none grades probability quality. A head that wins on F1 but not on log-loss is selecting a threshold, not carrying information, and the conformal lever would be built on sand. DATASET PATHS UNVERIFIED FROM THIS SANDBOX: the trainer shards are not reachable here. The 15m v002 BTC/ETH/SOL shards and the base feature names are the ones queued unit RQ-20261012-75b2-19..21 already declare (MEASURED present on the trainer 2026-10-11 per RQ-20261011-9da8-01); a missing column lands as a dead NaN feature or producer_failed, which research-ops must read as a ROUTE FAULT (fix the path, re-queue), never as a verdict.",
+   "kind": "experiment",
+   "cadence": "once",
+   "theme": "ml_health",
+   "priority": 2,
+   "roadmap": [
+    {
+     "id": "M25",
+     "name": "ML promotion and consolidation",
+     "goal": "G4",
+     "goalName": "AI trader (ML and regime knowledge)",
+     "status": "active"
+    }
+   ],
+   "status": "result",
+   "fileStatus": "queued",
+   "dueState": "not_due",
+   "dueReason": null,
+   "blockedReason": null,
+   "stuck": false,
+   "stuckReason": null,
+   "rule": {
+    "id": "RULE-RQ20261013-1414-02-REGIME-LOGLOSS-VS-PRIOR",
+    "registeredAt": "2026-10-13",
+    "registeredBeforeRun": true,
+    "statistic": "Paired per-fold difference in multiclass log-loss (prior minus learner, signed so positive = learner better) on identical purged folds (5, embargo 96) and on the holdout, per symbol; mean over folds. ml_bakeoff.py evaluate_rule applies ml_bakeoff.rule.",
+    "text": "PASS IF a candidate (lgbm or logit) beats the class prior by >= +0.005 nats on the CV mean on ALL THREE symbols AND by >= 0 on the holdout on all three: the head carries probabilistic information, and the conformal lever is worth building. FAIL IF no candidate beats the prior by >= 0 on the CV mean on ANY symbol (macro-F1 skill is a threshold artifact; the conformal lever is not worth building on these heads at this feature set). INDETERMINATE otherwise, or if folds < 3 or an arm is unavailable. headline_checks reports lgbm minus logit on log-loss."
+   },
+   "power": {
+    "state": "accruing",
+    "expectedN": 8640,
+    "minDetectableEffect": 0.05
+   },
+   "verdict": "indeterminate",
+   "readState": "measured",
+   "resultNote": "between the pass bar and the fail floor",
+   "metrics": {
+    "baseline": "prior",
+    "candidates": [
+     "lgbm",
+     "logit"
+    ],
+    "controls": [],
+    "delta_sign": "positive = learner better than reference",
+    "engine": "scripts/research/ml_bakeoff.py",
+    "higher_is_better": false,
+    "metric": "logloss",
+    "n_folds_cv_min_over_groups": 5,
+    "seconds": 82.2
+   },
+   "resultCount": 1,
+   "dataUsed": {
+    "workflow": null,
+    "harness": "python3 scripts/research/ml_bakeoff.py",
+    "inputs": {
+     "research_unit": "RQ-20261013-1414-02"
+    },
+    "dataInputs": {},
+    "population": "3 group(s) ['BTCUSDT', 'ETHUSDT', 'SOLUSDT']; baseline prior; candidates ['lgbm', 'logit']; metric logloss; n = baseline OOS test rows summed over groups; cv folds per group >= 5",
+    "n": 108000,
+    "store": "research/results/"
+   },
+   "backend": "trainer",
+   "estMinutes": 25,
+   "createdAt": "2026-10-13T00:00:00Z",
+   "lastDispatchedAt": "2026-10-13T21:54:37Z",
+   "latestResultAt": "2026-10-13T23:04:39Z",
+   "lastActivity": "2026-10-13T23:04:39Z",
+   "links": {
+    "unit": "https://github.com/benbaichmankass/Metis-Insights/blob/main/research/queue/RQ-20261013-1414-02.yaml",
+    "results": [
+     "https://github.com/benbaichmankass/Metis-Insights/blob/main/research/results/RQ-20261013-1414-02/38474112471.jsonl"
+    ],
+    "run": "https://github.com/benbaichmankass/Metis-Insights/actions/runs/38474112471"
+   }
+  },
+  {
+   "id": "RQ-20261013-407c-11",
+   "title": "Session/time-of-day, trend_donchian_sol: does skipping one pre-registered UTC session block (Asia 00-07, US-open 12-16, late 20-23) beat the declared entry net of the full cost stack?",
+   "summary": "M21 round 3 mined only two shared hour pockets (4h donchian hour 0, the 19-20 UTC pocket) and recorded time_of_day = n/a for the 1h/2h families: per-leg hour cells were deliberately NOT mined. This unit does not mine either. It tests three session blocks fixed BEFORE any run for market-structure reasons (Asia low-liquidity, US cash-open volatility, late-US/roll), applied identically to trend_donchian_sol (SOLUSDT 1h). On the pinned 730d window (2024-10-05 .. 2026-10-04 23:59), same cost stack as the evidence builder, does skipping any one block (signal-bar open hour, UTC) beat the declared entry by a material margin, with no worse drawdown and in at least 3 of 4 calendar folds?",
+   "whyItMatters": "Session structure is a cross-asset claim, not a per-leg one: the same three blocks are run on seven crypto legs in seven sibling units (RQ-20261013-407c-10..15 and -19) so a real session effect must reproduce across legs and timeframes, while a lone pass is read as noise. Fees, funding and liquidity all vary by session; if one block is consistently the drag it is a portfolio-wide entry filter, the cheapest structural lever there is.",
+   "kind": "experiment",
+   "cadence": "once",
+   "theme": "regime",
+   "priority": 2,
+   "roadmap": [
+    {
+     "id": "L-REGIME",
+     "name": "Regime program -- know when each strategy is primed",
+     "goal": "G4",
+     "goalName": "AI trader (ML and regime knowledge)",
+     "status": "active"
+    }
+   ],
+   "status": "result",
+   "fileStatus": "queued",
+   "dueState": "not_due",
+   "dueReason": null,
+   "blockedReason": null,
+   "stuck": false,
+   "stuckReason": null,
+   "rule": {
+    "id": "RULE-20261013407C11-SESSION",
+    "registeredAt": "2026-10-13",
+    "registeredBeforeRun": true,
+    "statistic": "Per arm, from the harness's own --json summary of scripts/backtest_trend.py (argv built by regime_debt_matrix.build_harness_cmd, the evidence builder's own, plus the arm's raw tokens; full cost stack: fee + resolved slippage + funding, never a zero default): total_trades, net_total_r, max_drawdown_r, plus net_r per fold over FOUR equal calendar spans of the window (same date boundaries every arm). Arms: B = leg as declared, SA = --skip-hours=0,1,2,3,4,5,6,7, SU = --skip-hours=12,13,14,15,16, SL\u2026",
+    "text": "indeterminate IF the positive control fails or n(B) < 39 (underpowered: no verdict, extend the window or redesign; never FAIL on thin n). A candidate C PASSES iff dR >= 2.0 R AND dDD <= 0 AND fold_wins >= 3 of 4. PASS IF any candidate passes (best = highest dR; the script's generic label reads 'reachable_lever_beats_removed'): a Tier-3 PROPOSAL note on the owning checklist row for the manager, never a config edit; two passing candidates within 0.5 R of each other is a preference, not a finding. FAIL IF none passes (script label 'no_reachable_lever_beats_removed'): the declared skip-hours stands; the axis is recorded honest_negative on this window. The 2.0 R bar, the drawdown clause, the 3-of-4 fold majority and the 39 floor are not changed after any result."
+   },
+   "power": {
+    "state": "accruing",
+    "expectedN": 120,
+    "minDetectableEffect": 0.45
+   },
+   "verdict": "fail",
+   "readState": "measured",
+   "resultNote": "FAIL / no_reachable_lever_beats_removed: no candidate clears the bar: the declared lever's lines are dead config and nothing reachable earns its place -- strip them (Tier-3, not done here)",
+   "metrics": {
+    "label": "no_reachable_lever_beats_removed",
+    "leg": "trend_donchian_sol"
+   },
+   "resultCount": 1,
+   "dataUsed": {
+    "workflow": null,
+    "harness": "python3 scripts/research/exit_lever_ablation.py",
+    "inputs": {
+     "research_unit": "RQ-20261013-407c-11"
+    },
+    "dataInputs": {},
+    "population": "trend_donchian_sol: 120 trades in the baseline arm 'B' on SOLUSDT 1h candles 2024-10-05 .. 2026-10-04 23:59, net of fee+slippage+funding (the harness's venue-aware stack); arms ['B', 'SA', 'SU', 'SL']",
+    "n": 120,
+    "store": "research/results/"
+   },
+   "backend": "runner",
+   "estMinutes": 15,
+   "createdAt": "2026-10-13T00:00:00Z",
+   "lastDispatchedAt": "2026-10-13T21:54:37Z",
+   "latestResultAt": "2026-10-13T23:04:38Z",
+   "lastActivity": "2026-10-13T23:04:38Z",
+   "links": {
+    "unit": "https://github.com/benbaichmankass/Metis-Insights/blob/main/research/queue/RQ-20261013-407c-11.yaml",
+    "results": [
+     "https://github.com/benbaichmankass/Metis-Insights/blob/main/research/results/RQ-20261013-407c-11/38474108881.jsonl"
+    ],
+    "run": "https://github.com/benbaichmankass/Metis-Insights/actions/runs/38474108881"
+   }
+  }
+ ],
+ "present": true,
+ "readState": "read",
+ "readErrors": [],
+ "roadmapAvailable": true,
+ "generatedAt": "2026-10-14T00:11:32Z",
+ "stayOnTop": {
+  "since": "2026-10-12T00:00:00Z",
+  "sinceKnown": true,
+  "new": {
+   "count": 116,
+   "items": [
+    {
+     "id": "RQ-20261013-1414-01",
+     "title": "AI trader / linear family: is a multinomial logit as good as LightGBM on the BTC/ETH/SOL 15m volatility-regime heads? (family has 0 registered models)",
+     "theme": "ml_health",
+     "status": "dispatched",
+     "verdict": null,
+     "lastActivity": "2026-10-13T23:04:44Z",
+     "stuckReason": null,
+     "createdAt": "2026-10-13T00:00:00Z"
+    },
+    {
+     "id": "RQ-20261013-407c-12",
+     "title": "Session/time-of-day, trend_donchian_eth_4h: does skipping one pre-registered UTC session block (Asia 00-07, US-open 12-16, late 20-23) beat the declared entry net of the full cost stack?",
+     "theme": "regime",
+     "status": "dispatched",
+     "verdict": null,
+     "lastActivity": "2026-10-13T23:04:44Z",
+     "stuckReason": null,
+     "createdAt": "2026-10-13T00:00:00Z"
+    }
+   ]
+  },
+  "stuck": {
+   "count": 112,
+   "items": [
+    {
+     "id": "RQ-20260830-002",
+     "title": "Monthly re-validation of every SHIPPED bracket-geometry cell on a live leg",
+     "theme": "live_strategy",
+     "status": "dispatched",
+     "verdict": null,
+     "lastActivity": "2026-09-29T12:55:48Z",
+     "stuckReason": "dispatched 2026-09-29T12:55:48Z with no landed result after 6h",
+     "createdAt": "2026-08-30T00:00:00Z"
+    },
+    {
+     "id": "RQ-20260831-002",
+     "title": "Thin-leg bracket-geometry accrual \u2014 the five 1d equity legs that cannot reach the power floor",
+     "theme": "live_strategy",
+     "status": "dispatched",
+     "verdict": null,
+     "lastActivity": "2026-09-30T11:59:38Z",
+     "stuckReason": "dispatched 2026-09-30T11:59:38Z with no landed result after 6h",
+     "createdAt": "2026-08-31T00:00:00Z"
+    }
+   ]
+  },
+  "due": {
+   "count": 15,
+   "items": [
+    {
+     "id": "RQ-20260928-001",
+     "title": "Does wiring the HTF trend-bias filter add net-of-cost edge on the 7 ict_scalp variant legs that declare htf_trend_filter_enabled: true but never receive htf_close/htf_ema (CA-A05-001 / JC-CA-02)?",
+     "theme": "live_strategy",
+     "status": "due",
+     "verdict": null,
+     "lastActivity": "2026-09-28T00:00:00Z",
+     "stuckReason": null,
+     "createdAt": "2026-09-28T00:00:00Z"
+    },
+    {
+     "id": "RQ-20261012-75b2-19",
+     "title": "Learner-family check: BTCUSDT 15m regime_label, sklearn HistGradientBoosting vs the incumbent LightGBM on identical purged folds",
+     "theme": "ml_health",
+     "status": "due",
+     "verdict": null,
+     "lastActivity": "2026-10-13T02:15:56Z",
+     "stuckReason": null,
+     "createdAt": "2026-10-12T00:00:00Z"
+    }
+   ]
+  },
+  "recentVerdicts": [
+   {
+    "id": "RQ-20261013-1414-02",
+    "title": "AI trader / probability quality: do the 15m regime learners beat the class prior on LOG-LOSS, not only on thresholded macro-F1? (the prerequisite for conformal abstention)",
+    "theme": "ml_health",
+    "status": "result",
+    "verdict": "indeterminate",
+    "lastActivity": "2026-10-13T23:04:39Z",
+    "stuckReason": null,
+    "createdAt": "2026-10-13T00:00:00Z"
+   },
+   {
+    "id": "RQ-20261013-407c-11",
+    "title": "Session/time-of-day, trend_donchian_sol: does skipping one pre-registered UTC session block (Asia 00-07, US-open 12-16, late 20-23) beat the declared entry net of the full cost stack?",
+    "theme": "regime",
+    "status": "result",
+    "verdict": "fail",
+    "lastActivity": "2026-10-13T23:04:38Z",
+    "stuckReason": null,
+    "createdAt": "2026-10-13T00:00:00Z"
+   }
+  ]
+ },
+ "freshness": "read from the VM working tree; ict-git-sync pulls main ~every 5 min"
+}
