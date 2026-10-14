@@ -1,0 +1,561 @@
+{
+ "trades": [
+  {
+   "id": "6604",
+   "account": "bybit_1",
+   "accountClass": "paper",
+   "isDemo": true,
+   "symbol": "BNBUSDT",
+   "assetClass": "crypto",
+   "side": "sell",
+   "pattern": "pairs_bnb_btc_a",
+   "qty": 0,
+   "entryPrice": 0,
+   "exitPrice": 0,
+   "realizedPnl": 0,
+   "pnlProvenance": "measured",
+   "journalTrust": "no_record",
+   "realizedPnlPct": 0,
+   "openedAt": "2026-10-13T23:02:30.519318+00:00",
+   "closedAt": "2026-10-14T00:01:51.731857+00:00",
+   "closeReason": "other"
+  },
+  {
+   "id": "6605",
+   "account": "bybit_1",
+   "accountClass": "paper",
+   "isDemo": true,
+   "symbol": "BTCUSDT",
+   "assetClass": "crypto",
+   "side": "buy",
+   "pattern": "pairs_bnb_btc_b",
+   "qty": 0,
+   "entryPrice": 0,
+   "exitPrice": 0,
+   "realizedPnl": 0,
+   "pnlProvenance": "measured",
+   "journalTrust": "no_record",
+   "realizedPnlPct": 0,
+   "openedAt": "2026-10-13T23:02:31.549623+00:00",
+   "closedAt": "2026-10-14T00:01:51.731857+00:00",
+   "closeReason": "other"
+  },
+  {
+   "id": "6601",
+   "account": "bybit_1",
+   "accountClass": "paper",
+   "isDemo": true,
+   "symbol": "SOLUSDT",
+   "assetClass": "crypto",
+   "side": "buy",
+   "pattern": "pairs_sol_eth_a",
+   "qty": 0,
+   "entryPrice": 0,
+   "exitPrice": 0,
+   "realizedPnl": 0,
+   "pnlProvenance": "measured",
+   "journalTrust": "no_record",
+   "realizedPnlPct": 0,
+   "openedAt": "2026-10-13T17:02:07.984831+00:00",
+   "closedAt": "2026-10-13T23:02:31.707947+00:00",
+   "closeReason": "other"
+  },
+  {
+   "id": "6602",
+   "account": "bybit_1",
+   "accountClass": "paper",
+   "isDemo": true,
+   "symbol": "ETHUSDT",
+   "assetClass": "crypto",
+   "side": "sell",
+   "pattern": "pairs_sol_eth_b",
+   "qty": 0,
+   "entryPrice": 0,
+   "exitPrice": 0,
+   "realizedPnl": 0,
+   "pnlProvenance": "measured",
+   "journalTrust": "no_record",
+   "realizedPnlPct": 0,
+   "openedAt": "2026-10-13T17:02:08.871383+00:00",
+   "closedAt": "2026-10-13T23:02:31.707947+00:00",
+   "closeReason": "other"
+  },
+  {
+   "id": "6599",
+   "account": "bybit_1",
+   "accountClass": "paper",
+   "isDemo": true,
+   "symbol": "BNBUSDT",
+   "assetClass": "crypto",
+   "side": "sell",
+   "pattern": "pairs_bnb_btc_a",
+   "qty": 0,
+   "entryPrice": 0,
+   "exitPrice": 0,
+   "realizedPnl": 0,
+   "pnlProvenance": "measured",
+   "journalTrust": "no_record",
+   "realizedPnlPct": 0,
+   "openedAt": "2026-10-13T16:01:15.268073+00:00",
+   "closedAt": "2026-10-13T18:05:26.096012+00:00",
+   "closeReason": "other"
+  },
+  {
+   "id": "6600",
+   "account": "bybit_1",
+   "accountClass": "paper",
+   "isDemo": true,
+   "symbol": "BTCUSDT",
+   "assetClass": "crypto",
+   "side": "buy",
+   "pattern": "pairs_bnb_btc_b",
+   "qty": 0,
+   "entryPrice": 0,
+   "exitPrice": 0,
+   "realizedPnl": 0,
+   "pnlProvenance": "measured",
+   "journalTrust": "no_record",
+   "realizedPnlPct": 0,
+   "openedAt": "2026-10-13T16:01:16.388532+00:00",
+   "closedAt": "2026-10-13T18:05:26.096012+00:00",
+   "closeReason": "other"
+  }
+ ],
+ "signals": [
+  {
+   "id": "cb6509f6-784f-4dfd-ab27-0a0bfca1f8a4",
+   "timestamp": "",
+   "symbol": "BTCUSDT",
+   "side": "buy",
+   "strategy": "htf_pullback_trend_2h",
+   "pattern": null,
+   "confidence": 0,
+   "price": 0,
+   "zones": []
+  }
+ ],
+ "packages": [
+  {
+   "orderPackageId": "pkg-92402cea28024f1f",
+   "createdAt": "2026-10-14T00:04:21.002888+00:00",
+   "updatedAt": "2026-10-14T00:04:21.973347+00:00",
+   "strategy": "pairs_bnb_btc_b",
+   "symbol": "BTCUSDT",
+   "assetClass": "crypto",
+   "direction": "long",
+   "entry": 0,
+   "sl": 0,
+   "tp": 0,
+   "confidence": 0,
+   "status": "open",
+   "closeReason": null,
+   "linkedTradeId": "6607",
+   "pnl": null,
+   "tradeStatus": "open",
+   "isDemo": true,
+   "accountClass": "paper",
+   "signalLogic": {
+    "pairs_group_id": "pair-73bd430a0dab",
+    "pair": "BNBUSDT/BTCUSDT",
+    "pair_direction": "short_spread",
+    "entry_spread": 0,
+    "stop_spread": 0,
+    "opened_at_utc": "2026-10-14T00:04:20.123857+00:00",
+    "bar_seconds": 0,
+    "signal_logic": "pairs BNBUSDT/BTCUSDT short_spread z=2.702 beta=0.561357",
+    "timeframe": "1h",
+    "leg": "b"
+   },
+   "meta": {
+    "pairs_group_id": "pair-73bd430a0dab",
+    "pair": "BNBUSDT/BTCUSDT",
+    "pair_direction": "short_spread",
+    "entry_spread": 0,
+    "stop_spread": 0,
+    "opened_at_utc": "2026-10-14T00:04:20.123857+00:00",
+    "bar_seconds": 0,
+    "signal_logic": "pairs BNBUSDT/BTCUSDT short_spread z=2.702 beta=0.561357",
+    "timeframe": "1h",
+    "leg": "b"
+   },
+   "modelScores": null,
+   "claudeScore": null
+  },
+  {
+   "orderPackageId": "pkg-a2945e79c38d4e6f",
+   "createdAt": "2026-10-14T00:04:20.136439+00:00",
+   "updatedAt": "2026-10-14T00:04:20.987939+00:00",
+   "strategy": "pairs_bnb_btc_a",
+   "symbol": "BNBUSDT",
+   "assetClass": "crypto",
+   "direction": "short",
+   "entry": 0,
+   "sl": 0,
+   "tp": 0,
+   "confidence": 0,
+   "status": "open",
+   "closeReason": null,
+   "linkedTradeId": "6606",
+   "pnl": null,
+   "tradeStatus": "open",
+   "isDemo": true,
+   "accountClass": "paper",
+   "signalLogic": {
+    "pairs_group_id": "pair-73bd430a0dab",
+    "pair": "BNBUSDT/BTCUSDT",
+    "pair_direction": "short_spread",
+    "entry_spread": 0,
+    "stop_spread": 0,
+    "opened_at_utc": "2026-10-14T00:04:20.123857+00:00",
+    "bar_seconds": 0,
+    "signal_logic": "pairs BNBUSDT/BTCUSDT short_spread z=2.702 beta=0.561357",
+    "timeframe": "1h",
+    "leg": "a"
+   },
+   "meta": {
+    "pairs_group_id": "pair-73bd430a0dab",
+    "pair": "BNBUSDT/BTCUSDT",
+    "pair_direction": "short_spread",
+    "entry_spread": 0,
+    "stop_spread": 0,
+    "opened_at_utc": "2026-10-14T00:04:20.123857+00:00",
+    "bar_seconds": 0,
+    "signal_logic": "pairs BNBUSDT/BTCUSDT short_spread z=2.702 beta=0.561357",
+    "timeframe": "1h",
+    "leg": "a"
+   },
+   "modelScores": null,
+   "claudeScore": null
+  },
+  {
+   "orderPackageId": "pkg-d5dbc90b020f43e8",
+   "createdAt": "2026-10-13T23:02:30.540669+00:00",
+   "updatedAt": "2026-10-14T00:01:53.261943+00:00",
+   "strategy": "pairs_bnb_btc_b",
+   "symbol": "BTCUSDT",
+   "assetClass": "crypto",
+   "direction": "long",
+   "entry": 0,
+   "sl": 0,
+   "tp": 0,
+   "confidence": 0,
+   "status": "closed",
+   "closeReason": "pairs_stop",
+   "linkedTradeId": "6605",
+   "pnl": 0,
+   "tradeStatus": "closed",
+   "isDemo": true,
+   "accountClass": "paper",
+   "signalLogic": {
+    "pairs_group_id": "pair-95a941dd7e45",
+    "pair": "BNBUSDT/BTCUSDT",
+    "pair_direction": "short_spread",
+    "entry_spread": 0,
+    "stop_spread": 0,
+    "opened_at_utc": "2026-10-13T23:02:29.654524+00:00",
+    "bar_seconds": 0,
+    "signal_logic": "pairs BNBUSDT/BTCUSDT short_spread z=2.3274 beta=0.617433",
+    "timeframe": "1h",
+    "leg": "b"
+   },
+   "meta": {
+    "pairs_group_id": "pair-95a941dd7e45",
+    "pair": "BNBUSDT/BTCUSDT",
+    "pair_direction": "short_spread",
+    "entry_spread": 0,
+    "stop_spread": 0,
+    "opened_at_utc": "2026-10-13T23:02:29.654524+00:00",
+    "bar_seconds": 0,
+    "signal_logic": "pairs BNBUSDT/BTCUSDT short_spread z=2.3274 beta=0.617433",
+    "timeframe": "1h",
+    "leg": "b"
+   },
+   "modelScores": null,
+   "claudeScore": null
+  },
+  {
+   "orderPackageId": "pkg-a05843517cf1439e",
+   "createdAt": "2026-10-13T23:02:29.667771+00:00",
+   "updatedAt": "2026-10-14T00:01:52.540297+00:00",
+   "strategy": "pairs_bnb_btc_a",
+   "symbol": "BNBUSDT",
+   "assetClass": "crypto",
+   "direction": "short",
+   "entry": 0,
+   "sl": 0,
+   "tp": 0,
+   "confidence": 0,
+   "status": "closed",
+   "closeReason": "pairs_stop",
+   "linkedTradeId": "6604",
+   "pnl": 0,
+   "tradeStatus": "closed",
+   "isDemo": true,
+   "accountClass": "paper",
+   "signalLogic": {
+    "pairs_group_id": "pair-95a941dd7e45",
+    "pair": "BNBUSDT/BTCUSDT",
+    "pair_direction": "short_spread",
+    "entry_spread": 0,
+    "stop_spread": 0,
+    "opened_at_utc": "2026-10-13T23:02:29.654524+00:00",
+    "bar_seconds": 0,
+    "signal_logic": "pairs BNBUSDT/BTCUSDT short_spread z=2.3274 beta=0.617433",
+    "timeframe": "1h",
+    "leg": "a"
+   },
+   "meta": {
+    "pairs_group_id": "pair-95a941dd7e45",
+    "pair": "BNBUSDT/BTCUSDT",
+    "pair_direction": "short_spread",
+    "entry_spread": 0,
+    "stop_spread": 0,
+    "opened_at_utc": "2026-10-13T23:02:29.654524+00:00",
+    "bar_seconds": 0,
+    "signal_logic": "pairs BNBUSDT/BTCUSDT short_spread z=2.3274 beta=0.617433",
+    "timeframe": "1h",
+    "leg": "a"
+   },
+   "modelScores": null,
+   "claudeScore": null
+  },
+  {
+   "orderPackageId": "pkg-03af12a474a543bd",
+   "createdAt": "2026-10-13T18:28:20.169139+00:00",
+   "updatedAt": "2026-10-13T19:14:32.439718+00:00",
+   "strategy": "ict_scalp_mgc_15m",
+   "symbol": "MGC",
+   "assetClass": "commodity",
+   "direction": "long",
+   "entry": 0,
+   "sl": 0,
+   "tp": 0,
+   "confidence": 0,
+   "status": "open",
+   "closeReason": null,
+   "linkedTradeId": "6603",
+   "pnl": null,
+   "tradeStatus": "open",
+   "isDemo": true,
+   "accountClass": "paper",
+   "signalLogic": {
+    "strategy_name": "ict_scalp_mgc_15m",
+    "timeframe": "15m",
+    "setup_tf": "15m",
+    "mitigation_mode": "wick_rejection",
+    "htf_filter_active": false,
+    "sweep_level": 0,
+    "sweep_extreme": 0,
+    "sweep_idx_from_end": 0,
+    "displacement_idx_from_end": 0,
+    "displacement_body_to_range": 0,
+    "fvg_low": 0,
+    "fvg_high": 0,
+    "fvg_size": 0,
+    "atr": 0,
+    "risk_per_unit": 0,
+    "entry_time": "2026-10-13 18:15:00+00:00",
+    "confidence": 0,
+    "direction": "long",
+    "regime": "trending",
+    "adx_14": 0,
+    "regime_source": "adx-14",
+    "vol_regime": "unknown",
+    "rolling_log_return_vol": null,
+    "vol_regime_source": "vol-bucket-edges",
+    "aggregated_via": "multi_strategy_intent_layer",
+    "aggregated_target_qty": 0,
+    "aggregation": {
+     "resolution": "same_direction",
+     "contributing_strategies": [
+      "ict_scalp_mgc_15m"
+     ],
+     "winning_strategy": "ict_scalp_mgc_15m",
+     "decided_by": "uncontested"
+    },
+    "contributing_strategies": [
+     "ict_scalp_mgc_15m"
+    ],
+    "aggregation_reason": "same_direction_reinforcement: 1 intents agree on long; target_qty unsized at this layer (RiskManager sizes per account); winner by priority/timestamp/name from strategy=ict_scalp_mgc_15m",
+    "winning_priority": 0,
+    "news": {
+     "adjustment": 0,
+     "decision": "neutral",
+     "item_count": 0,
+     "event_risk": 0,
+     "event": {
+      "reason": "no_imminent_event",
+      "base": "MGC"
+     }
+    },
+    "account_election": {
+     "state": "planned",
+     "per_account": {
+      "ib_paper": {
+       "state": "elected",
+       "elected": "ict_scalp_mgc_15m"
+      }
+     },
+     "rounds": [
+      {
+       "strategy": "ict_scalp_mgc_15m",
+       "accounts": [
+        "ib_paper"
+       ]
+      }
+     ],
+     "accounts_planned": 0,
+     "accounts_elected": 0
+    },
+    "sized_qty_by_account": {}
+   },
+   "meta": {
+    "strategy_name": "ict_scalp_mgc_15m",
+    "timeframe": "15m",
+    "setup_tf": "15m",
+    "mitigation_mode": "wick_rejection",
+    "htf_filter_active": false,
+    "sweep_level": 0,
+    "sweep_extreme": 0,
+    "sweep_idx_from_end": 0,
+    "displacement_idx_from_end": 0,
+    "displacement_body_to_range": 0,
+    "fvg_low": 0,
+    "fvg_high": 0,
+    "fvg_size": 0,
+    "atr": 0,
+    "risk_per_unit": 0,
+    "entry_time": "2026-10-13 18:15:00+00:00",
+    "confidence": 0,
+    "direction": "long",
+    "regime": "trending",
+    "adx_14": 0,
+    "regime_source": "adx-14",
+    "vol_regime": "unknown",
+    "rolling_log_return_vol": null,
+    "vol_regime_source": "vol-bucket-edges",
+    "aggregated_via": "multi_strategy_intent_layer",
+    "aggregated_target_qty": 0,
+    "aggregation": {
+     "resolution": "same_direction",
+     "contributing_strategies": [
+      "ict_scalp_mgc_15m"
+     ],
+     "winning_strategy": "ict_scalp_mgc_15m",
+     "decided_by": "uncontested"
+    },
+    "contributing_strategies": [
+     "ict_scalp_mgc_15m"
+    ],
+    "aggregation_reason": "same_direction_reinforcement: 1 intents agree on long; target_qty unsized at this layer (RiskManager sizes per account); winner by priority/timestamp/name from strategy=ict_scalp_mgc_15m",
+    "winning_priority": 0,
+    "news": {
+     "adjustment": 0,
+     "decision": "neutral",
+     "item_count": 0,
+     "event_risk": 0,
+     "event": {
+      "reason": "no_imminent_event",
+      "base": "MGC"
+     }
+    },
+    "account_election": {
+     "state": "planned",
+     "per_account": {
+      "ib_paper": {
+       "state": "elected",
+       "elected": "ict_scalp_mgc_15m"
+      }
+     },
+     "rounds": [
+      {
+       "strategy": "ict_scalp_mgc_15m",
+       "accounts": [
+        "ib_paper"
+       ]
+      }
+     ],
+     "accounts_planned": 0,
+     "accounts_elected": 0
+    },
+    "sized_qty_by_account": {
+     "ib_paper": 0
+    },
+    "_advisory_factor": 0,
+    "advisory_decision": {
+     "action": "no_scores",
+     "excluded_regime": [
+      "btc-regime-15m-lgbm-fc-pcv-v2",
+      "mes-regime-5m-lgbm-v2",
+      "sol-regime-15m-lgbm-fc-pcv-v2"
+     ]
+    },
+    "_news_factor": 0,
+    "news_influence_decision": {
+     "action": "no_policy",
+     "mode": "off"
+    },
+    "execution_delta": {
+     "action": "open",
+     "side": "long",
+     "qty_delta": 0,
+     "target_qty": 0,
+     "current_qty": 0,
+     "reason": "open_new_long_target=150.0"
+    },
+    "stuck_alert_emitted_at": "2026-10-13T19:14:32.341502+00:00",
+    "stuck_position_alive_seen_at": "2026-10-13T19:14:32.341502+00:00"
+   },
+   "modelScores": null,
+   "claudeScore": null
+  },
+  {
+   "orderPackageId": "pkg-0fb7e3b9fb0d4eb7",
+   "createdAt": "2026-10-13T17:02:08.008421+00:00",
+   "updatedAt": "2026-10-13T23:02:33.151808+00:00",
+   "strategy": "pairs_sol_eth_b",
+   "symbol": "ETHUSDT",
+   "assetClass": "crypto",
+   "direction": "short",
+   "entry": 0,
+   "sl": 0,
+   "tp": 0,
+   "confidence": 0,
+   "status": "closed",
+   "closeReason": "pairs_revert",
+   "linkedTradeId": "6602",
+   "pnl": 0,
+   "tradeStatus": "closed",
+   "isDemo": true,
+   "accountClass": "paper",
+   "signalLogic": {
+    "pairs_group_id": "pair-bc6abea000c2",
+    "pair": "SOLUSDT/ETHUSDT",
+    "pair_direction": "long_spread",
+    "entry_spread": 0,
+    "stop_spread": 0,
+    "opened_at_utc": "2026-10-13T17:02:06.966221+00:00",
+    "bar_seconds": 0,
+    "signal_logic": "pairs SOLUSDT/ETHUSDT long_spread z=-3.0677 beta=1.353335",
+    "timeframe": "1h",
+    "leg": "b"
+   },
+   "meta": {
+    "pairs_group_id": "pair-bc6abea000c2",
+    "pair": "SOLUSDT/ETHUSDT",
+    "pair_direction": "long_spread",
+    "entry_spread": 0,
+    "stop_spread": 0,
+    "opened_at_utc": "2026-10-13T17:02:06.966221+00:00",
+    "bar_seconds": 0,
+    "signal_logic": "pairs SOLUSDT/ETHUSDT long_spread z=-3.0677 beta=1.353335",
+    "timeframe": "1h",
+    "leg": "b",
+    "stuck_alert_emitted_at": "2026-10-13T20:03:27.805956+00:00",
+    "stuck_position_alive_seen_at": "2026-10-13T20:03:27.805956+00:00"
+   },
+   "modelScores": null,
+   "claudeScore": null
+  }
+ ]
+}
