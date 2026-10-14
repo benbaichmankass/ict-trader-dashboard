@@ -27,7 +27,7 @@ const OVERVIEW_KEYS = new Set([
   "present", "generatedAt", "dbs", "summary", "notProvided",
   "tables", "emptyTables", "unknownRowCount", "dbsUnreadable", "dbsMissing",
   "db", "file", "readState", "reason", "sizeBytes", "walBytes", "journalMode", "integrity", "state", "result",
-  "name", "rows", "rowsState", "empty", "columnCount", "newestRowColumn", "newestRowAt", "newestRowState", "ageSeconds",
+  "name", "rows", "rowsState", "empty", "columnCount", "newestRowColumn", "newestRowAt", "newestRowState", "ageSeconds", "rowsEstimate",
 ]);
 
 function viewBlock(src, constName) {

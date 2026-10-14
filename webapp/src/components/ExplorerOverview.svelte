@@ -4,7 +4,7 @@
   import { DASH, num, agoFromIso } from "../lib/format";
   import { requestLogin } from "../lib/auth";
   import { catalogState, type CatalogResponse } from "../lib/catalog";
-  import { fmtBytes, fmtAge, integrityLabel, newestLabel, type DbOverview } from "../lib/dbOverview";
+  import { fmtBytes, integrityLabel, newestShort, rowsLabel, type DbOverview, type OverviewTable } from "../lib/dbOverview";
 
   let { onOpenTable }: { onOpenTable?: (db: string, name: string) => void } = $props();
 
@@ -15,24 +15,49 @@
   // DB-health half: five distinct states, none of which is "zero".
   //   loading | auth (401, sign in) | missing (404, route not deployed) | error | ok
   let ov = $state<DbOverview | null>(null);
-  let ovState = $state<"loading" | "auth" | "missing" | "error" | "ok">("loading");
+  let ovState = $state<"loading" | "auth" | "missing" | "timeout" | "error" | "ok">("loading");
   let ovError = $state<string | null>(null);
   let checking = $state(false);
+  // The count over a multi-million-row table can be slow bot-side: say so after
+  // ~3 s, and give up (with a Retry) after 30 s rather than spin forever.
+  let slow = $state(false);
+  let openTbl = $state<(OverviewTable & { _db: string }) | null>(null);
+  const SLOW_MS = 3000;
+  const TIMEOUT_MS = 30000;
+  let inflight: AbortController | undefined;
 
   async function loadOverview(integrity: "off" | "quick" = "off") {
+    inflight?.abort();
+    const ctl = new AbortController();
+    inflight = ctl;
+    let timedOut = false;
     checking = integrity === "quick";
+    slow = false;
+    if (ovState !== "ok") ovState = "loading";
+    const slowT = setTimeout(() => (slow = true), SLOW_MS);
+    const killT = setTimeout(() => {
+      timedOut = true;
+      ctl.abort();
+    }, TIMEOUT_MS);
     try {
-      ov = await api.dbOverview(integrity);
+      ov = await api.dbOverview(integrity, ctl.signal);
       ovState = "ok";
     } catch (e) {
-      if (e instanceof AuthRequiredError) ovState = "auth";
+      if (ctl !== inflight) return; // superseded by a newer request
+      if (timedOut) ovState = "timeout";
+      else if (e instanceof AuthRequiredError) ovState = "auth";
       else if (e instanceof Error && /^404\b/.test(e.message)) ovState = "missing";
       else {
         ovState = "error";
         ovError = e instanceof Error ? e.message : String(e);
       }
     } finally {
-      checking = false;
+      clearTimeout(slowT);
+      clearTimeout(killT);
+      if (ctl === inflight) {
+        checking = false;
+        slow = false;
+      }
     }
   }
 
@@ -81,7 +106,10 @@
   <div class="panel pad">
     <div class="ph">Database health</div>
     {#if ovState === "loading"}
-      <div class="muted s">Loading…</div>
+      <div class="muted s">Loading…{#if slow} still loading — counting rows on large tables can take a few seconds.{/if}</div>
+    {:else if ovState === "timeout"}
+      <div class="err s">Could not load DB health (timed out after 30 s) — this is a timeout, not an empty database.
+        <button class="lnk" onclick={() => loadOverview()}>Retry</button></div>
     {:else if ovState === "auth"}
       <div class="s">Sign in to see DB health — this view is session-gated.</div>
       <button class="btn" onclick={() => requestLogin("Database health needs a signed-in session.")}>Sign in</button>
@@ -120,21 +148,20 @@
             size {fmtBytes(d.sizeBytes)} · WAL {fmtBytes(d.walBytes)} · journal {d.journalMode ?? DASH} ·
             integrity <b class:bad={ig.tone === "bad"} class:good={ig.tone === "ok"}>{ig.text}</b>
             <button class="lnk" disabled={checking} onclick={() => loadOverview("quick")}>
-              {checking ? "checking…" : "Check integrity"}
+              {checking ? (slow ? "checking… (still running)" : "checking…") : "Check integrity"}
             </button>
           </div>
           <div class="scroll">
             <table>
-              <thead><tr><th>Table</th><th class="r">Rows</th><th>Newest row</th><th class="r">Age</th><th></th></tr></thead>
+              <thead><tr><th>Table</th><th class="r">Rows</th><th>Newest</th><th></th></tr></thead>
               <tbody>
                 {#each d.tables ?? [] as t (t.name)}
-                  <tr class:e={t.empty === true}>
+                  <tr class:e={t.empty === true} onclick={() => (openTbl = { ...t, _db: t.db ?? d.db })}>
                     <td>
-                      <button class="lnk mono" onclick={() => onOpenTable?.(t.db ?? d.db, t.name)}>{t.name}</button>
+                      <button class="lnk mono" onclick={(e) => { e.stopPropagation(); onOpenTable?.(t.db ?? d.db, t.name); }}>{t.name}</button>
                     </td>
-                    <td class="r mono">{t.rowsState === "count_failed" ? "count failed" : num(t.rows)}</td>
-                    <td class="mono nw">{newestLabel(t)}</td>
-                    <td class="r mono">{fmtAge(t.ageSeconds)}</td>
+                    <td class="r mono" class:est={t.rowsState === "count_timed_out"}>{rowsLabel(t)}</td>
+                    <td class="mono nw">{newestShort(t)}</td>
                     <td>{#if t.empty === true}<b class="flag">EMPTY</b>{/if}</td>
                   </tr>
                 {/each}
@@ -144,10 +171,25 @@
         {/if}
       {/each}
       {#if ov?.notProvided?.length}
-        <div class="s muted">Not provided by the host: {ov.notProvided.join(", ")}. Age is shown as a raw fact, with no stale verdict.</div>
+        <div class="s muted">Not provided by the host: {ov.notProvided.join(", ")}. Newest-row age is a raw fact, with no stale verdict. Tap a row for its full timestamp and detail.</div>
       {/if}
     {/if}
   </div>
+
+  {#if openTbl}
+    <aside class="drawer panel" aria-label="Table detail">
+      <div class="dh">
+        <span class="mono">{openTbl.name} <span class="muted">({openTbl._db})</span></span>
+        <button class="lnk" onclick={() => (openTbl = null)}>Close ✕</button>
+      </div>
+      <div class="dbody">
+        <div class="kvr"><span class="muted">rows</span><span class="mono">{rowsLabel(openTbl)}</span></div>
+        {#each Object.entries(openTbl).filter(([k]) => k !== "_db") as [k, v] (k)}
+          <div class="kvr"><span class="muted">{k}</span><span class="mono">{v === null || v === undefined || v === "" ? DASH : typeof v === "object" ? JSON.stringify(v) : String(v)}</span></div>
+        {/each}
+      </div>
+    </aside>
+  {/if}
 </section>
 
 <style>
@@ -173,5 +215,12 @@
   .flag { color: var(--neg); font-size: 11px; }
   .lnk { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
   .lnk:disabled { color: var(--muted); cursor: default; }
+  .est { color: #d9a441; }
+  tbody tr { cursor: pointer; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 100vw); z-index: 40; overflow-y: auto; border-radius: 0; box-shadow: -4px 0 18px rgba(0,0,0,.4); }
+  .dh { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); }
+  .dbody { padding: 6px 14px 24px; }
+  .kvr { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+  .kvr .mono { text-align: right; overflow-wrap: anywhere; }
   .btn { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 6px 12px; cursor: pointer; margin-top: 8px; }
 </style>

@@ -9,7 +9,10 @@ export interface OverviewTable {
   name: string;
   db?: string | null;
   rows?: number | null;
-  rowsState?: "read" | "count_failed" | string | null;
+  rowsState?: "read" | "count_failed" | "count_timed_out" | string | null;
+  // Only meaningful when rowsState is count_timed_out: an upper bound (MAX(rowid)),
+  // NEVER an exact count. Other per-table timing fields are ignored here.
+  rowsEstimate?: number | null;
   empty?: boolean | null;
   columnCount?: number | null;
   newestRowColumn?: string | null;
@@ -84,17 +87,40 @@ export function integrityLabel(i: OverviewDb["integrity"]): { text: string; tone
   }
 }
 
-export function newestLabel(t: OverviewTable): string {
-  if (t.newestRowAt) return t.newestRowAt;
+/** Row count cell text. An estimate is always marked as one; never shown as exact. */
+export function rowsLabel(t: OverviewTable): string {
+  const fmt = (n: number) => n.toLocaleString("en-US");
+  if (t.rowsState === "count_timed_out") {
+    return t.rowsEstimate === null || t.rowsEstimate === undefined ? "count timed out" : `~${fmt(t.rowsEstimate)} (estimate)`;
+  }
+  if (t.rowsState === "count_failed") return "count failed";
+  if (t.rows === null || t.rows === undefined || Number.isNaN(t.rows)) return "—";
+  return fmt(t.rows);
+}
+
+/**
+ * Short, mobile-safe "newest row" text: a relative age computed client-side from
+ * newestRowAt ("17m ago"), else a short reason. The full timestamp lives in the
+ * row drawer. `now` is injectable for tests.
+ */
+export function newestShort(t: OverviewTable, now: number = Date.now()): string {
+  if (t.newestRowAt) {
+    const ms = Date.parse(t.newestRowAt);
+    if (!Number.isNaN(ms)) {
+      const sec = Math.max(0, Math.floor((now - ms) / 1000));
+      return `${fmtAge(sec)} ago`;
+    }
+    return "bad timestamp";
+  }
   switch (t.newestRowState) {
     case "empty":
       return "no rows";
     case "no_timestamp_column":
-      return "no timestamp column";
+      return "no ts column";
     case "null_value":
-      return "newest value is null";
+      return "null value";
     case "unparseable":
-      return "unparseable timestamp";
+      return "bad timestamp";
     case "error":
       return "read error";
     default:
