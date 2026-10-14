@@ -195,3 +195,20 @@ jobs:
         run: node webapp/tests/limit-cap.mjs --self-test
       - name: No hardcoded limit may exceed the bot's declared cap
         run: node webapp/tests/limit-cap.mjs
+
+  webapp-catalog-contract:
+    # Data Explorer research catalog: every field the component reads must exist
+    # in a REAL captured /api/bot/research/catalog response (fixture committed).
+    # Same class as webapp-api-contract — a key with no writer renders as an
+    # em-dash indistinguishable from "no data". --self-test plants a bogus read.
+    name: webapp-catalog-contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Prove the checker can fail
+        run: node webapp/tests/catalog-contract.mjs --self-test
+      - name: Catalog reads must exist in the real response
+        run: node webapp/tests/catalog-contract.mjs

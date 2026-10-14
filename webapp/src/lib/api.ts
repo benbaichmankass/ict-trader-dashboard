@@ -6,6 +6,7 @@
 
 import { getBotApiUrl } from "./config";
 import { authHeaders, handleUnauthorized } from "./auth";
+import { buildCatalogQuery, type CatalogQuery, type CatalogResponse, type CatalogDetail } from "./catalog";
 
 /**
  * A read the bot refused for want of a session. Thrown instead of the generic
@@ -307,6 +308,13 @@ export const api = {
     if (opts.offset) q.set("offset", String(opts.offset));
     return get<any>(`/api/bot/db/table/${encodeURIComponent(name)}?${q.toString()}`, signal);
   },
+
+  // Research catalog — UNGATED, public-repo data; works signed out. The detail
+  // route 400s on a malformed id and answers `present:false` for an unknown one.
+  researchCatalog: (q: CatalogQuery, signal?: AbortSignal) =>
+    get<CatalogResponse>(`/api/bot/research/catalog?${buildCatalogQuery(q)}`, signal),
+  researchUnit: (id: string, signal?: AbortSignal) =>
+    get<CatalogDetail>(`/api/bot/research/catalog/${encodeURIComponent(id)}`, signal),
 
   // Strategies & Models.
   gpuSpend: (signal?: AbortSignal) => get<any>("/api/bot/gpu/spend", signal),
