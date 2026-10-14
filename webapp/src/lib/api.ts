@@ -6,6 +6,7 @@
 
 import { getBotApiUrl } from "./config";
 import { authHeaders, handleUnauthorized } from "./auth";
+import type { DbOverview } from "./dbOverview";
 import { buildCatalogQuery, type CatalogQuery, type CatalogResponse, type CatalogDetail } from "./catalog";
 
 /**
@@ -300,6 +301,11 @@ export const api = {
     if (opts.level) q.set("level", opts.level);
     return get<any>(`/api/bot/logs?${q.toString()}`, signal);
   },
+  // Session-gated, cached 60 s bot-side. `quick` runs PRAGMA quick_check and
+  // can be slow on the journal — only ever request it from an explicit button.
+  // 404 until the route is deployed; callers render "not available yet".
+  dbOverview: (integrity: "off" | "quick" = "off", signal?: AbortSignal) =>
+    get<DbOverview>(`/api/bot/db/overview?integrity=${integrity}`, signal),
   dbTables: (signal?: AbortSignal) => get<any>("/api/bot/db/tables", signal),
   dbTable: (name: string, opts: { db?: string; limit?: number; offset?: number } = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams();

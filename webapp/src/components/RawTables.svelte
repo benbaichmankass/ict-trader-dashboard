@@ -4,6 +4,9 @@
   import { num, DASH } from "../lib/format";
   import { requestLogin } from "../lib/auth";
 
+  // Optional deep link from the Overview: open this table on first load.
+  let { initial = null }: { initial?: { db: string; name: string } | null } = $props();
+
   let tables = $state<any[]>([]);
   let selected = $state<string | null>(null);
   let selectedDb = $state<string | null>(null);
@@ -27,6 +30,8 @@
     try {
       const raw = await api.dbTables();
       tables = raw?.tables ?? [];
+      const hit = initial && tables.find((t) => t.name === initial.name && (t.db ?? null) === initial.db);
+      if (hit) pick(hit);
     } catch (e) {
       if (e instanceof AuthRequiredError) needsAuth = true;
       else error = e instanceof Error ? e.message : String(e);

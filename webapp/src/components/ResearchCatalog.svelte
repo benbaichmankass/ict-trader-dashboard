@@ -156,7 +156,7 @@
           <div class="muted s">No baseline yet — nothing is counted as new.</div>
         {:else}
           <div class="v">{num(stay.new.count)}</div>
-          <div class="muted s">since {since ? ago(since) + " ago" : DASH}</div>
+          <div class="muted s">since {ago(since)}</div>
         {/if}
         <button class="lnk" onclick={markSeen} disabled={acked}>{acked ? "Marked seen" : "Mark seen"}</button>
       </div>
@@ -238,7 +238,7 @@
       {#if loading && !resp}Loading…{:else}
         Showing {items.length ? `${num(offset + 1)}–${num(offset + items.length)}` : "0"} of {num(matched)}
         matched{#if resp?.total != null && resp.total !== matched}&nbsp;(catalog total {num(resp.total)}){/if}
-        · generated {ago(resp?.generatedAt)} ago{#if loading}&nbsp;· refreshing…{/if}
+        · generated {ago(resp?.generatedAt)}{#if loading}&nbsp;· refreshing…{/if}
       {/if}
     </div>
     {#if cstate === "empty"}

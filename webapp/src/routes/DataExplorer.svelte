@@ -1,9 +1,9 @@
 <script lang="ts">
   import ExplorerOverview from "../components/ExplorerOverview.svelte";
   import ResearchCatalog from "../components/ResearchCatalog.svelte";
-  import Trades from "./Trades.svelte";
-  import Signals from "./Signals.svelte";
-  import OrderPackages from "./OrderPackages.svelte";
+  import ExplorerTrades from "../components/ExplorerTrades.svelte";
+  import ExplorerSignals from "../components/ExplorerSignals.svelte";
+  import ExplorerPackages from "../components/ExplorerPackages.svelte";
   import RawTables from "../components/RawTables.svelte";
 
   // Importance order, per the operator: structured data leads, ALL tables last
@@ -30,6 +30,12 @@
     return "overview";
   }
   let tab = $state<TabId>(initial());
+  // Deep link from the Overview's table rows into the raw browser.
+  let target = $state<{ db: string; name: string } | null>(null);
+  function openTable(db: string, name: string) {
+    target = { db, name };
+    pick("tables");
+  }
   function pick(t: TabId) {
     tab = t;
     try {
@@ -47,12 +53,12 @@
       <button role="tab" aria-selected={tab === t.id} class:on={tab === t.id} onclick={() => pick(t.id)}>{t.label}</button>
     {/each}
   </div>
-  {#if tab === "overview"}<ExplorerOverview />
+  {#if tab === "overview"}<ExplorerOverview onOpenTable={openTable} />
   {:else if tab === "research"}<ResearchCatalog />
-  {:else if tab === "trades"}<Trades />
-  {:else if tab === "signals"}<Signals />
-  {:else if tab === "packages"}<OrderPackages />
-  {:else}<RawTables />{/if}
+  {:else if tab === "trades"}<ExplorerTrades />
+  {:else if tab === "signals"}<ExplorerSignals />
+  {:else if tab === "packages"}<ExplorerPackages />
+  {:else}<RawTables initial={target} />{/if}
 </section>
 
 <style>

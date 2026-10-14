@@ -212,3 +212,20 @@ jobs:
         run: node webapp/tests/catalog-contract.mjs --self-test
       - name: Catalog reads must exist in the real response
         run: node webapp/tests/catalog-contract.mjs
+
+  webapp-explorer-views:
+    # Data Explorer Trades/Signals/Order-packages tabs + the DB-health overview:
+    # every declared column/facet key must exist in REAL captured rows, and the
+    # overview component may read only documented /db/overview keys. Same class
+    # as webapp-api-contract (a key with no writer renders as an em-dash).
+    name: webapp-explorer-views
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Prove the checker can fail
+        run: node webapp/tests/explorer-views.mjs --self-test
+      - name: Explorer keys must exist in the real responses
+        run: node webapp/tests/explorer-views.mjs
