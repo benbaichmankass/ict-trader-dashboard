@@ -162,7 +162,7 @@
                     </td>
                     <td class="r mono" class:est={t.rowsState === "count_timed_out"}>{rowsLabel(t)}</td>
                     <td class="mono nw">{newestShort(t)}</td>
-                    <td>{#if t.empty === true}<b class="flag">EMPTY</b>{/if}</td>
+                    <td class="emptycell">{#if t.empty === true}<b class="emptybadge">EMPTY</b>{/if}</td>
                   </tr>
                 {/each}
               </tbody>
@@ -212,7 +212,9 @@
   .r { text-align: right; }
   .nw { white-space: nowrap; }
   tr.e td { background: color-mix(in srgb, var(--neg) 8%, transparent); }
-  .flag { color: var(--neg); font-size: 11px; }
+  /* never let a narrow phone column clip the badge to "EM" */
+  .emptycell { white-space: nowrap; min-width: 56px; }
+  .emptybadge { color: var(--neg); font-size: 11px; white-space: nowrap; flex-shrink: 0; }
   .lnk { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 12px; padding: 0; }
   .lnk:disabled { color: var(--muted); cursor: default; }
   .est { color: #d9a441; }
