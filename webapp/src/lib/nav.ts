@@ -18,10 +18,11 @@ import { writable } from "svelte/store";
 export const SECTIONS: Record<string, string[]> = {
   Overview: [],
   Performance: ["Performance", "Insights", "Reports"],
-  "Strategies & Models": ["Strategies", "Models", "GPU Spend", "Exit Ladder", "Backtesting", "Promotion", "News"],
+  "Strategies & Models": ["Strategies", "Models", "Signals Catalog", "GPU Spend", "Exit Ladder", "Backtesting", "Promotion", "News"],
   Accounts: ["Accounts", "Prop"],
   Activity: ["Positions", "Trades", "Order Packages", "Signals"],
-  Roadmap: [],
+  // UI-UPGRADE-1: Roadmap folded into Work (one tab; Roadmap is a toggle on it).
+  // `#/Roadmap` links still resolve — parseHash() maps them onto Work.
   Work: [],
   Learning: [],
   Admin: ["Data Explorer", "Logs", "Health", "Runbooks"],
@@ -35,6 +36,7 @@ export const PAGE_DESC: Record<string, string> = {
   Reports: "Consolidated /system-report executive reports (health + trading + ML).",
   Strategies: "Live-runtime per-strategy status, routing, P&L curve, review packet.",
   Models: "ML fleet — per-model stage, training metric, drift.",
+  "Signals Catalog": "Every signal family the system can emit — inputs, owner strategy, status. Placeholder: the catalog is not built yet (UI-UPGRADE-1 item 8).",
   "GPU Spend": "Spot-GPU training cost — per-session + monthly total vs the $10 cap.",
   "Exit Ladder": "ExitPlan laddered-vs-single-target soak (observe-only).",
   Backtesting: "Trainer-VM sweeps + on-demand /test runs.",
@@ -50,8 +52,7 @@ export const PAGE_DESC: Record<string, string> = {
   Logs: "Merged pipeline + outcome log feed.",
   Health: "VM / service health + last-tick + snapshot checks.",
   Runbooks: "Operating schematic, the coordination board, and what is due today.",
-  Roadmap: "Product-roadmap progress — milestones → sprints → work-session notes.",
-  Work: "THE live workflow page. Today's daily brief (what came due, and the unrouted count) at the top, then the manager checklist as the managers keep it (collapsed by default — open a row for full detail), the decisions waiting on you, the live work sessions with how stale each reading is, and the work store underneath. Read-only; carries its own as-of stamp, so it is as fresh as the last push plus ict-git-sync's ~5-minute pull.",
+  Work: "THE live workflow page — with the product roadmap one toggle away (Roadmap was folded in here). Today's daily brief (what came due, and the unrouted count) at the top, then the manager checklist as the managers keep it (collapsed by default — open a row for full detail), the decisions waiting on you, the live work sessions with how stale each reading is, and the work store underneath. Read-only; carries its own as-of stamp, so it is as fresh as the last push plus ict-git-sync's ~5-minute pull.",
   Learning: "Trading + AI curriculum with per-resource progress.",
 };
 
@@ -81,7 +82,7 @@ export const IMPLEMENTED_PAGES = new Set<string>([
   "Runbooks",
 ]);
 
-const SPECIAL_SECTIONS = new Set(["Overview", "Roadmap", "Learning"]);
+const SPECIAL_SECTIONS = new Set(["Overview", "Learning"]);
 export function isSpecial(section: string): boolean {
   return SPECIAL_SECTIONS.has(section);
 }
@@ -95,7 +96,8 @@ export interface Nav {
 
 function parseHash(): Nav {
   const raw = typeof location !== "undefined" ? decodeURIComponent(location.hash.replace(/^#\/?/, "")) : "";
-  const [sec, det] = raw.split("/");
+  const [rawSec, det] = raw.split("/");
+  const sec = rawSec === "Roadmap" ? "Work" : rawSec; // folded into Work
   const section = SECTION_NAMES.includes(sec) ? sec : "Overview";
   const detail = det && SECTIONS[section]?.includes(det) ? det : null;
   return { section, detail };

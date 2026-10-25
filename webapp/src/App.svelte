@@ -11,6 +11,7 @@
   import OrderPackages from "./routes/OrderPackages.svelte";
   import Insights from "./routes/Insights.svelte";
   import Roadmap from "./routes/Roadmap.svelte";
+  import Segmented from "./components/Segmented.svelte";
   import Work from "./routes/Work.svelte";
   import Prop from "./routes/Prop.svelte";
   import Health from "./routes/Health.svelte";
@@ -37,6 +38,16 @@
   initSession();
 
   let showSettings = $state(false);
+
+  // Work + Roadmap share one tab (UI-UPGRADE-1). An old `#/Roadmap` link opens
+  // the Roadmap view; parseHash() already maps the section onto Work.
+  const WORK_VIEWS = [
+    { value: "work", label: "Work" },
+    { value: "roadmap", label: "Roadmap" },
+  ];
+  let workView = $state(
+    typeof location !== "undefined" && location.hash.replace(/^#\/?/, "").startsWith("Roadmap") ? "roadmap" : "work",
+  );
 
   // A gated read that came back 401/403 raises `authPrompt`; opening Settings
   // is how the form gets in front of the operator. This is the whole "401
@@ -167,10 +178,10 @@
     <main>
       {#if $nav.section === "Overview"}
         <Overview />
-      {:else if $nav.section === "Roadmap"}
-        <Roadmap />
       {:else if $nav.section === "Work"}
-        <Work />
+        <!-- UI-UPGRADE-1: Roadmap folded into Work — one tab, two views. -->
+        <div class="worktabs"><Segmented options={WORK_VIEWS} bind:value={workView} /></div>
+        {#if workView === "roadmap"}<Roadmap />{:else}<Work />{/if}
       {:else if isSpecial($nav.section)}
         <Placeholder page={$nav.section} />
       {:else if $nav.detail == null}
@@ -268,4 +279,5 @@
     .ham { display: inline-flex; align-items: center; justify-content: center; }
     .scrim { display: block; position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); z-index: 20; border: none; }
   }
+  .worktabs { margin-bottom: 12px; }
 </style>

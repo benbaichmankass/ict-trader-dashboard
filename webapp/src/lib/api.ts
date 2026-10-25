@@ -269,6 +269,10 @@ export const api = {
   // 5xx — and `inputs` carries a three-way read state per source
   // (read/absent/unreadable) that must not be collapsed. Read-only.
   workBrief: (signal?: AbortSignal) => get<any>("/api/bot/work/brief", signal),
+  // UI-UPGRADE-1: the Overview's work-queue glance (~6 KB; the full checklist is
+  // ~435 KB). closedRecent / openNow / next / waitingOnOperator, `present:false`
+  // with a reason when the store is unreadable — never empty lists as "no work".
+  workSnapshot: (signal?: AbortSignal) => get<any>("/api/bot/work/snapshot", signal),
 
   // The work schedule (A9) — cadenced sessions (the daily sync, the three
   // project-level reviews) · decisions owed · monitoring coming due · cron

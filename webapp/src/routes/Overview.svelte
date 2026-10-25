@@ -28,6 +28,8 @@
   let news = $state<any>(null);
   let reports = $state<any>(null);
   let propOverview = $state<any>(null); // /api/bot/prop/overview (Prop book only)
+  let workSnap = $state<any>(null); // /api/bot/work/snapshot (UI-UPGRADE-1 item 2)
+  let workSnapError = $state<string | null>(null);
   let pnl30 = $state<Array<{ date?: string; pnl?: number | null }>>([]);
   let candlesBySymbol = $state<Record<string, Candle[]>>({});
   let wsStatus = $state<MarketStatus>("connecting");
@@ -98,40 +100,47 @@
   // here so the open-trades table/count is populated even when the market
   // WebSocket can't connect (sandbox, or a flaky mobile network) — the WS's
   // onPositions still overwrites this with the live snapshot when it's up.
+  // UI-UPGRADE-1 item 1. This used to be ONE Promise.all over nine calls, so
+  // nothing rendered until the slowest returned — measured 2026-10-11:
+  // /positions 5-12 s cold, /signals ~3.3 s, the other seven 0.3-0.9 s. Each
+  // call now assigns its own slice the moment it lands, the previous value stays
+  // on screen while a refresh is in flight (show-stale-then-refresh), and a
+  // failed slice keeps its last good value instead of blanking the page.
+  // `apiError` is raised only when the core reads (stats + positions) fail.
+  let inflight = 0;
   async function poll() {
+    if (inflight > 0) return; // never stack polls behind a slow call
+    inflight = 1;
+    const slices: Array<Promise<unknown>> = [
+      api.stats().then((v) => { stats = v; }),
+      (() => { const w = win; return api.performance(w).then((v) => { if (w === win) perf = v; }); })(),
+      // REST is authoritative for the row SET — the WS only refreshes uPnL below
+      api.positions().then((v) => { positions = v; }),
+      api.balances().then((v) => { balances = v; }),
+      api.config().then((v) => { config = v; }),
+      api.strategies().then((v) => { strategies = v; }),
+      api.signals().then((sig: any) => {
+        signals = Array.isArray(sig) ? sig : (sig?.signals ?? sig?.records ?? []);
+      }),
+      api.closedTrades({ includePaper: true, limit: 100 }).then((v) => {
+        closedTrades = Array.isArray(v) ? v : [];
+      }),
+      // Prop lives in its own journal; a failure here must not blank the rest.
+      (() => { const w = win; return api.propOverview(w).then((v) => { if (w === win) propOverview = v; }); })(),
+      api.workSnapshot().then((v) => { workSnap = v; workSnapError = null; })
+        .catch((e) => { workSnapError = e instanceof Error ? e.message : String(e); throw e; }),
+      // Glance-card + sparkline data — each degrades to its own empty state.
+      api.news(8).then((v) => { news = v; }),
+      api.reports().then((v) => { reports = v; }),
+      api.pnlHistory(30).then((h) => { pnl30 = Array.isArray(h) ? h : []; }),
+    ];
+    const core = Promise.all([slices[0], slices[2]]);
+    core.then(() => { apiError = null; lastUpdated = Date.now(); })
+      .catch((e) => { apiError = e instanceof Error ? e.message : String(e); });
     try {
-      const [s, p, pos, bal, cfg, strat, sig, closed, propOv] = await Promise.all([
-        api.stats(),
-        api.performance(win),
-        api.positions(),
-        api.balances(),
-        api.config(),
-        api.strategies(),
-        api.signals(),
-        api.closedTrades({ includePaper: true, limit: 100 }),
-        // Prop lives in its own journal; a failure here must not blank the rest.
-        api.propOverview(win).catch(() => null),
-      ]);
-      // Glance-card + sparkline data — non-blocking: a failure here must not
-      // blank the core overview (each degrades to its own empty state).
-      Promise.all([
-        api.news(8).catch(() => null),
-        api.reports().catch(() => null),
-        api.pnlHistory(30).catch(() => []),
-      ]).then(([n, r, h]) => { news = n; reports = r; pnl30 = Array.isArray(h) ? h : []; });
-      stats = s;
-      perf = p;
-      positions = pos; // REST is authoritative — the WS only refreshes uPnL below
-      balances = bal;
-      propOverview = propOv;
-      config = cfg;
-      strategies = strat;
-      signals = Array.isArray(sig) ? sig : (sig?.signals ?? sig?.records ?? []);
-      closedTrades = Array.isArray(closed) ? closed : [];
-      apiError = null;
-      lastUpdated = Date.now();
-    } catch (e) {
-      apiError = e instanceof Error ? e.message : String(e);
+      await Promise.allSettled(slices);
+    } finally {
+      inflight = 0;
     }
   }
 
@@ -148,10 +157,13 @@
     }
   }
 
-  // Re-poll performance when the window changes (control tap → fresh window).
+  // Window change → re-fetch ONLY the windowed reads, at once. Not via poll():
+  // its in-flight guard would drop the tap while a slow call is outstanding.
+  // A late answer for a window the user has already left is discarded.
   $effect(() => {
-    win;
-    poll();
+    const w = win;
+    api.performance(w).then((v) => { if (w === win) perf = v; }).catch(() => {});
+    api.propOverview(w).then((v) => { if (w === win) propOverview = v; }).catch(() => {});
   });
 
   function fundingOf(p: Position): string {
@@ -337,11 +349,18 @@
 
   onMount(() => {
     poll();
-    pollTimer = setInterval(poll, 30000);
+    // 15 s (was 30 s): /positions is now a server-side snapshot, so a poll is
+    // cheap. Skipped while the tab is hidden; refreshed at once when it returns.
+    pollTimer = setInterval(() => { if (!document.hidden) poll(); }, 15000);
+    document.addEventListener("visibilitychange", onVisible);
     startStream();
   });
+  function onVisible() {
+    if (!document.hidden) poll();
+  }
   onDestroy(() => {
     if (pollTimer) clearInterval(pollTimer);
+    if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible);
     stream?.stop();
   });
 
@@ -389,6 +408,41 @@
   {/if}
 
   <ExecSummary {stats} {perf} {positions} {balances} {config} {strategies} {funding} {win} {propOverview} />
+
+  <!-- UI-UPGRADE-1 item 2: work-queue glance from /api/bot/work/snapshot.
+       `present:false` is "we could not read the checklist", shown as such —
+       never as an empty queue. -->
+  <div class="panel workq">
+    <div class="ph">Work queue <a class="wlink" href="#/Work">open Work →</a></div>
+    {#if workSnap && workSnap.present === false}
+      <div class="err pad">Checklist unreadable: <span class="mono">{workSnap.reason ?? DASH}</span></div>
+    {:else if !workSnap && workSnapError}
+      <div class="err pad">Couldn't load the work queue: <span class="mono">{workSnapError}</span></div>
+    {:else if !workSnap}
+      <div class="muted pad">Loading…</div>
+    {:else}
+      <div class="wbox" class:wempty={!(workSnap.waitingOnOperator ?? []).length}>
+        <div class="wh">⏳ Waiting on you · {(workSnap.waitingOnOperator ?? []).length}</div>
+        {#each workSnap.waitingOnOperator ?? [] as r (r.id)}
+          <div class="wrow"><span class="mono wid">{r.id}</span> {(r.asks ?? []).map((a: any) => a.what).filter(Boolean).join(" · ") || r.title}</div>
+        {:else}
+          <div class="muted small">Nothing is blocked on an operator decision.</div>
+        {/each}
+      </div>
+      <div class="wgrid">
+        {#each [["Open now", workSnap.openNow], ["Next up", workSnap.next], ["Recently closed", workSnap.closedRecent]] as [label, rows] (label)}
+          <div>
+            <div class="wh">{label} · {(rows ?? []).length}</div>
+            {#each rows ?? [] as r (r.id)}
+              <div class="wrow" title={r.title ?? ""}><span class="mono wid">{r.id}</span> <span class="muted">{r.state}</span></div>
+            {:else}
+              <div class="muted small">—</div>
+            {/each}
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </div>
 
   <div class="glances">
     {#if latestReport}
@@ -620,4 +674,13 @@
     font-size: 13px;
   }
   .refresh:disabled { opacity: 0.6; cursor: default; }
+  .workq { padding: 4px 12px 12px; }
+  .wlink { float: right; font-weight: 400; font-size: 12px; color: var(--accent); text-decoration: none; }
+  .wbox { border: 1px solid var(--accent); border-radius: 8px; padding: 8px 10px; margin: 4px 0 10px; }
+  .wbox.wempty { border-color: var(--border); }
+  .wgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  @media (max-width: 720px) { .wgrid { grid-template-columns: 1fr; } }
+  .wh { font-weight: 600; font-size: 12.5px; margin-bottom: 4px; }
+  .wrow { font-size: 12.5px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wid { font-weight: 600; }
 </style>

@@ -40,7 +40,11 @@
         accountClass: cfgAccts[id]?.account_class ?? null,
         mode: cfgAccts[id]?.mode ?? null,
       }));
-      rows.sort((a, b) => a.id.localeCompare(b.id));
+      // UI-UPGRADE-1 (operator): real money first, then paper, then prop;
+      // anything unclassified last. Alphabetical inside each class.
+      const rank = (c: string | null) =>
+        ({ real_money: 0, real: 0, paper: 1, prop: 2 } as Record<string, number>)[(c ?? "").toLowerCase()] ?? 3;
+      rows.sort((a, b) => rank(a.accountClass) - rank(b.accountClass) || a.id.localeCompare(b.id));
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       rows = [];
