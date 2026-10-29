@@ -34,7 +34,7 @@ export interface MarketHandlers {
    * **Use it to REFRESH uPnL on rows you already have. Never to decide which
    * rows exist** — REST (`/api/bot/positions`) is the authority on membership.
    */
-  onPositions?: (positions: Position[]) => void;
+  onPositions?: (positions: Position[], scope?: "all" | "symbols") => void;
   onStatus?: (status: MarketStatus) => void;
 }
 
@@ -71,6 +71,9 @@ export class MarketStream {
       interval: this.interval,
       limit: String(this.limit),
       include_paper: "true",
+      // Whole-book positions frame (bot LIVE-NUMBERS-STREAMING): live count + uPnL
+      // for EVERY row, not just the charted symbol. Older servers ignore it.
+      scope: "all",
     });
     const url = `${getBotWsUrl()}/ws/market?${q.toString()}`;
     this.handlers.onStatus?.("connecting");
@@ -95,7 +98,7 @@ export class MarketStream {
       if (msg?.type === "candles" && Array.isArray(msg.candles)) {
         this.handlers.onCandles?.(msg.symbol, msg.interval, msg.candles as Candle[]);
       } else if (msg?.type === "positions" && Array.isArray(msg.positions)) {
-        this.handlers.onPositions?.(msg.positions as Position[]);
+        this.handlers.onPositions?.(msg.positions as Position[], msg.scope);
       }
     };
     this.ws.onclose = () => {

@@ -91,6 +91,7 @@
 
   let stream: MarketStream | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let lastMembershipRefresh = 0;
   let refreshing = $state(false);
   let lastUpdated = $state<number | null>(null);
 
@@ -305,7 +306,7 @@
       onCandles: (sym, _iv, cs) => {
         candlesBySymbol = { ...candlesBySymbol, [sym]: cs };
       },
-      onPositions: (ps) => {
+      onPositions: (ps, scope) => {
         // MERGE uPnL onto the REST rows — NEVER replace the row SET.
         //
         // The server SCOPES this frame to the subscribed symbols
@@ -331,12 +332,24 @@
         // the code did not do. Cost of the fix: a position opened between REST
         // polls appears up to one poll interval late, which is strictly better
         // than silently dropping positions that exist.
+        // Whole-book frame (scope "all"): if the SET of open ids differs from the
+        // REST rows, a trade opened/closed — re-read REST at once (throttled 2 s)
+        // instead of waiting for the 15 s poll, so the count is live too.
+        if (scope === "all" && ps) {
+          const a = new Set(ps.map((p) => String(p.id ?? "")));
+          const b = new Set(positions.map((p) => String(p.id ?? "")));
+          const same = a.size === b.size && [...a].every((id) => b.has(id));
+          if (!same && Date.now() - lastMembershipRefresh > 2000) {
+            lastMembershipRefresh = Date.now();
+            api.positions().then((v) => { positions = v; lastUpdated = Date.now(); }).catch(() => {});
+          }
+        }
         if (!ps || !ps.length) return;
         const live = new Map(ps.map((p) => [String(p.id ?? ""), p]));
         positions = positions.map((p) => {
           const w = live.get(String(p.id ?? ""));
           return w
-            ? { ...p, unrealizedPnl: w.unrealizedPnl, unrealizedPnlSource: w.unrealizedPnlSource }
+            ? { ...p, unrealizedPnl: w.unrealizedPnl, unrealizedPnlSource: w.unrealizedPnlSource, unrealizedPnlProvenance: w.unrealizedPnlProvenance }
             : p;
         });
       },

@@ -50,6 +50,7 @@ export interface Position {
   entryPrice?: number | null;
   unrealizedPnl?: number | null;
   unrealizedPnlSource?: string | null;
+  unrealizedPnlProvenance?: string | null;
   openedAt?: string | null;
   stopLoss?: number | null;
   takeProfit?: number | null;
