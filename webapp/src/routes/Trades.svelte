@@ -2,11 +2,12 @@
   import { onMount } from "svelte";
   import { api, type ClosedTrade } from "../lib/api";
   import { sinceFor, WINDOW_OPTIONS, FUNDING_OPTIONS } from "../lib/nav";
-  import { portfolioPaperIds, isPortfolioPaperRow } from "../lib/funding";
+  import { accountBooks, bookOfRow, isPaperBook, normalizeFunding, countUnassigned } from "../lib/funding";
   import { money, num, pct, signClass, DASH, agoFromIso } from "../lib/format";
   import Segmented from "../components/Segmented.svelte";
 
-  let funding = $state("real");
+  let funding = $state(normalizeFunding("real"));
+  let unassigned = $state(0); // paper rows in the fetched pages that fit neither paper book
   let win = $state("7d");
   let rows = $state<ClosedTrade[]>([]);
   let loading = $state(true);
@@ -14,13 +15,6 @@
   let error = $state<string | null>(null);
   let hasMore = $state(false);
   let lastUpdated = $state<number | null>(null);
-
-  function classOf(t: ClosedTrade): string {
-    const c = (t.accountClass ?? "").toLowerCase();
-    if (c === "prop") return "prop";
-    if (c === "paper") return "paper";
-    return "real";
-  }
 
   function rowKey(t: ClosedTrade): string {
     return String(t.id ?? `${t.symbol}-${t.closedAt}`);
@@ -41,6 +35,7 @@
   async function loadPage(reset: boolean) {
     if (reset) {
       rawOffset = 0;
+      unassigned = 0;
       rows = [];
       hasMore = false;
     }
@@ -51,20 +46,18 @@
       hasMore = false;
       return;
     }
-    // "Paper" scopes to the live-portfolio-mirror books (paper_role: portfolio)
-    // — the soak roster stays on the Accounts page only. Resolve the portfolio
-    // ids from /config; a config read failure falls back to ALL paper so the
-    // view is never stranded. S-PAPER-PORTFOLIO.
+    // Every book is classified from /config (account_class + paper_role); the
+    // two paper books need paper rows from the server and a config read.
+    const paper = isPaperBook(funding);
     const [{ rows: pageRaw, hasMore: more }, cfg] = await Promise.all([
-      api.closedTradesPage({ since: sinceFor(win), includePaper: funding === "paper", limit: PAGE_LIMIT, offset: rawOffset }),
-      funding === "paper" ? api.config().catch(() => null) : Promise.resolve(null),
+      api.closedTradesPage({ since: sinceFor(win), includePaper: paper, limit: PAGE_LIMIT, offset: rawOffset }),
+      api.config().catch(() => null),
     ]);
     rawOffset += pageRaw.length;
     hasMore = more;
-    const filtered =
-      funding === "paper"
-        ? pageRaw.filter((t) => isPortfolioPaperRow(t, portfolioPaperIds(cfg)))
-        : pageRaw.filter((t) => classOf(t) === funding);
+    const books = accountBooks(cfg);
+    unassigned += paper ? countUnassigned(pageRaw, books) : 0;
+    const filtered = pageRaw.filter((t) => bookOfRow(t, books) === funding);
     if (reset) {
       rows = filtered;
     } else {
@@ -168,6 +161,10 @@
     <div class="s"><span class="muted">Win rate</span> <b class="mono">{pct(stats.winRate)}</b></div>
     <div class="s"><span class="muted">Net P&L</span> <b class="mono {signClass(stats.total)}">{money(stats.total, { sign: true })}</b></div>
   </div>
+
+  {#if unassigned > 0}
+    <div class="muted caveat">{unassigned} paper trade(s) can't be placed in either paper book (no account recorded, or /config unreadable) and are hidden.</div>
+  {/if}
 
   {#if untrusted > 0}
     <div class="muted caveat">⚠ {untrusted} of {graded} graded trade(s) carry an unmeasured realized P&L (⚠ mark-substituted / ? unrecorded) — estimates, not broker truth.</div>

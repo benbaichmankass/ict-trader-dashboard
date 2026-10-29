@@ -196,6 +196,22 @@ jobs:
       - name: No hardcoded limit may exceed the bot's declared cap
         run: node webapp/tests/limit-cap.mjs
 
+  webapp-funding-books:
+    # The four funding books (Live money / Prop / Paper portfolio / Paper testing)
+    # are classified from /api/bot/config. A role-less paper account must land in
+    # Paper testing and a stored "paper" choice must migrate. Zero dependencies.
+    name: webapp-funding-books
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Prove the checker can fail
+        run: node webapp/tests/funding-books.mjs --self-test
+      - name: Book classification contract
+        run: node webapp/tests/funding-books.mjs
+
   webapp-catalog-contract:
     # Data Explorer research catalog: every field the component reads must exist
     # in a REAL captured /api/bot/research/catalog response (fixture committed).

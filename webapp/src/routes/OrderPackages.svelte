@@ -3,20 +3,15 @@
   import { api } from "../lib/api";
   import { sinceFor, WINDOW_OPTIONS, FUNDING_OPTIONS } from "../lib/nav";
   import { money, signClass, agoFromIso, DASH } from "../lib/format";
+  import { accountBooks, bookOfRow, isPaperBook, countUnassigned } from "../lib/funding";
   import Segmented from "../components/Segmented.svelte";
 
   let funding = $state("real");
   let win = $state("7d");
   let rows = $state<any[]>([]);
+  let unassigned = $state(0); // paper packages with no account (cannot be placed in a paper book)
   let loading = $state(true);
   let error = $state<string | null>(null);
-
-  function classOf(r: any): string {
-    const c = (r.accountClass ?? "").toLowerCase();
-    if (c === "prop") return "prop";
-    if (c === "paper") return "paper";
-    return "real";
-  }
 
   async function load() {
     loading = true;
@@ -26,8 +21,15 @@
         rows = [];
         return;
       }
-      const raw = await api.orderPackages({ since: sinceFor(win), includePaper: funding === "paper", limit: 200 });
-      rows = (raw?.rows ?? []).filter((r: any) => classOf(r) === funding);
+      const paper = isPaperBook(funding);
+      const [raw, cfg] = await Promise.all([
+        api.orderPackages({ since: sinceFor(win), includePaper: paper, limit: 200 }),
+        api.config().catch(() => null),
+      ]);
+      const books = accountBooks(cfg);
+      const all: any[] = raw?.rows ?? [];
+      unassigned = paper ? countUnassigned(all, books) : 0;
+      rows = all.filter((r: any) => bookOfRow(r, books) === funding);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
       rows = [];
@@ -47,6 +49,10 @@
       <Segmented options={WINDOW_OPTIONS} bind:value={win} />
     </div>
   </div>
+
+  {#if unassigned > 0}
+    <div class="muted pad">{unassigned} paper package(s) carry no account and fit neither paper book — hidden here, never guessed into one.</div>
+  {/if}
 
   {#if error}
     <div class="err panel">Couldn't load order packages: <span class="mono">{error}</span></div>

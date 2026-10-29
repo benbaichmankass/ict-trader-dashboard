@@ -470,6 +470,18 @@ row with no per-account attribution (e.g. `/order-packages` rows carry no
 `/performance` sub-block, itself falling back to `paper`) all scope this way; the
 **Accounts page is deliberately unchanged** — it shows every account incl. soak.
 
+### SPA funding axis = four books (2026-10-29, UI-FOUR-BOOKS)
+
+The SPA toggle is **Live money · Prop · Paper portfolio · Paper testing**
+(`webapp/src/lib/funding.ts`, `nav.ts::FUNDING_OPTIONS`). Accounts are classified
+data-driven from `/api/bot/config` (`account_class` + `paper_role`); a paper
+account with **no `paper_role` falls into Paper testing**. A paper row with no
+account (e.g. `/order-packages`) or with `/config` unreadable matches no book and
+is counted in a visible caption, never guessed. A stored old `"paper"` choice
+migrates to Paper portfolio (`normalizeFunding`). CI: `webapp-funding-books`
+(`webapp/tests/funding-books.mjs`). The Streamlit text above describes the older
+three-way toggle.
+
 ## Sub-pages (endpoint reference)
 
 The list/registry pages — **Strategies, Models, Accounts** — share a

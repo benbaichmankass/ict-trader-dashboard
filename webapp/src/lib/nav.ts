@@ -153,11 +153,13 @@ export const WINDOW_OPTIONS = [
   { value: "all", label: "All" },
 ];
 
-// One funding toggle per tab: Real money / Paper / Prop — the three are never blended.
+// One funding toggle per tab: four books, never blended (UI-FOUR-BOOKS) — see
+// lib/funding.ts for how accounts are classified.
 export const FUNDING_OPTIONS = [
-  { value: "real", label: "Real money" },
-  { value: "paper", label: "Paper" },
+  { value: "real", label: "Live money" },
   { value: "prop", label: "Prop" },
+  { value: "paper_portfolio", label: "Paper portfolio" },
+  { value: "paper_testing", label: "Paper testing" },
 ];
 
 export function sinceFor(window: string): string | undefined {
