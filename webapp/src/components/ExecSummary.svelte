@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { BotStats, Performance, Position } from "../lib/api";
   import { money, pct, num, signClass, agoFromIso, DASH } from "../lib/format";
-  import { portfolioPaperIds, isPortfolioPaperRow } from "../lib/funding";
+  import { accountBooks, bookOfRow, FUNDING_BOOKS, FUNDING_LABEL, type FundingBook } from "../lib/funding";
 
   // Mirrors streamlit_app.py::_render_exec_summary — funding/window-scoped, real
   // and paper never blended. Status line + six cards (equity · open trades ·
@@ -9,53 +9,33 @@
   // other-funding-class one-liner + a compact open-trades table.
   let {
     stats, perf, positions = [], balances = null, config = null, strategies = null,
-    funding = "real", win = "7d", propOverview = null,
+    funding = "real", win = "7d", propOverview = null, testingPerf = null,
   }: {
     stats: BotStats | null; perf: Performance | null; positions?: Position[];
     balances?: any; config?: any; strategies?: any; funding?: string; win?: string; propOverview?: any;
+    testingPerf?: { totalPnl: number | null; winRate: number | null; profitFactor: number | null; totalTrades: number; sampled: boolean } | null;
   } = $props();
 
   const WIN_LABEL: Record<string, string> = { "24h": "24h", "7d": "7d", "30d": "30d", all: "all-time" };
   const winLabel = $derived(WIN_LABEL[win] ?? win);
-  const segName = $derived(funding === "paper" ? "paper" : funding === "prop" ? "prop" : "real money");
+  const segName = $derived((FUNDING_LABEL[funding as FundingBook] ?? "live money").toLowerCase());
 
-  function fundingOf(p: Position): string {
-    const c = (p.accountClass ?? "").toLowerCase();
-    if (c === "prop") return "prop";
-    if (c === "paper") return "paper";
-    return "real";
-  }
-
-  // "Paper" scopes to the live-portfolio-mirror books (paper_role: portfolio);
-  // soak books stay off this view (Accounts page only). Falls back to ALL paper
-  // when none are declared / config is unreadable. S-PAPER-PORTFOLIO.
-  const paperIds = $derived(portfolioPaperIds(config));
-
-  // account_id → account_class map (from /config) so we can sum equity per class.
-  const acctClass = $derived.by(() => {
-    const m: Record<string, string> = {};
-    for (const a of config?.accounts ?? []) m[a.id] = a.account_class ?? "";
-    return m;
-  });
+  // account id → book (from /config account_class + paper_role); never blended.
+  const books = $derived(accountBooks(config));
 
   // Total equity for the funding class = sum of that class's tracked balances.
   const equity = $derived.by(() => {
     if (funding === "prop") return propOverview?.equity?.total_usd ?? null;
-    const want = funding === "paper" ? "paper" : "real_money";
     const bals = balances?.balances ?? {};
     let sum = 0, any = false;
     for (const [id, b] of Object.entries<any>(bals)) {
-      if ((acctClass[id] ?? "") !== want || typeof b?.balance !== "number") continue;
-      // Paper equity scopes to the portfolio-mirror books (soak excluded); all
-      // paper when none are declared.
-      if (want === "paper" && paperIds.size > 0 && !paperIds.has(id)) continue;
+      if (books[id] !== funding || typeof b?.balance !== "number") continue;
       sum += b.balance; any = true;
     }
     return any ? sum : null;
   });
 
-  // Open positions for the class (from REST /positions; prop from its own journal — not here).
-  // "Paper" keeps only the portfolio-mirror books, not the soak roster.
+  // Open positions for the book (from REST /positions; prop from its own journal — not here).
   // Prop open trades come from the prop journal via /api/bot/prop/overview
   // (the manual bridge has no broker positions). Mapped to the Position shape
   // the shared table renders. uPnL is the bot's per-trade figure (PROP-TRACKING,
@@ -71,11 +51,7 @@
     }) as unknown as Position),
   );
   const segOpen = $derived(
-    funding === "prop"
-      ? propOpen
-      : funding === "paper"
-        ? positions.filter((p) => isPortfolioPaperRow(p, paperIds))
-        : positions.filter((p) => fundingOf(p) === funding),
+    funding === "prop" ? propOpen : positions.filter((p) => bookOfRow(p, books) === funding),
   );
   const openUpnl = $derived.by(() => {
     // Prop: the bot's BOOK figure, never a client sum of whichever trades happen to carry one. The measured
@@ -101,12 +77,17 @@
   // Windowed realized P&L / win rate / profit factor for the segment. "Paper"
   // prefers the portfolio-mirror sub-block (paper_role: portfolio) the bot
   // serves, which itself falls back to the all-paper `paper` block server-side.
-  const segPerf = $derived(
-    funding === "paper"
+  // Paper testing has no /performance block: it uses the totals Overview
+  // computed from that window's closed trades (testingPerf), and carries no
+  // per-asset / per-strategy breakdown.
+  const segPerf = $derived<any>(
+    funding === "paper_portfolio"
       ? (perf?.paperPortfolio ?? perf?.paper ?? null)
-      : funding === "prop"
-        ? null
-        : perf,
+      : funding === "paper_testing"
+        ? (testingPerf ?? null)
+        : funding === "prop"
+          ? null
+          : perf,
   );
   const propRealized = $derived(funding === "prop" ? (propOverview?.realized ?? null) : null);
   const realized = $derived(funding === "prop" ? (propRealized?.total_pnl ?? null) : (segPerf?.totalPnl ?? null));
@@ -137,7 +118,18 @@
   // The OTHER funding class one-liner (never let the other side be invisible).
   // The paper side prefers the portfolio-mirror sub-block, same as segPerf.
   const otherPerf = $derived(funding === "real" ? (perf?.paperPortfolio ?? perf?.paper ?? null) : perf);
-  const otherTag = $derived(funding === "real" ? "🧪 Paper" : "💰 Real");
+  const otherTag = $derived(funding === "real" ? "🧪 Paper portfolio" : "💰 Live");
+
+  // Books at a glance: open count + uPnL for every book, so no book is invisible
+  // behind the toggle. Prop comes from its own journal; uPnL "—" when none known.
+  const glance = $derived(
+    FUNDING_BOOKS.map((b) => {
+      const rows = b === "prop" ? propOpen : positions.filter((p) => bookOfRow(p, books) === b);
+      let sum = 0, known = 0;
+      for (const p of rows) if (typeof p.unrealizedPnl === "number") { sum += p.unrealizedPnl; known++; }
+      return { book: b, open: rows.length, upnl: known ? sum : null };
+    }),
+  );
 
   // Asset-class P&L breakdown (mirrors Streamlit's perAssetClass row).
   const ASSET_EMOJI: Record<string, string> = { crypto: "🪙", index: "📊", commodity: "🛢️", equity: "📈", bond: "🏛️", fx: "💱", unknown: "•" };
@@ -176,6 +168,23 @@
       {:else}
         Prop overview unavailable from the bot — see the <b>Prop</b> tab.
       {/if}
+    </div>
+  {/if}
+
+  <div class="books">
+    {#each glance as g (g.book)}
+      <div class="bk" class:sel={g.book === funding}>
+        <span class="bn">{FUNDING_LABEL[g.book]}</span>
+        <span class="bv">{g.book === "prop" && !propOverview?.present ? DASH : num(g.open)} open</span>
+        <span class="bu {signClass(g.upnl)}">{g.upnl == null ? DASH : money(g.upnl, { sign: true })}</span>
+      </div>
+    {/each}
+  </div>
+
+  {#if funding === "paper_testing"}
+    <div class="cap">
+      Paper testing = every paper/demo account without <code>paper_role: portfolio</code> (soak / demo floor).
+      {#if testingPerf?.sampled}Realized figures use the latest 200 closed trades in this window.{/if}
     </div>
   {/if}
 
@@ -272,6 +281,13 @@
   .status { font-size: 13px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
   .dot.pos { background: var(--pos); } .dot.neg { background: var(--neg); } .dot.warn { background: #e0a800; }
+  .books { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  @media (max-width: 560px) { .books { grid-template-columns: 1fr 1fr; } }
+  .bk { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; gap: 1px; font-size: 11.5px; }
+  .bk.sel { border-color: var(--accent); }
+  .bn { color: var(--muted); }
+  .bv { font-weight: 600; font-size: 13px; }
+  .bu.pos { color: var(--pos); } .bu.neg { color: var(--neg); }
   .propnote { color: var(--muted); font-size: 12.5px; }
   .est { color: var(--muted); font-size: 11px; font-weight: 400; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }

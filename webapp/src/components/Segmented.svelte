@@ -17,6 +17,7 @@
 <style>
   .seg {
     display: inline-flex;
+    flex-wrap: wrap;
     gap: 2px;
     background: var(--panel-2);
     border: 1px solid var(--border);

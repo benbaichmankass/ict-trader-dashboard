@@ -3,7 +3,7 @@
   import { api, type BotStats, type Performance, type Position, type Candle, type ClosedTrade } from "../lib/api";
   import { MarketStream, type MarketStatus } from "../lib/ws";
   import { FUNDING_OPTIONS, WINDOW_OPTIONS, sinceFor, gotoDetail } from "../lib/nav";
-  import { portfolioPaperIds, isPortfolioPaperRow } from "../lib/funding";
+  import { accountBooks, bookOfRow, isPaperBook, normalizeFunding, countUnassigned } from "../lib/funding";
   import { money, signClass, DASH, agoFromIso } from "../lib/format";
   import ExecSummary from "../components/ExecSummary.svelte";
   import PositionsTable from "../components/PositionsTable.svelte";
@@ -12,9 +12,10 @@
   import StatusDot from "../components/StatusDot.svelte";
   import Segmented from "../components/Segmented.svelte";
 
-  // One funding toggle per tab (Real money / Paper / Prop — never blended) + the
-  // 24h/7d/30d/All window, at the top — mirrors the Streamlit UI.
-  let funding = $state("real");
+  // One funding toggle per tab — four books, never blended: Live money · Prop ·
+  // Paper portfolio · Paper testing (lib/funding.ts) — + the 24h/7d/30d/All
+  // window, at the top. normalizeFunding migrates an old stored "paper" choice.
+  let funding = $state(normalizeFunding("real"));
   let win = $state("7d");
 
   let stats = $state<BotStats | null>(null);
@@ -167,21 +168,13 @@
     api.propOverview(w).then((v) => { if (w === win) propOverview = v; }).catch(() => {});
   });
 
-  function fundingOf(p: Position): string {
-    const c = (p.accountClass ?? "").toLowerCase();
-    if (c === "prop") return "prop";
-    if (c === "paper") return "paper";
-    return "real";
-  }
-  // "Paper" scopes to the live-portfolio-mirror books (paper_role: portfolio);
-  // the data-only soak books stay off every tab but Accounts. Falls back to ALL
-  // paper when none are declared / config unreadable. S-PAPER-PORTFOLIO.
-  const paperIds = $derived(portfolioPaperIds(config));
-  // True when a position belongs to the currently-selected funding class — the
-  // portfolio-mirror scoping is applied for the Paper toggle.
+  // account id → book, from /config (account_class + paper_role).
+  const books = $derived(accountBooks(config));
+  // True when a position belongs to the currently-selected book.
   function matchesFunding(p: Position): boolean {
-    return funding === "paper" ? isPortfolioPaperRow(p, paperIds) : fundingOf(p) === funding;
+    return bookOfRow(p, books) === funding;
   }
+  const unassignedPaper = $derived(isPaperBook(funding) ? countUnassigned(positions, books) : 0);
   // Positions scoped to the selected funding class (never blended).
   const shownPositions = $derived(positions.filter((p) => matchesFunding(p)));
   const symOpen = $derived(shownPositions.filter((p) => p.symbol === selected));
@@ -193,12 +186,6 @@
   // (which feeds the chart's symClosed overlay and isn't window-scoped): a
   // "Load more" here should pull the NEXT server batch, not just reveal more
   // of an already-fetched flat 100, so this makes its own paged requests.
-  function classOfTrade(t: ClosedTrade): string {
-    const c = (t.accountClass ?? "").toLowerCase();
-    if (c === "prop") return "prop";
-    if (c === "paper") return "paper";
-    return "real";
-  }
   function dirLabel(t: ClosedTrade): string {
     const d = (t.direction ?? t.side ?? "").toLowerCase();
     if (d === "sell" || d === "short") return "SHORT";
@@ -234,18 +221,16 @@
     const [{ rows: pageRaw, hasMore }, cfg] = await Promise.all([
       api.closedTradesPage({
         since: sinceFor(win),
-        includePaper: funding === "paper",
+        includePaper: isPaperBook(funding),
         limit: RECENT_BATCH,
         offset: recentClosedOffset,
       }),
-      funding === "paper" ? api.config().catch(() => null) : Promise.resolve(null),
+      api.config().catch(() => null),
     ]);
     recentClosedOffset += pageRaw.length;
     recentClosedHasMore = hasMore;
-    const filtered =
-      funding === "paper"
-        ? pageRaw.filter((t) => isPortfolioPaperRow(t, portfolioPaperIds(cfg)))
-        : pageRaw.filter((t) => classOfTrade(t) === funding);
+    const cfgBooks = accountBooks(cfg);
+    const filtered = pageRaw.filter((t) => bookOfRow(t, cfgBooks) === funding);
     if (reset) {
       recentClosedRows = filtered;
     } else {
@@ -285,6 +270,34 @@
     funding;
     win;
     loadRecentClosed();
+  });
+
+  // The testing book has no /performance block (the bot serves `paper` = all
+  // paper and `paperPortfolio`), so its windowed totals are computed here from
+  // that window's closed trades — real counts, labelled with their sample size.
+  let testingPerf = $state<{ totalPnl: number | null; winRate: number | null; profitFactor: number | null;
+    totalTrades: number; sampled: boolean } | null>(null);
+  $effect(() => {
+    const w = win;
+    if (funding !== "paper_testing") { testingPerf = null; return; }
+    Promise.all([
+      api.closedTradesPage({ since: sinceFor(w), includePaper: true, limit: 200 }),
+      api.config().catch(() => null),
+    ]).then(([{ rows, hasMore }, cfg]) => {
+      if (w !== win || funding !== "paper_testing") return;
+      const b = accountBooks(cfg);
+      const mine = rows.filter((t) => bookOfRow(t, b) === "paper_testing" && t.pnl != null);
+      const wins = mine.filter((t) => (t.pnl as number) > 0);
+      const gain = wins.reduce((a, t) => a + (t.pnl as number), 0);
+      const loss = mine.filter((t) => (t.pnl as number) < 0).reduce((a, t) => a - (t.pnl as number), 0);
+      testingPerf = {
+        totalPnl: mine.length ? mine.reduce((a, t) => a + (t.pnl as number), 0) : null,
+        winRate: mine.length ? wins.length / mine.length : null,
+        profitFactor: loss > 0 ? gain / loss : null,
+        totalTrades: mine.length,
+        sampled: hasMore,
+      };
+    }).catch(() => { if (w === win) testingPerf = null; });
   });
 
   // REST candle fallback so the chart renders even when the market WebSocket
@@ -416,11 +429,15 @@
     <div class="muted small">Updated {agoFromIso(new Date(lastUpdated).toISOString())}</div>
   {/if}
 
+  {#if unassignedPaper > 0}
+    <div class="muted small">{unassignedPaper} open paper position(s) can't be placed in either paper book (no account recorded, or /config unreadable) and are hidden.</div>
+  {/if}
+
   {#if apiError}
     <div class="err panel">Couldn't reach the bot API: <span class="mono">{apiError}</span></div>
   {/if}
 
-  <ExecSummary {stats} {perf} {positions} {balances} {config} {strategies} {funding} {win} {propOverview} />
+  <ExecSummary {stats} {perf} {positions} {balances} {config} {strategies} {funding} {win} {propOverview} {testingPerf} />
 
   <!-- UI-UPGRADE-1 item 2: work-queue glance from /api/bot/work/snapshot.
        `present:false` is "we could not read the checklist", shown as such —
