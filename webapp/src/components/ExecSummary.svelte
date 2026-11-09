@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { BotStats, Performance, Position } from "../lib/api";
   import { money, pct, num, signClass, agoFromIso, DASH } from "../lib/format";
+  import TradeCard from "./TradeCard.svelte";
   import { accountBooks, bookOfRow, FUNDING_BOOKS, FUNDING_LABEL, type FundingBook } from "../lib/funding";
 
   // Mirrors streamlit_app.py::_render_exec_summary — funding/window-scoped, real
@@ -9,15 +10,26 @@
   // other-funding-class one-liner + a compact open-trades table.
   let {
     stats, perf, positions = [], balances = null, config = null, strategies = null,
-    funding = "real", win = "7d", propOverview = null, testingPerf = null,
+    funding = "real", win = "7d", days = 30, propOverview = null, testingPerf = null, onpick = undefined,
   }: {
     stats: BotStats | null; perf: Performance | null; positions?: Position[];
-    balances?: any; config?: any; strategies?: any; funding?: string; win?: string; propOverview?: any;
+    balances?: any; config?: any; strategies?: any; funding?: string; win?: string; days?: number; propOverview?: any;
+    onpick?: (book: FundingBook) => void;
     testingPerf?: { totalPnl: number | null; winRate: number | null; profitFactor: number | null; totalTrades: number; sampled: boolean } | null;
   } = $props();
 
+  // `win` is the EFFECTIVE bot window (24h|7d|30d|all — the only ones /performance
+  // serves); `days` is what the slider asks for. Label says so when they differ.
   const WIN_LABEL: Record<string, string> = { "24h": "24h", "7d": "7d", "30d": "30d", all: "all-time" };
   const winLabel = $derived(WIN_LABEL[win] ?? win);
+  const winCovers = $derived(win === "all" ? days < 365 : win === "24h" ? days !== 1 : parseInt(win) !== days);
+  // Several cards may be open at once (set of open row keys).
+  let openCards = $state<Set<string>>(new Set());
+  function toggleCard(k: string) {
+    const n = new Set(openCards);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    openCards = n;
+  }
   const segName = $derived((FUNDING_LABEL[funding as FundingBook] ?? "live money").toLowerCase());
 
   // account id → book (from /config account_class + paper_role); never blended.
@@ -171,15 +183,19 @@
     </div>
   {/if}
 
-  <div class="books">
+  <div class="books" role="group" aria-label="Select book">
     {#each glance as g (g.book)}
-      <div class="bk" class:sel={g.book === funding}>
-        <span class="bn">{FUNDING_LABEL[g.book]}</span>
+      <button type="button" class="bk" class:sel={g.book === funding} aria-pressed={g.book === funding}
+        onclick={() => onpick?.(g.book)}>
+        <span class="bn">{FUNDING_LABEL[g.book]}{g.book === funding ? " ✓" : ""}</span>
         <span class="bv">{g.book === "prop" && !propOverview?.present ? DASH : num(g.open)} open</span>
         <span class="bu {signClass(g.upnl)}">{g.upnl == null ? DASH : money(g.upnl, { sign: true })}</span>
-      </div>
+      </button>
     {/each}
   </div>
+  {#if winCovers}
+    <div class="cap">Realized stats use the bot's {winLabel} window (the nearest it serves to {days}d).</div>
+  {/if}
 
   {#if funding === "paper_testing"}
     <div class="cap">
@@ -257,8 +273,11 @@
           <thead><tr><th>Symbol</th><th>Side</th><th class="r">Qty</th><th class="r">Entry</th><th>Strategy</th><th>Account</th><th class="r">uPnL</th><th>Age</th></tr></thead>
           <tbody>
             {#each segOpen as p, i (p.id ?? i)}
-              <tr>
-                <td class="sym">{p.symbol ?? DASH}</td>
+              {@const k = String(p.id ?? i)}
+              <tr class="click" class:openrow={openCards.has(k)} onclick={() => toggleCard(k)}
+                tabindex="0" role="button" aria-expanded={openCards.has(k)}
+                onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleCard(k); } }}>
+                <td class="sym">{openCards.has(k) ? "▾" : "▸"} {p.symbol ?? DASH}</td>
                 <td class={String(p.side).toLowerCase() === "sell" ? "neg" : "pos"}>{(p.side ?? DASH).toString().toUpperCase()}</td>
                 <td class="r mono">{p.qty ?? DASH}</td>
                 <td class="r mono">{money(p.entryPrice)}</td>
@@ -267,6 +286,9 @@
                 <td class="r mono {signClass(p.unrealizedPnl)}">{p.unrealizedPnl == null ? DASH : money(p.unrealizedPnl, { sign: true })}{#if p.unrealizedPnl != null && (p as any).unrealizedPnlSource === "estimate"}<span class="est" title="Mark estimate: (Bybit mark − entry) × qty, not a venue figure"> est.</span>{/if}</td>
                 <td class="muted">{agoFromIso(p.openedAt)}</td>
               </tr>
+              {#if openCards.has(k)}
+                <tr class="cardrow"><td colspan="8"><TradeCard {p} /></td></tr>
+              {/if}
             {/each}
           </tbody>
         </table>
@@ -283,8 +305,9 @@
   .dot.pos { background: var(--pos); } .dot.neg { background: var(--neg); } .dot.warn { background: #e0a800; }
   .books { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
   @media (max-width: 560px) { .books { grid-template-columns: 1fr 1fr; } }
-  .bk { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; gap: 1px; font-size: 11.5px; }
-  .bk.sel { border-color: var(--accent); }
+  .bk { text-align: left; font: inherit; color: inherit; cursor: pointer; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; gap: 1px; font-size: 11.5px; }
+  .bk:hover { border-color: var(--muted); }
+  .bk.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
   .bn { color: var(--muted); }
   .bv { font-weight: 600; font-size: 13px; }
   .bu.pos { color: var(--pos); } .bu.neg { color: var(--neg); }
@@ -315,6 +338,10 @@
   th, td { padding: 6px 8px; text-align: left; white-space: nowrap; }
   th { color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); font-size: 11.5px; }
   tbody tr { border-bottom: 1px solid var(--border); }
+  tr.click { cursor: pointer; }
+  tr.click:hover, tr.openrow { background: var(--panel-2); }
+  tr.cardrow { border-bottom: 1px solid var(--border); }
+  tr.cardrow td { padding: 0; white-space: normal; }
   .r { text-align: right; } .sym { font-weight: 600; }
   .pos { color: var(--pos); } .neg { color: var(--neg); } .muted { color: var(--muted); }
 </style>

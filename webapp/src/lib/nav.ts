@@ -17,14 +17,17 @@ import { writable } from "svelte/store";
 // Section → sub-pages. Empty list = special-cased view rendered directly.
 export const SECTIONS: Record<string, string[]> = {
   Overview: [],
-  Performance: ["Performance", "Insights", "Reports"],
-  "Strategies & Models": ["Strategies", "Models", "Signals Catalog", "GPU Spend", "Exit Ladder", "Backtesting", "Promotion", "News"],
+  Performance: ["Performance"],
+  "Strategies & Models": ["Strategies", "Models", "Signals Catalog", "Backtesting", "News"],
   Accounts: ["Accounts", "Prop"],
-  Activity: ["Positions", "Trades", "Order Packages", "Signals"],
+  Activity: ["Trades", "Order Packages", "Signals"],
   // UI-UPGRADE-1: Roadmap folded into Work (one tab; Roadmap is a toggle on it).
   // `#/Roadmap` links still resolve — parseHash() maps them onto Work.
+  // GPU Spend moved into Work (UI-REDESIGN-2026-11 batch 1) as a third view of
+  // the Work toggle in App.svelte — Work renders directly, so no sub-page card.
   Work: [],
   Learning: [],
+  Archive: ["Reports"],
   Admin: ["Data Explorer", "Logs", "Health", "Runbooks"],
 };
 export const SECTION_NAMES = Object.keys(SECTIONS);
@@ -82,6 +85,8 @@ export const IMPLEMENTED_PAGES = new Set<string>([
   "Runbooks",
 ]);
 
+// Insights / Exit Ladder / Promotion / Positions are no longer in SECTIONS
+// (so unreachable from nav); their components stay in the repo.
 const SPECIAL_SECTIONS = new Set(["Overview", "Learning"]);
 export function isSpecial(section: string): boolean {
   return SPECIAL_SECTIONS.has(section);
@@ -122,7 +127,7 @@ export const reportDeepLink = writable<string | null>(parseReportParam());
 function initialNav(): Nav {
   const fromHash = parseHash();
   if (parseReportParam() && fromHash.section === "Overview" && fromHash.detail == null) {
-    return { section: "Performance", detail: "Reports" };
+    return { section: "Archive", detail: "Reports" };
   }
   return fromHash;
 }
@@ -175,4 +180,26 @@ export function sinceFor(window: string): string | undefined {
     default:
       return undefined; // "all"
   }
+}
+
+// ── Days-back window (Overview slider) ───────────────────────────────────────
+
+/** Snap points of the days-back slider. */
+export const DAY_SNAPS = [1, 7, 30, 90, 180, 365];
+
+/** ISO instant `days` ago (closed-trades `since=` takes any instant). */
+export function sinceDays(days: number): string {
+  return new Date(Date.now() - days * 86400_000).toISOString();
+}
+
+/**
+ * /performance and /prop/overview accept ONLY 24h|7d|30d|all (the bot answers
+ * 400 for anything else — probed 2026-11-09), so a days value maps to the
+ * smallest supported window that covers it. The UI labels the effective window.
+ */
+export function perfWindowFor(days: number): string {
+  if (days <= 1) return "24h";
+  if (days <= 7) return "7d";
+  if (days <= 30) return "30d";
+  return "all";
 }
