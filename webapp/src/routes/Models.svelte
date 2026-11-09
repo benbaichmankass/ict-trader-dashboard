@@ -4,6 +4,22 @@
   import { num, agoFromIso, DASH } from "../lib/format";
 
   let models = $state<any[]>([]);
+  // 2026-11-09 ML-REGISTRY-CONSOLIDATE: slot (D1..D10) -> breed -> lineage card -> variants, from /api/bot/ml/registry `by_slot`.
+  // null when the API predates the field: the flat list below is then the whole page.
+  let bySlot = $state<Record<string, any> | null>(null);
+  let showFlat = $state(false);
+  const SLOT_TITLES: Record<string, string> = {
+    D1: "Universe & book", D2: "Regime gate", D3: "Entry generation", D4: "Signal filter", D5: "Position aggregation",
+    D6: "Bracket at entry", D7: "In-trade management", D8: "Exit now", D9: "Execution", D10: "Review & grading",
+  };
+  function slotKeys(bs: Record<string, any>): string[] {
+    const known = Object.keys(SLOT_TITLES).filter((k) => k in bs);
+    return [...known, ...Object.keys(bs).filter((k) => !(k in SLOT_TITLES))];
+  }
+  function chipClass(st: string): string {
+    return st === "live" ? "pos" : st === "testing" || st === "shadow" ? "info" : "flat";
+  }
+  function byId(id: string): any { return models.find((m) => mid(m) === id); }
   let loading = $state(true);
   let error = $state<string | null>(null);
   let open = $state<Record<string, boolean>>({});
@@ -67,6 +83,7 @@
     try {
       const raw = await api.mlRegistry();
       models = normalize(raw);
+      bySlot = raw && !Array.isArray(raw) && raw.by_slot ? raw.by_slot : null;
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -85,7 +102,7 @@
 </script>
 
 <section>
-  <h2>Models <span class="muted sub">· ML registry (candidate → shadow → advisory)</span></h2>
+  <h2>Models <span class="muted sub">· by decision slot · registry (candidate → shadow → advisory)</span></h2>
   {#if error}
     <div class="err panel">Couldn't load models: <span class="mono">{error}</span></div>
   {:else if loading}
@@ -93,6 +110,47 @@
   {:else if models.length === 0}
     <div class="panel pad muted">No models in the registry.</div>
   {:else}
+    {#if bySlot}
+      {#each slotKeys(bySlot) as sk (sk)}
+        {@const sl = bySlot[sk]}
+        <div class="slot">
+          <h3>{sk} <span class="muted sub">· {SLOT_TITLES[sk] ?? "Unassigned"}</span></h3>
+          {#if sl.empty}
+            <div class="panel pad muted small">no model yet</div>
+          {:else}
+            {#each Object.entries(sl.breeds as Record<string, any[]>) as [breed, cards] (breed)}
+              <div class="breed muted">{breed}</div>
+              {#each cards as card (card.lineage)}
+                <div class="panel model">
+                  <div class="mh static">
+                    <span class="dot {chipClass(card.status)}"></span>
+                    <span class="mname mono">{card.lineage}</span>
+                    <span class="stage {chipClass(card.status)}">{card.status}</span>
+                  </div>
+                  <div class="mbody">
+                    {#each card.variants as v (v.model_id)}
+                      {@const row = byId(v.model_id)}
+                      <div class="variant">
+                        <span class="dot {chipClass(v.status)}"></span>
+                        <span>{v.display_name}</span>
+                        <span class="mono muted small">{v.model_id}</span>
+                        <span class="stage {chipClass(v.status)}">{v.status}</span>
+                        {#if v.consuming_accounts?.length}<span class="muted small">{v.consuming_accounts.join(", ")}</span>{/if}
+                      </div>
+                      {#if row && desc(row)}<div class="desc small muted">{desc(row)}</div>{/if}
+                    {/each}
+                  </div>
+                </div>
+              {/each}
+            {/each}
+          {/if}
+        </div>
+      {/each}
+      <button class="mh" onclick={() => (showFlat = !showFlat)}>
+        <span class="mname">All registry rows ({models.length})</span><span class="chev muted">{showFlat ? "▾" : "▸"}</span>
+      </button>
+    {/if}
+    {#if !bySlot || showFlat}
     <div class="list">
       {#each models as m, i (mid(m) + i)}
         {@const id = mid(m) + i}
@@ -122,6 +180,7 @@
         </div>
       {/each}
     </div>
+    {/if}
   {/if}
 </section>
 
@@ -129,6 +188,11 @@
   section { display: flex; flex-direction: column; gap: 14px; }
   h2 { margin: 0; font-size: 18px; }
   .sub { font-size: 12px; font-weight: 400; }
+  h3 { margin: 6px 0 4px; font-size: 15px; }
+  .slot { display: flex; flex-direction: column; gap: 6px; }
+  .breed { font-size: 12px; text-transform: uppercase; margin-top: 4px; }
+  .static { cursor: default; }
+  .variant { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
   .list { display: flex; flex-direction: column; gap: 6px; }
   .model { overflow: hidden; }
   .mh { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: none; border: none; color: var(--text); padding: 11px 14px; cursor: pointer; }
