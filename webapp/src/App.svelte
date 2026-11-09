@@ -185,6 +185,11 @@
         {#if workView === "roadmap"}<Roadmap />{:else if workView === "gpu"}<GPUSpend />{:else}<Work />{/if}
       {:else if isSpecial($nav.section)}
         <Placeholder page={$nav.section} />
+      {:else if $nav.detail == null && (SECTIONS[$nav.section] ?? []).length === 1 && DETAIL[SECTIONS[$nav.section][0]]}
+        <!-- A section with ONE page opens it directly: a landing with a single card is a dead click
+             (operator, 2026-11-09, after Insights/Reports left Performance). -->
+        {@const Only = DETAIL[SECTIONS[$nav.section][0]]}
+        <div class="detail"><Only /></div>
       {:else if $nav.detail == null}
         <SectionLanding section={$nav.section} />
       {:else if IMPLEMENTED_PAGES.has($nav.detail) && DETAIL[$nav.detail]}

@@ -5,6 +5,7 @@
   import { money, pct, num, signClass, DASH } from "../lib/format";
   import Segmented from "../components/Segmented.svelte";
   import EquityChart from "../components/EquityChart.svelte";
+  import Trades from "./Trades.svelte";
 
   let win = $state("30d");
   let perf = $state<Performance | null>(null);
@@ -113,6 +114,8 @@
       </div>
     {/if}
   {/if}
+  <!-- The closed-trade log lives at the bottom of Performance (operator 2026-11-09; Activity tab retired). -->
+  <div class="tradelog"><Trades /></div>
 </section>
 
 <style>
