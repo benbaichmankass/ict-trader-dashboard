@@ -2,6 +2,7 @@
   import type { BotStats, Performance, Position } from "../lib/api";
   import { money, pct, num, signClass, agoFromIso, DASH } from "../lib/format";
   import TradeCard from "./TradeCard.svelte";
+  let scrollW = $state(0); // visible width of the open-trades scroll area (pins the trade card to it)
   import { accountBooks, bookOfRow, FUNDING_BOOKS, FUNDING_LABEL, type FundingBook } from "../lib/funding";
 
   // Mirrors streamlit_app.py::_render_exec_summary — funding/window-scoped, real
@@ -268,7 +269,7 @@
     {#if segOpen.length === 0}
       <div class="cap">No open {segName} trades right now.</div>
     {:else}
-      <div class="scroll">
+      <div class="scroll" bind:clientWidth={scrollW}>
         <table>
           <thead><tr><th>Symbol</th><th>Side</th><th class="r">Qty</th><th class="r">Entry</th><th>Strategy</th><th>Account</th><th class="r">uPnL</th><th>Age</th></tr></thead>
           <tbody>
@@ -287,7 +288,7 @@
                 <td class="muted">{agoFromIso(p.openedAt)}</td>
               </tr>
               {#if openCards.has(k)}
-                <tr class="cardrow"><td colspan="8"><TradeCard {p} /></td></tr>
+                <tr class="cardrow"><td colspan="8"><div class="cardpin" style:width={scrollW ? `${scrollW}px` : null}><TradeCard {p} /></div></td></tr>
               {/if}
             {/each}
           </tbody>
@@ -342,6 +343,9 @@
   tr.click:hover, tr.openrow { background: var(--panel-2); }
   tr.cardrow { border-bottom: 1px solid var(--border); }
   tr.cardrow td { padding: 0; white-space: normal; }
+  /* The card stays the width of the VISIBLE scroll area and pinned to its left edge, so on a phone the
+     chart, its price axis and every field fit the screen even when the table itself scrolls sideways. */
+  .cardpin { position: sticky; left: 0; box-sizing: border-box; max-width: 100%; }
   .r { text-align: right; } .sym { font-weight: 600; }
   .pos { color: var(--pos); } .neg { color: var(--neg); } .muted { color: var(--muted); }
 </style>
