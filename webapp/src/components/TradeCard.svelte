@@ -1,18 +1,19 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type Candle, type Position } from "../lib/api";
-  import { MarketStream } from "../lib/ws";
+  import { acquireSymbol, cardCandles } from "../lib/cardStream";
   import { money, num, signClass, agoFromIso, DASH } from "../lib/format";
   import LiveChart from "./LiveChart.svelte";
 
   // Expanded open-trade card: every field the row already carries (missing → "—")
   // + a LiveChart for the trade's symbol with entry/SL/TP drawn by LiveChart.
-  // Each card owns its OWN MarketStream (one socket per open card, torn down on
-  // destroy) — the stream is a plain class, so several can coexist; candles are
-  // also seeded over REST so the chart renders if the socket can't connect.
+  // Live candles come from ONE shared MarketStream (lib/cardStream) subscribed to
+  // the union of open cards' symbols; candles are also seeded over REST so the
+  // chart renders if the socket can't connect.
   let { p, interval = "15m" }: { p: Position; interval?: string } = $props();
 
-  let candles = $state<Candle[]>([]);
+  let seeded = $state<Candle[]>([]);
+  const candles = $derived($cardCandles[p.symbol] ?? seeded);
   const a = $derived(p as any);
 
   const sell = $derived(String(p.side ?? "").toLowerCase().startsWith("s"));
@@ -33,13 +34,10 @@
   onMount(() => {
     let alive = true;
     api.candles(p.symbol, interval, 200)
-      .then((r) => { if (alive && r?.candles?.length) candles = r.candles; })
+      .then((r) => { if (alive && r?.candles?.length) seeded = r.candles; })
       .catch(() => {});
-    const stream = new MarketStream([p.symbol], interval, {
-      onCandles: (sym, _iv, cs) => { if (alive && sym === p.symbol) candles = cs; },
-    });
-    stream.start();
-    return () => { alive = false; stream.stop(); };
+    const release = acquireSymbol(p.symbol);
+    return () => { alive = false; release(); };
   });
 
   function f(v: unknown): string {
