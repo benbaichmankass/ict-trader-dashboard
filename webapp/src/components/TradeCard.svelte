@@ -40,11 +40,16 @@
     return () => { alive = false; release(); };
   });
 
+  // Phones get a shorter chart and a 2-column field grid.
+  let vw = $state(typeof window !== "undefined" ? window.innerWidth : 1024);
+  const narrow = $derived(vw < 640);
+
   function f(v: unknown): string {
     return v == null || v === "" ? DASH : String(v);
   }
 </script>
 
+<svelte:window bind:innerWidth={vw} />
 <div class="card">
   <dl>
     <div><dt>Side</dt><dd class={sell ? "neg" : "pos"}>{sell ? "SHORT" : "LONG"}</dd></div>
@@ -61,12 +66,13 @@
     <div><dt>Confidence</dt><dd class="mono">{a.confidence == null ? DASH : String(a.confidence)}</dd></div>
     <div class="wide"><dt>Model scores</dt><dd>{modelScores ?? DASH}</dd></div>
   </dl>
-  <LiveChart {candles} positions={[p]} height={260} />
+  <LiveChart {candles} positions={[p]} height={narrow ? 220 : 260} />
 </div>
 
 <style>
   .card { padding: 10px 12px 12px; background: var(--panel-2); border-top: 1px solid var(--border); }
   dl { margin: 0 0 10px; display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px 12px; }
+  @media (max-width: 640px) { dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } .card { padding: 8px; } }
   dt { color: var(--muted); font-size: 11px; }
   dd { margin: 2px 0 0; font-size: 13px; font-weight: 600; }
   .wide { grid-column: 1 / -1; }
