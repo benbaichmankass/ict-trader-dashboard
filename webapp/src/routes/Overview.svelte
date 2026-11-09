@@ -401,7 +401,7 @@
       {:else}
         <div class="muted pad small">No more trades.</div>
       {/if}
-      <button class="more" onclick={() => gotoDetail("Activity", "Trades")}>See all closed trades →</button>
+      <button class="more" onclick={() => gotoDetail("Performance", "Performance")}>See all closed trades →</button>
     {/if}
   </div>
 

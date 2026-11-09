@@ -18,17 +18,18 @@ import { writable } from "svelte/store";
 export const SECTIONS: Record<string, string[]> = {
   Overview: [],
   Performance: ["Performance"],
-  "Strategies & Models": ["Strategies", "Models", "Signals Catalog", "Backtesting", "News"],
+  "Strategies & Models": ["Models", "Strategies", "Signals Catalog", "Order Packages", "Signals", "Backtesting", "News"],
   Accounts: ["Accounts", "Prop"],
-  Activity: ["Trades", "Order Packages", "Signals"],
+  // Activity removed (operator 2026-11-09): Order Packages + Signals moved to Strategies & Models,
+  // the closed-trade log (Trades) renders at the bottom of the Performance page.
   // UI-UPGRADE-1: Roadmap folded into Work (one tab; Roadmap is a toggle on it).
   // `#/Roadmap` links still resolve — parseHash() maps them onto Work.
   // GPU Spend moved into Work (UI-REDESIGN-2026-11 batch 1) as a third view of
   // the Work toggle in App.svelte — Work renders directly, so no sub-page card.
   Work: [],
   Learning: [],
-  Archive: ["Reports"],
-  Admin: ["Data Explorer", "Logs", "Health", "Runbooks"],
+  // Archive folded into Admin (operator 2026-11-09): Reports is the old-workflow report log.
+  Admin: ["Data Explorer", "Logs", "Health", "Runbooks", "Reports"],
 };
 export const SECTION_NAMES = Object.keys(SECTIONS);
 
@@ -103,6 +104,12 @@ function parseHash(): Nav {
   const raw = typeof location !== "undefined" ? decodeURIComponent(location.hash.replace(/^#\/?/, "")) : "";
   const [rawSec, det] = raw.split("/");
   const sec = rawSec === "Roadmap" ? "Work" : rawSec; // folded into Work
+  // Old links into retired sections (Activity, Archive; 2026-11-09) land on the page's new home.
+  if (!SECTION_NAMES.includes(sec) && det) {
+    if (det === "Trades") return { section: "Performance", detail: null };
+    const owner = SECTION_NAMES.find((s) => SECTIONS[s].includes(det));
+    if (owner) return { section: owner, detail: det };
+  }
   const section = SECTION_NAMES.includes(sec) ? sec : "Overview";
   const detail = det && SECTIONS[section]?.includes(det) ? det : null;
   return { section, detail };
@@ -127,7 +134,7 @@ export const reportDeepLink = writable<string | null>(parseReportParam());
 function initialNav(): Nav {
   const fromHash = parseHash();
   if (parseReportParam() && fromHash.section === "Overview" && fromHash.detail == null) {
-    return { section: "Archive", detail: "Reports" };
+    return { section: "Admin", detail: "Reports" };
   }
   return fromHash;
 }
