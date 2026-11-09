@@ -1,22 +1,28 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { api, type BotStats, type Performance, type Position, type Candle, type ClosedTrade } from "../lib/api";
-  import { MarketStream, type MarketStatus } from "../lib/ws";
-  import { FUNDING_OPTIONS, WINDOW_OPTIONS, sinceFor, gotoDetail } from "../lib/nav";
-  import { accountBooks, bookOfRow, isPaperBook, normalizeFunding, countUnassigned } from "../lib/funding";
+  import { api, type BotStats, type Performance, type Position, type ClosedTrade } from "../lib/api";
+  import { FUNDING_OPTIONS, DAY_SNAPS, sinceDays, perfWindowFor, gotoDetail } from "../lib/nav";
+  import { accountBooks, bookOfRow, isPaperBook, normalizeFunding, countUnassigned, FUNDING_BOOKS, FUNDING_LABEL, type FundingBook } from "../lib/funding";
   import { money, signClass, DASH, agoFromIso } from "../lib/format";
   import ExecSummary from "../components/ExecSummary.svelte";
-  import PositionsTable from "../components/PositionsTable.svelte";
-  import LiveChart from "../components/LiveChart.svelte";
   import EquityChart from "../components/EquityChart.svelte";
-  import StatusDot from "../components/StatusDot.svelte";
-  import Segmented from "../components/Segmented.svelte";
 
   // One funding toggle per tab — four books, never blended: Live money · Prop ·
   // Paper portfolio · Paper testing (lib/funding.ts) — + the 24h/7d/30d/All
   // window, at the top. normalizeFunding migrates an old stored "paper" choice.
-  let funding = $state(normalizeFunding("real"));
-  let win = $state("7d");
+  // The selected book is driven by clicking an Executive Summary book card
+  // (default live money); the days-back slider replaces the window buttons.
+  let funding = $state<FundingBook>(normalizeFunding("real"));
+  let days = $state(30);
+  // /performance + /prop/overview serve only 24h|7d|30d|all → the effective window.
+  const win = $derived(perfWindowFor(days));
+  // Last-closed-trades book filter: multi-select, any combination.
+  let closedBooks = $state<FundingBook[]>(["real"]);
+  function toggleClosedBook(b: FundingBook) {
+    closedBooks = closedBooks.includes(b) ? closedBooks.filter((x) => x !== b) : [...closedBooks, b];
+  }
+  // Slider position = index into DAY_SNAPS (snap points); the days value shown.
+  const snapIdx = $derived(Math.max(0, DAY_SNAPS.indexOf(days)));
 
   let stats = $state<BotStats | null>(null);
   let perf = $state<Performance | null>(null);
@@ -27,45 +33,11 @@
   let signals = $state<any[]>([]);
   let closedTrades = $state<ClosedTrade[]>([]);
   let news = $state<any>(null);
-  let reports = $state<any>(null);
   let propOverview = $state<any>(null); // /api/bot/prop/overview (Prop book only)
   let workSnap = $state<any>(null); // /api/bot/work/snapshot (UI-UPGRADE-1 item 2)
   let workSnapError = $state<string | null>(null);
   let pnl30 = $state<Array<{ date?: string; pnl?: number | null }>>([]);
-  let candlesBySymbol = $state<Record<string, Candle[]>>({});
-  let wsStatus = $state<MarketStatus>("connecting");
   let apiError = $state<string | null>(null);
-
-  const interval = "15m";
-  let selected = $state("BTCUSDT");
-  let userPicked = false; // once the user taps, stop auto-retargeting `selected`
-
-  // Discover the traded-symbol universe the way Streamlit's _discover_symbols does:
-  // union of every account's configured `symbols` + strategy symbols + any symbol
-  // with an open position / recent signal — never a hardcoded list, so a newly
-  // wired instrument appears with no code change. Symbols holding an open position
-  // float to the front.
-  const symbols = $derived.by(() => {
-    const s = new Set<string>();
-    for (const a of config?.accounts ?? []) for (const sym of a?.symbols ?? []) s.add(sym);
-    for (const st of Object.values<any>(config?.strategies ?? {})) {
-      for (const sym of st?.symbols ?? []) s.add(sym);
-    }
-    for (const p of positions) if (p.symbol) s.add(p.symbol);
-    for (const g of signals) if (g?.symbol) s.add(g.symbol);
-    if (s.size === 0) s.add("BTCUSDT"); // never render an empty picker
-    // Float symbols held IN THE CURRENT FUNDING CLASS to the front so the chart
-    // defaults to one you actually hold under this toggle (e.g. a real-money
-    // symbol under "Real money", not a paper one).
-    const held = new Set(
-      positions.filter((p) => p.symbol && matchesFunding(p)).map((p) => p.symbol as string));
-    return [...s].sort((a, b) =>
-      (held.has(b) ? 1 : 0) - (held.has(a) ? 1 : 0) || a.localeCompare(b));
-  });
-
-  // Symbol-scoped overlays for the charted symbol (Streamlit's per-symbol monitor).
-  const symSignals = $derived(signals.filter((g) => g?.symbol === selected).slice(0, 40));
-  const symClosed = $derived(closedTrades.filter((c) => c.symbol === selected).slice(0, 30));
 
   // News glance — top clickable source headlines across recent decisions.
   const headlines = $derived.by(() => {
@@ -79,9 +51,6 @@
     return items.sort((a, b) => Math.abs(b.score ?? 0) - Math.abs(a.score ?? 0)).slice(0, 4);
   });
 
-  // Latest system report (newest-first index).
-  const latestReport = $derived((reports?.reports ?? [])[0] ?? null);
-
   // 30-day realised-P&L → cumulative points for the sparkline.
   const pnlPoints = $derived.by(() => {
     let cum = 0;
@@ -90,9 +59,7 @@
       .map((d) => ({ t: d.date as string, cum: (cum += Number(d.pnl ?? 0)) }));
   });
 
-  let stream: MarketStream | null = null;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
-  let lastMembershipRefresh = 0;
   let refreshing = $state(false);
   let lastUpdated = $state<number | null>(null);
 
@@ -133,7 +100,6 @@
         .catch((e) => { workSnapError = e instanceof Error ? e.message : String(e); throw e; }),
       // Glance-card + sparkline data — each degrades to its own empty state.
       api.news(8).then((v) => { news = v; }),
-      api.reports().then((v) => { reports = v; }),
       api.pnlHistory(30).then((h) => { pnl30 = Array.isArray(h) ? h : []; }),
     ];
     const core = Promise.all([slices[0], slices[2]]);
@@ -148,7 +114,7 @@
 
   // Refresh: re-fetch this view's data now (every fetch already goes through
   // api.ts — there is no client cache to bypass) and reset the closed-trades
-  // "Load more" paging to its first batch, WITHOUT touching the user's
+  // "Show more" paging to its first batch, WITHOUT touching the user's
   // funding/window selection.
   async function refresh() {
     refreshing = true;
@@ -170,14 +136,8 @@
 
   // account id → book, from /config (account_class + paper_role).
   const books = $derived(accountBooks(config));
-  // True when a position belongs to the currently-selected book.
-  function matchesFunding(p: Position): boolean {
-    return bookOfRow(p, books) === funding;
-  }
   const unassignedPaper = $derived(isPaperBook(funding) ? countUnassigned(positions, books) : 0);
-  // Positions scoped to the selected funding class (never blended).
-  const shownPositions = $derived(positions.filter((p) => matchesFunding(p)));
-  const symOpen = $derived(shownPositions.filter((p) => p.symbol === selected));
+
 
   // Last closed trades under the open-positions table — same funding scope as
   // the rest of this page. Overview has no organize-by/focus control (that's
@@ -196,7 +156,7 @@
     return String(t.id ?? `${t.symbol}-${t.closedAt}`);
   }
 
-  const RECENT_BATCH = 10; // well within the bot's 200-row page cap (trades_closed.py)
+  const RECENT_BATCH = 10; // "Show more" fetches the next server batch; // well within the bot's 200-row page cap (trades_closed.py)
 
   let recentClosedRows = $state<ClosedTrade[]>([]);
   let recentClosedLoading = $state(true);
@@ -212,16 +172,16 @@
       recentClosedHasMore = false;
     }
     // Prop closed trades come from the prop journal, not /trades/closed — not
-    // wired into this fetch, so show an empty-with-note rather than mislabel
-    // real-money/paper rows as prop (mirrors Trades.svelte).
-    if (funding === "prop") {
+    // wired into this fetch (a visible note says so when Prop is ticked).
+    const sel = [...closedBooks];
+    if (!sel.some((b) => b !== "prop")) {
       recentClosedHasMore = false;
       return;
     }
     const [{ rows: pageRaw, hasMore }, cfg] = await Promise.all([
       api.closedTradesPage({
-        since: sinceFor(win),
-        includePaper: isPaperBook(funding),
+        since: sinceDays(days),
+        includePaper: sel.some(isPaperBook),
         limit: RECENT_BATCH,
         offset: recentClosedOffset,
       }),
@@ -230,7 +190,7 @@
     recentClosedOffset += pageRaw.length;
     recentClosedHasMore = hasMore;
     const cfgBooks = accountBooks(cfg);
-    const filtered = pageRaw.filter((t) => bookOfRow(t, cfgBooks) === funding);
+    const filtered = pageRaw.filter((t) => (sel as string[]).includes(bookOfRow(t, cfgBooks)));
     if (reset) {
       recentClosedRows = filtered;
     } else {
@@ -265,10 +225,10 @@
     }
   }
 
-  // Reset to the first batch whenever funding or window changes.
+  // Reset to the first batch whenever the book filter or days-back changes.
   $effect(() => {
-    funding;
-    win;
+    closedBooks;
+    days;
     loadRecentClosed();
   });
 
@@ -278,10 +238,10 @@
   let testingPerf = $state<{ totalPnl: number | null; winRate: number | null; profitFactor: number | null;
     totalTrades: number; sampled: boolean } | null>(null);
   $effect(() => {
-    const w = win;
+    const w = win, d = days;
     if (funding !== "paper_testing") { testingPerf = null; return; }
     Promise.all([
-      api.closedTradesPage({ since: sinceFor(w), includePaper: true, limit: 200 }),
+      api.closedTradesPage({ since: sinceDays(d), includePaper: true, limit: 200 }),
       api.config().catch(() => null),
     ]).then(([{ rows, hasMore }, cfg]) => {
       if (w !== win || funding !== "paper_testing") return;
@@ -300,86 +260,12 @@
     }).catch(() => { if (w === win) testingPerf = null; });
   });
 
-  // REST candle fallback so the chart renders even when the market WebSocket
-  // can't connect (sandbox / flaky mobile). The WS's onCandles overwrites this
-  // with per-tick data when it's live — REST only fills the gap.
-  async function fetchCandles(sym: string) {
-    try {
-      const r = await api.candles(sym, interval, 200);
-      if (r?.candles?.length) candlesBySymbol = { ...candlesBySymbol, [sym]: r.candles };
-    } catch {
-      /* leave the chart's empty state; not fatal */
-    }
-  }
-
-  function startStream() {
-    stream?.stop();
-    fetchCandles(selected); // seed the chart immediately via REST
-    stream = new MarketStream([selected], interval, {
-      onCandles: (sym, _iv, cs) => {
-        candlesBySymbol = { ...candlesBySymbol, [sym]: cs };
-      },
-      onPositions: (ps, scope) => {
-        // MERGE uPnL onto the REST rows — NEVER replace the row SET.
-        //
-        // The server SCOPES this frame to the subscribed symbols
-        // (`market_ws.py`: `if symbols: positions = [p for p in positions if
-        // p["symbol"] in symbols]`), and this component subscribes to exactly
-        // ONE symbol — the charted one. So the frame is a uPnL refresh for the
-        // charted symbol and is NOT a statement about which positions exist.
-        //
-        // Replacing the array wholesale therefore collapsed the whole book to
-        // the charted symbol ~2s after every load, and every consumer reads
-        // from it: ExecSummary's "Open trades" COUNT and its open-trades table,
-        // `shownPositions`, the unrealized-P&L card, and `symbols` itself.
-        // Measured 2026-08-25: /api/bot/positions returned 3 real-money rows
-        // (XRPUSDT 4934 + ETHUSDT 4922 + ETHUSDT 4904) while the SPA rendered
-        // "Open trades 2" with the XRP row gone, ETHUSDT being the charted
-        // symbol. Selecting BTCUSDT dropped the ETH rows the same way.
-        //
-        // The previous guard (`if (ps && ps.length)`) was the half-fix: it
-        // stopped an EMPTY frame from blanking the tables, but a PARTIAL frame
-        // is the same defect and it let that through. Membership now comes only
-        // from REST — which is what the `poll()` comment already declared
-        // ("REST is authoritative — the WS only refreshes uPnL below") and what
-        // the code did not do. Cost of the fix: a position opened between REST
-        // polls appears up to one poll interval late, which is strictly better
-        // than silently dropping positions that exist.
-        // Whole-book frame (scope "all"): if the SET of open ids differs from the
-        // REST rows, a trade opened/closed — re-read REST at once (throttled 2 s)
-        // instead of waiting for the 15 s poll, so the count is live too.
-        if (scope === "all" && ps) {
-          const a = new Set(ps.map((p) => String(p.id ?? "")));
-          const b = new Set(positions.map((p) => String(p.id ?? "")));
-          const same = a.size === b.size && [...a].every((id) => b.has(id));
-          if (!same && Date.now() - lastMembershipRefresh > 2000) {
-            lastMembershipRefresh = Date.now();
-            api.positions().then((v) => { positions = v; lastUpdated = Date.now(); }).catch(() => {});
-          }
-        }
-        if (!ps || !ps.length) return;
-        const live = new Map(ps.map((p) => [String(p.id ?? ""), p]));
-        positions = positions.map((p) => {
-          const w = live.get(String(p.id ?? ""));
-          return w
-            ? { ...p, unrealizedPnl: w.unrealizedPnl, unrealizedPnlSource: w.unrealizedPnlSource, unrealizedPnlProvenance: w.unrealizedPnlProvenance }
-            : p;
-        });
-      },
-      onStatus: (st) => {
-        wsStatus = st;
-      },
-    });
-    stream.start();
-  }
-
   onMount(() => {
     poll();
     // 15 s (was 30 s): /positions is now a server-side snapshot, so a poll is
     // cheap. Skipped while the tab is hidden; refreshed at once when it returns.
     pollTimer = setInterval(() => { if (!document.hidden) poll(); }, 15000);
     document.addEventListener("visibilitychange", onVisible);
-    startStream();
   });
   function onVisible() {
     if (!document.hidden) poll();
@@ -387,42 +273,23 @@
   onDestroy(() => {
     if (pollTimer) clearInterval(pollTimer);
     if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible);
-    stream?.stop();
   });
 
-  function pick(sym: string) {
-    userPicked = true;
-    if (sym === selected) return;
-    selected = sym;
-    startStream(); // re-subscribe so the picked symbol streams
-  }
-
-  // Until the user taps a symbol, keep the chart on a sensible default: a symbol
-  // holding an open position (they sort to the front), else the first discovered
-  // one. Re-seeds the stream/candles when the target changes.
-  $effect(() => {
-    if (userPicked || symbols.length === 0) return;
-    const want = symbols[0];
-    if (want && want !== selected) {
-      selected = want;
-      startStream();
-    }
-  });
-
-  const wsLabel = $derived(wsStatus === "open" ? "live" : wsStatus === "connecting" ? "connecting" : "reconnecting");
 </script>
 
 <section>
   <div class="head">
     <h2>Overview</h2>
-    <div class="ws">
-      <StatusDot status={wsStatus === "open" ? "pos" : wsStatus === "connecting" ? "warn" : "neg"} label={wsLabel} />
-    </div>
   </div>
 
   <div class="controls">
-    <Segmented options={FUNDING_OPTIONS} bind:value={funding} />
-    <Segmented options={WINDOW_OPTIONS} bind:value={win} />
+    <label class="days">
+      <span>Days back: <b>{days}</b></span>
+      <input type="range" min="0" max={DAY_SNAPS.length - 1} step="1" value={snapIdx}
+        oninput={(e) => (days = DAY_SNAPS[Number((e.currentTarget as HTMLInputElement).value)])}
+        aria-label="Days back" />
+      <span class="ticks">{#each DAY_SNAPS as d (d)}<span class:cur={d === days}>{d}</span>{/each}</span>
+    </label>
     <button class="refresh" onclick={refresh} disabled={refreshing}>{refreshing ? "Refreshing…" : "↻ Refresh"}</button>
   </div>
   {#if lastUpdated}
@@ -437,7 +304,7 @@
     <div class="err panel">Couldn't reach the bot API: <span class="mono">{apiError}</span></div>
   {/if}
 
-  <ExecSummary {stats} {perf} {positions} {balances} {config} {strategies} {funding} {win} {propOverview} {testingPerf} />
+  <ExecSummary {stats} {perf} {positions} {balances} {config} {strategies} {funding} {win} {days} {propOverview} {testingPerf} onpick={(b) => (funding = b)} />
 
   <!-- UI-UPGRADE-1 item 2: work-queue glance from /api/bot/work/snapshot.
        `present:false` is "we could not read the checklist", shown as such —
@@ -475,13 +342,6 @@
   </div>
 
   <div class="glances">
-    {#if latestReport}
-      <a class="glance panel" href="#/Performance/Reports">
-        <div class="gh">📄 Latest report<span class="muted"> · {latestReport.window ?? ""}</span></div>
-        <div class="gbody">{latestReport.headline ?? latestReport.id}</div>
-        <div class="muted gsub">{latestReport.roll_up_grade ?? ""} · {latestReport.generated_at ? agoFromIso(latestReport.generated_at) : ""}</div>
-      </a>
-    {/if}
     {#if headlines.length}
       <div class="glance panel">
         <div class="gh">📰 News</div>
@@ -494,61 +354,20 @@
     {/if}
   </div>
 
-  <div class="chartcard panel">
-    <div class="picker">
-      {#each symbols as sym (sym)}
-        {@const held = positions.some((p) => p.symbol === sym && matchesFunding(p))}
-        <button class:active={sym === selected} onclick={() => pick(sym)}>
-          {held ? "🟢 " : ""}{sym}
-        </button>
+  <div class="panel positions">
+    <div class="ph">Last closed trades · last {days}d</div>
+    <div class="chkrow" role="group" aria-label="Books to show">
+      {#each FUNDING_BOOKS as b (b)}
+        <label class="chk"><input type="checkbox" checked={closedBooks.includes(b)} onchange={() => toggleClosedBook(b)} /> {FUNDING_LABEL[b]}</label>
       {/each}
     </div>
-    <div class="monh">
-      <b>{selected}</b>
-      <span class="muted">· {symSignals.length} signal{symSignals.length === 1 ? "" : "s"} · {symClosed.length} recent closed{symOpen.length ? ` · ${symOpen.length} open` : ""}</span>
-    </div>
-    <LiveChart
-      candles={candlesBySymbol[selected] ?? []}
-      positions={symOpen}
-      signals={symSignals}
-      closedTrades={symClosed}
-    />
-    <div class="legend muted">▬ entry · ┄ SL/TP · ▲▼ signals · ● closed</div>
-
-    {#if symOpen.length}
-      <div class="cards">
-        {#each symOpen as p (p.id)}
-          <div class="tcard">
-            <div class="tr1">
-              <span class={String(p.side).toLowerCase().startsWith("s") ? "neg" : "pos"}>
-                {(p.side ?? "").toString().toUpperCase().startsWith("S") ? "SHORT" : "LONG"}
-              </span>
-              <span class="mono">{p.qty ?? DASH}</span> @ <span class="mono">{money(p.entryPrice)}</span>
-              <span class="grow"></span>
-              <span class="mono {signClass(p.unrealizedPnl)}">{p.unrealizedPnl == null ? DASH : money(p.unrealizedPnl, { sign: true })}</span>
-            </div>
-            <div class="tr2 muted">
-              SL {money(p.stopLoss)} · TP {money(p.takeProfit)} · {p.pattern ?? DASH} · {p.account ?? DASH}
-            </div>
-          </div>
-        {/each}
-      </div>
+    {#if closedBooks.includes("prop")}
+      <div class="muted pad small">Prop closed trades come from the prop journal (Prop tab) — not included here yet.</div>
     {/if}
-  </div>
-
-  <div class="panel positions">
-    <div class="ph">Open positions · {FUNDING_OPTIONS.find((f) => f.value === funding)?.label}</div>
-    <PositionsTable positions={shownPositions} />
-  </div>
-
-  <div class="panel positions">
-    <div class="ph">
-      Last closed trades · {FUNDING_OPTIONS.find((f) => f.value === funding)?.label} · {WINDOW_OPTIONS.find((w) => w.value === win)?.label}
-    </div>
     {#if recentClosedError}
       <div class="err pad">Couldn't load closed trades: <span class="mono">{recentClosedError}</span></div>
-    {:else if funding === "prop"}
-      <div class="muted pad">Prop closed trades come from the prop journal (Prop tab) — not shown here yet.</div>
+    {:else if closedBooks.length === 0}
+      <div class="muted pad">Tick at least one book above.</div>
     {:else if recentClosedLoading}
       <div class="muted pad">Loading…</div>
     {:else if recentClosedRows.length === 0}
@@ -614,47 +433,16 @@
     margin: 0;
     font-size: 18px;
   }
-  .chartcard {
-    padding: 12px;
-  }
-  .monh { font-size: 14px; margin: 8px 2px 4px; }
-  .legend { font-size: 11px; margin: 6px 2px 0; }
-  .cards { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
-  .tcard { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
-  .tr1 { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
-  .tr1 .grow { flex: 1; }
-  .tr2 { font-size: 11.5px; margin-top: 3px; }
   .mono { font-variant-numeric: tabular-nums; }
   .pos { color: var(--pos); } .neg { color: var(--neg); } .muted { color: var(--muted); }
-  .picker {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    margin-bottom: 10px;
-  }
-  .picker button {
-    background: var(--panel-2);
-    color: var(--muted);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 5px 12px;
-    cursor: pointer;
-    font-size: 13px;
-  }
-  .picker button.active {
-    color: var(--text);
-    border-color: var(--accent);
-  }
-  .glances {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
-  @media (max-width: 560px) { .glances { grid-template-columns: 1fr; } }
+  .days { display: flex; flex-direction: column; gap: 2px; min-width: 240px; font-size: 13px; }
+  .days input { width: 100%; }
+  .ticks { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); }
+  .ticks .cur { color: var(--text); font-weight: 700; }
+  .chkrow { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0 12px 6px; font-size: 12.5px; }
+  .chk { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+  .glances { display: grid; grid-template-columns: 1fr; gap: 10px; }
   .glance { padding: 12px; text-decoration: none; color: inherit; display: block; }
-  .gh { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
-  .gbody { font-size: 13px; line-height: 1.35; }
-  .gsub { font-size: 11.5px; margin-top: 6px; }
   .hl { margin: 0; padding-left: 16px; font-size: 12.5px; line-height: 1.5; }
   .hl a { color: var(--accent); text-decoration: none; }
   .hl a:hover { text-decoration: underline; }

@@ -44,6 +44,7 @@
   const WORK_VIEWS = [
     { value: "work", label: "Work" },
     { value: "roadmap", label: "Roadmap" },
+    { value: "gpu", label: "GPU spend" },
   ];
   let workView = $state(
     typeof location !== "undefined" && location.hash.replace(/^#\/?/, "").startsWith("Roadmap") ? "roadmap" : "work",
@@ -181,7 +182,7 @@
       {:else if $nav.section === "Work"}
         <!-- UI-UPGRADE-1: Roadmap folded into Work — one tab, two views. -->
         <div class="worktabs"><Segmented options={WORK_VIEWS} bind:value={workView} /></div>
-        {#if workView === "roadmap"}<Roadmap />{:else}<Work />{/if}
+        {#if workView === "roadmap"}<Roadmap />{:else if workView === "gpu"}<GPUSpend />{:else}<Work />{/if}
       {:else if isSpecial($nav.section)}
         <Placeholder page={$nav.section} />
       {:else if $nav.detail == null}
