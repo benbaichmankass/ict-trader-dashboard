@@ -66,6 +66,23 @@
     deviceSignedIn = false;
   });
   let sidebarOpen = $state(false);
+  // Desktop collapse (mobile uses the off-canvas `sidebarOpen` drawer above).
+  const COLLAPSE_KEY = "ict.sidebarCollapsed";
+  function loadCollapsed(): boolean {
+    try { return localStorage.getItem(COLLAPSE_KEY) === "1"; } catch { return false; }
+  }
+  let sidebarCollapsed = $state(loadCollapsed());
+  let vw = $state(typeof window !== "undefined" ? window.innerWidth : 1024);
+  const isMobile = $derived(vw <= 760);
+  const menuExpanded = $derived(isMobile ? sidebarOpen : !sidebarCollapsed);
+  function toggleSidebar() {
+    if (isMobile) {
+      sidebarOpen = !sidebarOpen;
+      return;
+    }
+    sidebarCollapsed = !sidebarCollapsed;
+    try { localStorage.setItem(COLLAPSE_KEY, sidebarCollapsed ? "1" : "0"); } catch { /* storage blocked */ }
+  }
   let apiUrlInput = $state(getBotApiUrl());
 
   function saveSettings() {
@@ -112,11 +129,21 @@
   }
 </script>
 
-<div class="layout">
-  <!-- Left sidebar (8 sections), collapsible on mobile -->
-  <aside class="sidebar" class:open={sidebarOpen}>
+<svelte:window bind:innerWidth={vw} />
+
+<div class="layout" class:collapsed={sidebarCollapsed}>
+  <!-- Left sidebar (8 sections), collapsible: off-canvas drawer on mobile, hide/show on desktop -->
+  <aside class="sidebar" class:open={sidebarOpen} id="sidebar">
     <div class="brand">
       <span class="logo">◆</span><strong>ICT&nbsp;Trader</strong>
+      <button
+        class="collapse"
+        aria-label="Collapse sidebar"
+        aria-expanded={!sidebarCollapsed}
+        aria-controls="sidebar"
+        title="Collapse sidebar"
+        onclick={toggleSidebar}
+      >«</button>
     </div>
     <div class="navlist">
       {#each SECTION_NAMES as s (s)}
@@ -143,7 +170,7 @@
 
   <div class="main-wrap">
     <header class="topbar">
-      <button class="ham" aria-label="Menu" onclick={() => (sidebarOpen = !sidebarOpen)}>☰</button>
+      <button class="ham" aria-label="Menu" aria-expanded={menuExpanded} aria-controls="sidebar" onclick={toggleSidebar}>☰</button>
       <div class="crumbs">
         <button class="crumb" onclick={() => pickSection($nav.section)}>{$nav.section}</button>
         {#if $nav.detail}<span class="sep">/</span><span class="crumb cur">{$nav.detail}</span>{/if}
@@ -227,6 +254,8 @@
   }
   .brand { display: flex; align-items: center; gap: 8px; font-size: 16px; padding: 4px 8px 14px; }
   .logo { color: var(--accent); }
+  .collapse { margin-left: auto; background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 8px; width: 28px; height: 28px; cursor: pointer; font-size: 14px; }
+  .collapse:hover { color: var(--text); }
   .navlist { display: flex; flex-direction: column; gap: 2px; flex: 1; }
   .navitem {
     text-align: left;
@@ -271,7 +300,16 @@
   .topgear { margin-left: auto; background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 8px; padding: 4px 10px; cursor: pointer; font-size: 15px; }
   .topgear:hover { color: var(--text); }
 
+  /* Desktop collapsed: hide the sidebar fully; the topbar ☰ brings it back. */
+  @media (min-width: 761px) {
+    .layout.collapsed .sidebar { display: none; }
+    .layout:not(.collapsed) .ham { display: none; }
+    .layout.collapsed .ham { display: inline-flex; align-items: center; justify-content: center; }
+    .layout.collapsed .main-wrap { max-width: none; }
+  }
+
   @media (max-width: 760px) {
+    .collapse { display: none; }
     .sidebar {
       position: fixed;
       left: 0;
