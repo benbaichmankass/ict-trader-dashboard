@@ -12,23 +12,26 @@
     type UTCTimestamp,
     type Time,
   } from "lightweight-charts";
-  import type { Candle, Position, ClosedTrade } from "../lib/api";
+  import type { Candle, Position, ClosedTrade, BracketHistory } from "../lib/api";
 
   // Candles + trade context overlaid the way Streamlit's monitor does it:
   // live-position entry/SL/TP price-lines, buy/sell signal markers, and
   // closed-trade exit markers — all scoped to the charted symbol upstream.
   let {
-    candles = [], positions = [], signals = [], closedTrades = [],
+    candles = [], positions = [], signals = [], closedTrades = [], brackets = null,
     height = 320,
   }: {
     candles?: Candle[]; positions?: Position[]; signals?: any[];
-    closedTrades?: ClosedTrade[]; height?: number;
+    closedTrades?: ClosedTrade[]; brackets?: BracketHistory | null; height?: number;
   } = $props();
 
   let el: HTMLDivElement;
   let chart: IChartApi | null = null;
   let series: ISeriesApi<"Candlestick"> | null = null;
   let priceLines: IPriceLine[] = [];
+  // UI-CHART-BRACKET-HISTORY: one faint line series per REPLACED level (from its
+  // set time to its replacement), redrawn when the history or the bars change.
+  let historyLines: ISeriesApi<"Line">[] = [];
   let seeded = false;
 
   function isDark(): boolean {
@@ -97,6 +100,7 @@
       chart = null;
       series = null;
       priceLines = [];
+      historyLines = [];
     };
   });
 
@@ -149,6 +153,31 @@
     }
   });
 
+  // Earlier SL/TP levels: subtle dashed segments over the bars they were in
+  // force. A level replaced inside one bar has no visible span — its marker
+  // (below) still records the move. Never a fabricated continuous line.
+  $effect(() => {
+    if (!chart) return;
+    for (const l of historyLines) { try { chart.removeSeries(l); } catch { /* gone */ } }
+    historyLines = [];
+    if (!brackets || candles.length === 0) return;
+    const times = candles.map((c) => c.time);
+    for (const lv of brackets.levels ?? []) {
+      if (lv.to_ts == null || !Number.isFinite(lv.price)) continue; // the level in force is the SL/TP price line
+      const a = toSec(lv.from_ts), b = toSec(lv.to_ts);
+      if (a == null || b == null) continue;
+      const t0 = snap(a, times), t1 = snap(b, times);
+      if (t0 == null || t1 == null || t1 <= t0) continue;
+      const ls = chart.addLineSeries({
+        color: lv.kind === "tp" ? "rgba(38,161,123,0.45)" : "rgba(229,72,77,0.45)",
+        lineWidth: 1, lineStyle: LineStyle.Dashed, priceLineVisible: false, lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      });
+      ls.setData([{ time: t0 as UTCTimestamp, value: lv.price }, { time: t1 as UTCTimestamp, value: lv.price }]);
+      historyLines.push(ls);
+    }
+  });
+
   // Markers: buy/sell signals + open-position entries + closed-trade exits.
   $effect(() => {
     if (!series || candles.length === 0) return;
@@ -196,6 +225,24 @@
         time: t as UTCTimestamp, position: "inBar",
         color: win ? "#26a17b" : "#e5484d", shape: "circle",
         text: pnl != null ? (win ? "+" : "") + Number(pnl).toFixed(0) : "×",
+      });
+    }
+
+    // One marker per bracket update, on the bar it happened in: ▲/▼ = the stop
+    // moved up/down, ■ = a TP move. Label "SL from→to".
+    for (const u of brackets?.updates ?? []) {
+      const sec = toSec(u.bar_ts ?? u.ts);
+      if (sec == null) continue;
+      const t = snap(sec, times);
+      if (t == null) continue;
+      const up = (u.to ?? 0) > (u.from ?? 0);
+      const fmt = (v: number | null | undefined) => (v == null || !Number.isFinite(v) ? "—" : String(+v.toPrecision(6)));
+      marks.push({
+        time: t as UTCTimestamp,
+        position: u.kind === "tp" ? "aboveBar" : up ? "belowBar" : "aboveBar",
+        color: "#d4a017",
+        shape: u.kind === "tp" ? "square" : up ? "arrowUp" : "arrowDown",
+        text: `${String(u.kind).toUpperCase()} ${fmt(u.from)}→${fmt(u.to)}`,
       });
     }
 

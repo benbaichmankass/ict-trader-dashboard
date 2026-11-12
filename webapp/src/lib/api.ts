@@ -308,6 +308,33 @@ export interface PnlSeries {
   population?: { window?: string; since?: string | null; n_rows?: number | null; filters?: Record<string, string | null> } | null;
 }
 
+export interface BracketLevel {
+  kind: "sl" | "tp" | string;
+  price: number;
+  from_ts?: string | null;
+  to_ts?: string | null; // null = still in force
+  source?: string | null;
+  detail?: string | null;
+  provenance?: string | null;
+}
+export interface BracketUpdate {
+  ts?: string | null;
+  kind: "sl" | "tp" | string;
+  from?: number | null;
+  to?: number | null;
+  source?: string | null;
+  detail?: string | null;
+  bar_ts?: string | null;
+}
+export interface BracketHistory {
+  read_state?: string | null; // measured | partial | no_record
+  partial_reasons?: string[] | null;
+  tp_history?: unknown;
+  direction?: string | null;
+  levels?: BracketLevel[];
+  updates?: BracketUpdate[];
+}
+
 export const api = {
   // PERF-PAGE-CATEGORY-TABLE / PERF-PAGE-PNL-CHART (bot #24893). Windows are
   // 7d|30d|90d|all — the bot answers 400 for anything else (24h included).
@@ -325,6 +352,17 @@ export const api = {
     if (opts.assetClass) q.set("asset_class", opts.assetClass);
     q.set("measured_only", String(opts.measuredOnly ?? true));
     return get<PnlSeries>(`/api/bot/performance/pnl-series?${q.toString()}`, signal);
+  },
+
+  // UI-CHART-BRACKET-HISTORY (bot #24893): SL/TP levels over time + one marker
+  // per update. Exactly one of order_package_id / prop_fill_id; interval must be
+  // one the bot knows (1m..1d) or it answers 400.
+  bracketsHistory: (sel: { orderPackageId?: string; propFillId?: number }, interval = "15m", signal?: AbortSignal) => {
+    const q = new URLSearchParams();
+    if (sel.orderPackageId) q.set("order_package_id", sel.orderPackageId);
+    if (sel.propFillId != null) q.set("prop_fill_id", String(sel.propFillId));
+    q.set("interval", interval);
+    return get<BracketHistory>(`/api/bot/brackets/history?${q.toString()}`, signal);
   },
 
   // FEATURE-IMPACT-MAP (bot #24926). measure: gain_share | split_share; by:

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type Candle, type Position } from "../lib/api";
-  import { acquireSymbol, cardCandles } from "../lib/cardStream";
+  import { api, type Candle, type Position, type BracketHistory } from "../lib/api";
+  import { acquireSymbol, cardCandles, cardFeed, seedCandles } from "../lib/cardStream";
+  import { bracketsForPosition } from "../lib/brackets";
   import { money, num, signClass, agoFromIso, DASH } from "../lib/format";
   import LiveChart from "./LiveChart.svelte";
 
@@ -14,6 +15,9 @@
 
   let seeded = $state<Candle[]>([]);
   const candles = $derived($cardCandles[p.symbol] ?? seeded);
+  const feed = $derived($cardFeed[p.symbol]);
+  let brackets = $state<BracketHistory | null>(null);
+  let bracketState = $state<string>("loading");
   const a = $derived(p as any);
 
   const sell = $derived(String(p.side ?? "").toLowerCase().startsWith("s"));
@@ -34,8 +38,11 @@
   onMount(() => {
     let alive = true;
     api.candles(p.symbol, interval, 200)
-      .then((r) => { if (alive && r?.candles?.length) seeded = r.candles; })
+      .then((r) => { if (alive && r?.candles?.length) { seeded = r.candles; seedCandles(p.symbol, r.candles); } })
       .catch(() => {});
+    bracketsForPosition(p.id, interval)
+      .then((b) => { if (!alive) return; brackets = b; bracketState = b ? (b.read_state ?? "—") : "no linked order package"; })
+      .catch(() => { if (alive) bracketState = "could not look"; });
     const release = acquireSymbol(p.symbol);
     return () => { alive = false; release(); };
   });
@@ -60,13 +67,17 @@
     <div><dt>R (reward:risk)</dt><dd class="mono">{rr == null ? DASH : `${rr.toFixed(2)}R`}</dd></div>
     <div><dt>Strategy</dt><dd>{f(p.pattern)}</dd></div>
     <div><dt>Account</dt><dd>{f(p.account)}</dd></div>
-    <div><dt>Opened</dt><dd>{p.openedAt ? `${agoFromIso(p.openedAt)} ago` : DASH}</dd></div>
+    <div><dt>Opened</dt><dd>{p.openedAt ? agoFromIso(p.openedAt) : DASH}</dd></div>
     <div><dt>uPnL</dt><dd class="mono {signClass(p.unrealizedPnl)}">{p.unrealizedPnl == null ? DASH : money(p.unrealizedPnl, { sign: true })}</dd></div>
     <div><dt>uPnL source</dt><dd>{f(p.unrealizedPnlSource)}</dd></div>
     <div><dt>Confidence</dt><dd class="mono">{a.confidence == null ? DASH : String(a.confidence)}</dd></div>
     <div class="wide"><dt>Model scores</dt><dd>{modelScores ?? DASH}</dd></div>
   </dl>
-  <LiveChart {candles} positions={[p]} height={narrow ? 220 : 260} />
+  <LiveChart {candles} positions={[p]} {brackets} height={narrow ? 220 : 260} />
+  <div class="feed">
+    {feed === "bybit" ? "● live · Bybit public stream (browser-direct)" : feed === "ws_market" ? "● live · bot /ws/market" : "REST snapshot"}
+    · bracket history: {bracketState}{brackets?.updates?.length ? ` · ${brackets.updates.length} move(s)` : ""}{(brackets?.partial_reasons ?? []).length ? ` (${brackets?.partial_reasons?.join(", ")})` : ""}
+  </div>
 </div>
 
 <style>
@@ -76,6 +87,7 @@
   dt { color: var(--muted); font-size: 11px; }
   dd { margin: 2px 0 0; font-size: 13px; font-weight: 600; }
   .wide { grid-column: 1 / -1; }
+  .feed { color: var(--muted); font-size: 11px; margin-top: 4px; }
   .mono { font-variant-numeric: tabular-nums; }
   .pos { color: var(--pos); } .neg { color: var(--neg); }
 </style>
