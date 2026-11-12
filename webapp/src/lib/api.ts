@@ -158,7 +158,7 @@ export interface Strategy {
 // the trade-approval decision (session-gated, `require_session`).
 async function rawFetch(
   path: string,
-  init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+  init: { method?: string; body?: unknown; signal?: AbortSignal; keepSessionOn401?: boolean } = {},
 ): Promise<Response> {
   const url = `${getBotApiUrl()}${path}`;
   const hasBody = init.body !== undefined;
@@ -168,7 +168,7 @@ async function rawFetch(
     headers: authHeaders(hasBody ? { "Content-Type": "application/json" } : undefined),
     body: hasBody ? JSON.stringify(init.body) : undefined,
   });
-  if (res.status === 401 || res.status === 403) {
+  if ((res.status === 401 || res.status === 403) && !init.keepSessionOn401) {
     // Drop the dead session and surface the form. Throwing a distinct type
     // lets the route render a sign-in affordance instead of a status line.
     handleUnauthorized(res.status, path);
@@ -548,6 +548,15 @@ export const api = {
   healthServices: (signal?: AbortSignal) => get<any>("/api/bot/health/services", signal),
   // Wake-notification switches (ungated read; the POST is service-token gated bot-side).
   wakeToggles: (signal?: AbortSignal) => get<any>("/api/bot/wake-toggles", signal),
+  // Flip one wake switch: POST {key, on, by} with the session bearer. ⚠️ As of
+  // 2026-11-12 the bot gates this POST with its static service token, NOT the
+  // session, so it answers 401 until it accepts require_session. That 401 is about
+  // the ROUTE, not a dead session — so it must not sign the operator out
+  // (keepSessionOn401); the caller shows the bot's answer verbatim instead.
+  flipWakeToggle: async (key: string, on: boolean): Promise<{ status: number; body: any }> => {
+    const res = await rawFetch("/api/bot/wake-toggles", { method: "POST", body: { key, on, by: "dashboard (operator session)" }, keepSessionOn401: true });
+    return { status: res.status, body: await res.json().catch(() => null) };
+  },
   // ── Backend routes from JTA-Trader #25216 / #25231 (held at the time of writing).
   // Each returns { status, body } and does NOT throw on 404/4xx, so a page can say
   // "not available yet" / "could not look" instead of inventing a state.
