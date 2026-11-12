@@ -10,6 +10,7 @@
   import { packageForClosedTrade } from "../lib/brackets";
   import { money, num, signClass, DASH } from "../lib/format";
   import EntryWhy from "./EntryWhy.svelte";
+  import SnapshotChart from "./SnapshotChart.svelte";
 
   let { t }: { t: ClosedTrade } = $props();
   const a = $derived(t as any);
@@ -18,6 +19,11 @@
   let pkgState = $state("loading");
   let brackets = $state<BracketHistory | null>(null);
   let bracketState = $state("—");
+  // The stored chart snapshot (GET /trades/{id}/snapshot): "loading" | "drawn" |
+  // "not_built" | "missing" (route not deployed / trade unknown) | "error".
+  let snap = $state<any>(null);
+  let snapState = $state<string>("loading");
+  let snapNote = $state<string | null>(null);
 
   const sell = $derived(/^(s|short)/i.test(String(t.direction ?? t.side ?? "")));
   const exitReason = $derived(a.closeReason ?? a.exitReason ?? a.exit_reason ?? pkg?.closeReason ?? null);
@@ -29,6 +35,15 @@
 
   onMount(() => {
     let alive = true;
+    if (t.id != null) {
+      api.tradeSnapshot(t.id as any).then((r) => {
+        if (!alive) return;
+        if (r.status === 200 && r.body?.snapshot) { snap = r.body.snapshot; snapState = "drawn"; snapNote = (r.body.partial_reasons ?? []).join(", ") || null; }
+        else if (r.status === 200) { snapState = "not_built"; snapNote = r.body?.read_state ?? null; }
+        else if (r.status === 404) { snapState = "missing"; }
+        else { snapState = "error"; snapNote = `${r.status}`; }
+      }).catch((e) => { if (alive) { snapState = "error"; snapNote = e instanceof Error ? e.message : String(e); } });
+    } else snapState = "missing";
     packageForClosedTrade(t)
       .then(async (x) => {
         if (!alive) return;
@@ -64,8 +79,18 @@
   </dl>
 
   <div class="snap">
-    <div class="st">Chart snapshot</div>
-    <div class="muted small">— Not available yet: the snapshot is stored with the trade at close (bot lane CLOSED-TRADE-SNAPSHOT), and its read route has not shipped. Nothing is drawn in its place.</div>
+    <div class="st">Chart snapshot <span class="muted">· {snapState === "drawn" ? `stored ${snap?.built_at ? iso(snap.built_at) : ""}` : snapState}{snapNote ? ` · ${snapNote}` : ""}</span></div>
+    {#if snapState === "drawn"}
+      <SnapshotChart {snap} />
+    {:else if snapState === "loading"}
+      <div class="muted small">Loading…</div>
+    {:else if snapState === "not_built"}
+      <div class="muted small">— The bot has not built a snapshot for this trade yet (it is built once at close, plus a backfill). Nothing is drawn in its place.</div>
+    {:else if snapState === "missing"}
+      <div class="muted small">— Not available yet: the stored-snapshot route is not deployed on the bot. Nothing is drawn in its place.</div>
+    {:else}
+      <div class="err small">could not look: <span class="mono">{snapNote ?? DASH}</span></div>
+    {/if}
   </div>
 
   <div class="brk">
@@ -111,5 +136,6 @@
   .muted { color: var(--muted); }
   .small { font-size: 11.5px; }
   .mono { font-variant-numeric: tabular-nums; }
+  .err { color: var(--neg); }
   .pos { color: var(--pos); } .neg { color: var(--neg); }
 </style>
