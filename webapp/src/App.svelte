@@ -31,6 +31,7 @@
   import WorkOverview from "./components/WorkOverview.svelte";
   import WorkDecisions from "./components/WorkDecisions.svelte";
   import WorkThisWeek from "./components/WorkThisWeek.svelte";
+  import Gates from "./routes/Gates.svelte";
   import SectionLanding from "./components/SectionLanding.svelte";
   import Placeholder from "./components/Placeholder.svelte";
   import LoginPanel from "./components/LoginPanel.svelte";
@@ -132,6 +133,7 @@
     "Signals Catalog": SignalsCatalog,
     "Wake Switches": WakeSwitches,
     System,
+    Gates,
   };
 
   // Settings is reachable from the top bar too: on phones the drawer's footer
