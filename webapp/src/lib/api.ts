@@ -459,6 +459,10 @@ export const api = {
   // ~435 KB). closedRecent / openNow / next / waitingOnOperator, `present:false`
   // with a reason when the store is unreadable — never empty lists as "no work".
   workSnapshot: (signal?: AbortSignal) => get<any>("/api/bot/work/snapshot", signal),
+  // WORK-TOPIC-TAXONOMY (bot #24927) and INSIGHTS-LEDGER (bot #24919): topic
+  // roll-up of every work row, and pipeline items with kind:"insight".
+  workTopics: (signal?: AbortSignal) => get<any>("/api/bot/work/topics", signal),
+  workLedger: (signal?: AbortSignal) => get<any>("/api/bot/work/ledger", signal),
 
   // The work schedule (A9) — cadenced sessions (the daily sync, the three
   // project-level reviews) · decisions owed · monitoring coming due · cron
