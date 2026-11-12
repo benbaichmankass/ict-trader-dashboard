@@ -18,6 +18,10 @@
   const candles = $derived($cardCandles[p.symbol] ?? seeded);
   const feed = $derived($cardFeed[p.symbol]);
   let brackets = $state<BracketHistory | null>(null);
+  // LTR / Claude decisions on this open trade (GET /trades/{id}/markers, bot #25216;
+  // prop rows → /prop-trades/{fill}/markers). 404 = route not deployed → none drawn.
+  let decisions = $state<any[]>([]);
+  let decisionState = $state("loading");
   let bracketState = $state<string>("loading");
   const a = $derived(p as any);
 
@@ -46,6 +50,18 @@
     api.candles(p.symbol, interval, 200)
       .then((r) => { if (alive && r?.candles?.length) { seeded = r.candles; seedCandles(p.symbol, r.candles); } })
       .catch(() => {});
+    {
+      const pid = String(p.id ?? "");
+      const call = pid.startsWith("prop-") ? api.propTradeMarkers(pid.slice(5), interval) : api.tradeMarkers(pid, interval);
+      call.then((r) => {
+        if (!alive) return;
+        if (r.status === 200) {
+          const ms = (r.body?.decisions?.markers ?? []) as any[];
+          decisions = ms.map((m) => ({ review_id: m.id ?? null, at: m.bar_ts ?? m.ts ?? null, action: m.action ?? null, disposition: m.disposition ?? null }));
+          decisionState = r.body?.decisions?.read_state ?? "read";
+        } else decisionState = r.status === 404 ? "route not deployed" : `could not look (${r.status})`;
+      }).catch(() => { if (alive) decisionState = "could not look"; });
+    }
     packageForPosition(p.id)
       .then((x) => { if (!alive) return; pkg = x; pkgState = x ? "linked" : "no linked order package"; })
       .catch(() => { if (alive) pkgState = "could not look"; });
@@ -81,10 +97,11 @@
     <div><dt>uPnL source</dt><dd>{f(p.unrealizedPnlSource)}</dd></div>
     <div><dt>Confidence</dt><dd class="mono">{(a.confidence ?? pkg?.confidence) == null ? DASH : String(a.confidence ?? pkg?.confidence)}</dd></div>
   </dl>
-  <LiveChart {candles} positions={[p]} signals={entrySignals} {brackets} height={narrow ? 220 : 260} />
+  <LiveChart {candles} positions={[p]} signals={entrySignals} {brackets} {decisions} height={narrow ? 220 : 260} />
   <EntryWhy {pkg} {pkgState} modelScores={a.modelScores} />
   <div class="feed">
     {feed === "bybit" ? "● live · Bybit public stream (browser-direct)" : feed === "ws_market" ? "● live · bot /ws/market" : "REST snapshot"}
+    · LTR decisions: {decisionState === "loading" ? "…" : decisions.length ? `${decisions.length} (${decisionState})` : decisionState}
     · bracket history: {bracketState}{brackets?.updates?.length ? ` · ${brackets.updates.length} move(s)` : ""}{(brackets?.partial_reasons ?? []).length ? ` (${brackets?.partial_reasons?.join(", ")})` : ""}
   </div>
 </div>

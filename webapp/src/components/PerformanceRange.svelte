@@ -33,16 +33,31 @@
   let prop = $state<any>(null);
   let error = $state<string | null>(null);
   let loading = $state(false);
+  // "range" when the bot answered the exact [start, end] (bot #25231, echo
+  // window === "range"); "window" when read from the matching fixed window.
+  let basis = $state<"range" | "window" | null>(null);
   let seq = 0;
   $effect(() => {
-    const w = win, b = book;
-    perf = null; prop = null; error = null;
-    if (!w) return;
+    const w = win, b = book, s0 = start, e0 = end;
+    perf = null; prop = null; error = null; basis = null;
     const my = ++seq;
     loading = true;
-    (b === "prop" ? api.propOverview(w).then((v) => { if (my === seq) prop = v; }) : api.performance(w).then((v) => { if (my === seq) perf = v; }))
-      .catch((e) => { if (my === seq) error = e instanceof Error ? e.message : String(e); })
-      .finally(() => { if (my === seq) loading = false; });
+    (async () => {
+      try {
+        if (b !== "prop" && s0 && e0 && s0 <= e0) {
+          const r = await api.performanceRange(s0, e0);
+          if (my !== seq) return;
+          if (r.status === 200 && r.body?.window === "range") { perf = r.body; basis = "range"; return; }
+        }
+        if (!w) return; // no exact range from the bot, and no fixed window equals it
+        if (b === "prop") { const v = await api.propOverview(w); if (my === seq) { prop = v; basis = "window"; } }
+        else { const v = await api.performance(w); if (my === seq) { perf = v; basis = "window"; } }
+      } catch (e) {
+        if (my === seq) error = e instanceof Error ? e.message : String(e);
+      } finally {
+        if (my === seq) loading = false;
+      }
+    })();
   });
 
   // One shape for the stats band. Paper testing has no bot block (could not look).
@@ -78,10 +93,12 @@
       <label>To <input type="date" bind:value={end} min={start} max={today()} /></label>
     </div>
   </div>
-  <div class="muted small">{start} → {end} (UTC){win ? ` · the bot's ${win} window` : ""} · figures from {book === "prop" ? "/api/bot/prop/overview" : "/api/bot/performance"}</div>
+  <div class="muted small">{start} → {end} (UTC){basis === "range" ? ` · the bot's exact range (since ${perf?.since ?? DASH}, until ${perf?.until ?? DASH})` : basis === "window" ? ` · the bot's ${win} window (rolling)` : ""} · figures from {book === "prop" ? "/api/bot/prop/overview" : "/api/bot/performance"}</div>
 
-  {#if !win}
-    <div class="cnl panel">could not look — the bot serves performance only for the last 1, 7 or 30 days today. Any other range needs <span class="mono">/api/bot/performance?since=&amp;until=</span> (being built, lane UI-SPA-BACKEND-ROUTES).</div>
+  {#if loading && !perf && !prop}
+    <div class="muted pad">Loading…</div>
+  {:else if !basis && !win}
+    <div class="cnl panel">could not look — the bot did not answer this exact range (its <span class="mono">/performance?since=&amp;until=</span> is not deployed yet{book === "prop" ? "; prop has no range route" : ""}), and no fixed bot window (last 1 / 7 / 30 days) equals it.</div>
   {:else if book === "paper_testing"}
     <div class="cnl panel">could not look — the bot's performance route has no paper-testing block yet.</div>
   {:else if error}
