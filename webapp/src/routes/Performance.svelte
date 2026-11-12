@@ -2,7 +2,6 @@
   import Trades from "./Trades.svelte";
   import CategoryPerformance from "../components/CategoryPerformance.svelte";
   import PerformanceRange from "../components/PerformanceRange.svelte";
-  import PerformanceReviews from "../components/PerformanceReviews.svelte";
 </script>
 
 <section>
@@ -15,8 +14,12 @@
        AND account. -->
   <PerformanceRange />
 
-  <!-- Openable list of the daily performance (strategy) reviews. -->
-  <PerformanceReviews />
+  <!-- Performance reviews = the weekly /performance-review outputs (AM-UI 2026-11-12).
+       No list/fetch route yet (lane UI-SPA-BACKEND-ROUTES) → could not look. -->
+  <div class="panel revs">
+    <div class="rh">Performance reviews</div>
+    <div class="muted">could not look — the weekly performance-review list route is being built (lane UI-SPA-BACKEND-ROUTES).</div>
+  </div>
 
   <!-- Per-category table + cumulative P&L (UI workplan §4/§5). Own 7d/30d/90d/All axis: the routes 400 on 24h. -->
   <CategoryPerformance />
@@ -30,4 +33,7 @@
   section { display: flex; flex-direction: column; gap: 14px; }
   .head { display: flex; align-items: center; justify-content: space-between; }
   h2 { margin: 0; font-size: 18px; }
+  .revs { padding: 10px 12px; font-size: 13px; }
+  .rh { font-weight: 600; margin-bottom: 4px; }
+  .muted { color: var(--muted); }
 </style>

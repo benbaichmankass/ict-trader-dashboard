@@ -539,10 +539,6 @@ export const api = {
 
   // Admin — health / logs / data explorer.
   healthServices: (signal?: AbortSignal) => get<any>("/api/bot/health/services", signal),
-  // The committed daily strategy-review record (M7). `date` = a committed UTC date
-  // from `available_dates` (default newest). Ungated.
-  strategyReviews: (date?: string, signal?: AbortSignal) =>
-    get<any>(`/api/bot/strategy-reviews${date ? `?date=${encodeURIComponent(date)}` : ""}`, signal),
   // Wake-notification switches (ungated read; the POST is service-token gated bot-side).
   wakeToggles: (signal?: AbortSignal) => get<any>("/api/bot/wake-toggles", signal),
   healthLatest: (signal?: AbortSignal) => get<any>("/api/bot/health/latest", signal),
