@@ -114,7 +114,14 @@
   const topicRows = $derived(
     [...(topics.v?.topics ?? [])].sort((a: any, b: any) => (b.n_open ?? 0) - (a.n_open ?? 0)),
   );
-  const openTotal = $derived(topicRows.reduce((s: number, t: any) => s + (t.n_open ?? 0), 0));
+  // /work/topics publishes no open total of its own, so this is a plain sum of the
+  // per-topic n_open the route does publish, labelled "(sum of topics)". Any topic
+  // with a null n_open makes the sum "—": a null is never counted as 0.
+  const openTotal = $derived(
+    topicRows.length && topicRows.every((t: any) => typeof t.n_open === "number")
+      ? topicRows.reduce((s: number, t: any) => s + t.n_open, 0)
+      : null,
+  );
 
   const svcLight = (s: any) => (s.state === "active" ? "ok" : s.state ? "bad" : "unknown");
 </script>
@@ -202,7 +209,7 @@
   <details class="card" open={open.roadmap} ontoggle={(e) => toggled("roadmap", e)}>
     <summary>
       <span class="ct">Roadmap</span>
-      <span class="muted small">{topics.v?.read_state === "measured" ? `${num(openTotal)} open rows · ${num(topics.v?.unmapped?.n_rows)} unmapped` : DASH}</span>
+      <span class="muted small">{topics.v?.read_state === "measured" ? `${num(openTotal)} open rows (sum of topics) · ${num(topics.v?.unmapped?.n_rows)} unmapped` : DASH}</span>
     </summary>
     {#if topics.err}
       <div class="na">Roadmap: not available (<span class="mono">{topics.err}</span>)</div>
