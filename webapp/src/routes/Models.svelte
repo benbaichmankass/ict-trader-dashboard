@@ -1,6 +1,7 @@
 <script lang="ts">
   import ModelGoodCalls from "../components/ModelGoodCalls.svelte";
   import ModelHistory from "../components/ModelHistory.svelte";
+  import VariantMetrics from "../components/VariantMetrics.svelte";
   import CatalogCoverage from "../components/CatalogCoverage.svelte";
   import { onMount } from "svelte";
   import { api } from "../lib/api";
@@ -157,6 +158,7 @@
                       {#if row && desc(row)}<div class="desc small muted">{desc(row)}</div>{/if}
                       {#if row}<ModelHistory {row} />{/if}
                     {/each}
+                    <VariantMetrics variants={card.variants} rowOf={byId} />
                   </div>
                 </div>
               {/each}
