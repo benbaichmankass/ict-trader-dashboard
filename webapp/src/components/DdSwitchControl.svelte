@@ -8,10 +8,11 @@
   // (labelled as such) and the override says "not available yet" — never a fake state.
   //
   // REAL-MONEY ACTION. The override re-allows new entries on a tripped account for
-  // the rest of the day. Styled like the red trade-decision box; enabled only when the
-  // bot says tripped AND override_available; asks for confirmation (optional reason);
-  // POSTs with the session bearer (require_session); every 4xx/503 is shown verbatim;
-  // the state is re-read afterwards.
+  // the rest of the day. Styled like the red trade-decision box. ONE PRESS POSTs it
+  // (no confirm step — operator 2026-11-12: "no more gates that I don't explicitly give
+  // you permission for"), with an optional inline reason, the session bearer
+  // (require_session); enabled exactly when the bot says tripped AND
+  // override_available; every 4xx/503 shown verbatim; the state re-read afterwards.
   //
   // `onlyTripped`: the Overview "waiting on me" placement — render only tripped accounts.
   import { onMount } from "svelte";
@@ -24,8 +25,7 @@
   let rows = $state<Row[]>([]);
   let loaded = $state(false);
   let configError = $state<string | null>(null);
-  let confirming = $state<string | null>(null);
-  let reason = $state("");
+  let reasons = $state<Record<string, string>>({});
   let busy = $state<string | null>(null);
   let results = $state<Record<string, { ok: boolean; text: string }>>({});
 
@@ -74,7 +74,7 @@
   async function doOverride(r: Row) {
     busy = r.id;
     try {
-      const res = await api.overrideDdSwitch(r.id, reason.trim() || undefined);
+      const res = await api.overrideDdSwitch(r.id, (reasons[r.id] ?? "").trim() || undefined);
       const b = res.body ?? {};
       const why = typeof b.detail === "string" ? b.detail : b.detail?.error ?? b.outcome ?? b.error ?? null;
       results = { ...results, [r.id]: res.status === 200
@@ -83,7 +83,7 @@
     } catch (e) {
       results = { ...results, [r.id]: { ok: false, text: e instanceof AuthRequiredError ? "Session expired — sign in again; nothing was overridden." : (e instanceof Error ? e.message : String(e)) } };
     } finally {
-      busy = null; confirming = null; reason = "";
+      busy = null; reasons = { ...reasons, [r.id]: "" };
       await load();
     }
   }
@@ -117,18 +117,13 @@
         <div class="err small">Switch route error: <span class="mono">{r.err}</span>. State above is the bot's /config reading.</div>
       {/if}
       {#if r.route === "live"}
-        {#if confirming === r.id}
-          <div class="confirm">
-            <div>Override the drawdown switch on <b>{r.id}</b>? This re-allows new entries for the rest of today. Once a day.</div>
-            <input placeholder="Reason (optional)" bind:value={reason} maxlength="200" />
-            <div class="btns">
-              <button class="go" disabled={busy === r.id} onclick={() => doOverride(r)}>{busy === r.id ? "Sending…" : "Yes, override"}</button>
-              <button class="cancel" disabled={busy === r.id} onclick={() => { confirming = null; reason = ""; }}>Cancel</button>
-            </div>
-          </div>
-        {:else}
-          <div class="btns"><button class="go" disabled={!canOverride(r)} onclick={() => (confirming = r.id)} title={canOverride(r) ? "" : "Enabled only when the switch is tripped and today's override is unused"}>Override once today</button></div>
-        {/if}
+        <!-- One press POSTs the override (operator: no gates not asked for). Enabled exactly
+             when the bot says tripped AND override_available — the server's own state. -->
+        <div class="btns">
+          <input class="reason" placeholder="Reason (optional)" bind:value={reasons[r.id]} maxlength="200" />
+          <button class="go" disabled={!canOverride(r) || busy === r.id} onclick={() => doOverride(r)}
+            title={canOverride(r) ? "" : "The bot reports the switch is not tripped, or today's override is used"}>{busy === r.id ? "Sending…" : "Override once today"}</button>
+        </div>
       {/if}
       {#if results[r.id]}<div class="small" class:okmsg={results[r.id].ok} class:err={!results[r.id].ok}>{results[r.id].text}</div>{/if}
     </div>
@@ -144,12 +139,10 @@
   .st.tripped { color: var(--neg); } .st.ok { color: var(--pos); } .st.overridden { color: #d4a017; } .st.awaiting_day_start, .st.unknown { color: var(--muted); }
   .meta { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); }
   .meta b { color: var(--text); }
-  .confirm { display: grid; gap: 6px; border-top: 1px dashed var(--neg); padding-top: 6px; }
-  .confirm input { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; }
-  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  .reason { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .btns button { padding: 8px 14px; border-radius: 8px; border: 1px solid var(--border); font-weight: 600; cursor: pointer; font-size: 13px; }
   .go { background: var(--neg); color: #fff; border-color: var(--neg); }
-  .cancel { background: var(--panel-2); color: var(--text); }
   .btns button:disabled { opacity: 0.45; cursor: not-allowed; }
   .warn { color: #d4a017; }
   .muted { color: var(--muted); }
