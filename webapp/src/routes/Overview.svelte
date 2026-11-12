@@ -457,14 +457,19 @@
             <tbody>
               {#each propClosedRows.slice(0, propShown) as f, i (f.id ?? i)}
                 {@const prov = fillProvenance(f)}
-                <tr>
-                  <td class="sym">{f.symbol ?? DASH}</td>
+                {@const pk = `prop:${f.id ?? i}`}
+                <tr class="click" class:openrow={openClosed.has(pk)} onclick={() => toggleClosed(pk)} tabindex="0" role="button" aria-expanded={openClosed.has(pk)}
+                  onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleClosed(pk); } }}>
+                  <td class="sym">{openClosed.has(pk) ? "▾" : "▸"} {f.symbol ?? DASH}</td>
                   <td class={/^(s|short)/i.test(String(f.direction ?? "")) ? "neg" : "pos"}>{String(f.direction ?? DASH).toUpperCase()}</td>
                   <td class="muted">{f.account_id ?? DASH}</td>
                   <td class="r mono {prov === 'MEASURED' ? signClass(f.pnl) : 'muted'}">{f.pnl == null ? DASH : money(f.pnl, { sign: true })}</td>
                   <td class="muted small">{prov === "UNKNOWN" ? DASH : prov}</td>
                   <td class="muted">{agoFromIso(fillClosedAt(f))}</td>
                 </tr>
+                {#if openClosed.has(pk)}
+                  <tr class="cardrow"><td colspan="6">{#if typeof f.id === "number"}<ClosedTradeCard t={{ id: f.id, symbol: f.symbol, direction: f.direction, qty: f.qty, entryPrice: f.entry_price, exitPrice: f.exit_price, pnl: f.pnl, openedAt: f.opened_at, closedAt: fillClosedAt(f), account: f.account_id, closeReason: f.reason, pnlProvenance: prov } as any} propFillId={f.id} />{:else}<div class="muted small">No fill id on this row, so there is no snapshot to look up.</div>{/if}</td></tr>
+                {/if}
               {/each}
             </tbody>
           </table>
@@ -473,7 +478,7 @@
           <button class="more" onclick={() => (propShown += PROP_BATCH)}>Show more ({propClosedRows.length - propShown} more)</button>
         {/if}
         <div class="muted pad small">
-          {propClosedRows.length} prop close(s) in the last {days}d{propReadFull ? ` · only the newest ${PROP_FILLS_LIMIT} journal fills were read, so older closes in this window may be missing` : ""} · full detail and the trade card on the Prop tab.
+          {propClosedRows.length} prop close(s) in the last {days}d{propReadFull ? ` · only the newest ${PROP_FILLS_LIMIT} journal fills were read, so older closes in this window may be missing` : ""} · click a row for its trade card.
         </div>
       {/if}
       {#if closedBooks.some((b) => b !== "prop")}<div class="subh">Other books</div>{/if}
