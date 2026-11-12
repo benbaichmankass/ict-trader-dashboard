@@ -29,6 +29,7 @@
   import SignalsCatalog from "./routes/SignalsCatalog.svelte";
   import WorkTopics from "./routes/WorkTopics.svelte";
   import WorkOverview from "./components/WorkOverview.svelte";
+  import WorkThisWeek from "./components/WorkThisWeek.svelte";
   import SectionLanding from "./components/SectionLanding.svelte";
   import Placeholder from "./components/Placeholder.svelte";
   import LoginPanel from "./components/LoginPanel.svelte";
@@ -51,6 +52,9 @@
   // default; "Work" keeps the full register.
   const WORK_VIEWS = [
     { value: "overview", label: "Overview" },
+    // Work-queue tabs (bot PR #25354 § "Work queue tabs (SPA)") slot in here as their
+    // routes land; Gates is Admin's.
+    { value: "week", label: "This week" },
     { value: "work", label: "Work" },
     { value: "roadmap", label: "Roadmap" },
     { value: "topics", label: "Topics & insights" },
@@ -223,7 +227,7 @@
       {:else if $nav.section === "Work"}
         <!-- UI-UPGRADE-1: Roadmap folded into Work — one tab, two views. -->
         <div class="worktabs"><Segmented options={WORK_VIEWS} bind:value={workView} /></div>
-        {#if workView === "roadmap"}<Roadmap />{:else if workView === "gpu"}<GPUSpend />{:else if workView === "topics"}<WorkTopics />{:else if workView === "overview"}<WorkOverview />{:else}<Work />{/if}
+        {#if workView === "roadmap"}<Roadmap />{:else if workView === "gpu"}<GPUSpend />{:else if workView === "topics"}<WorkTopics />{:else if workView === "overview"}<WorkOverview />{:else if workView === "week"}<WorkThisWeek />{:else}<Work />{/if}
       {:else if isSpecial($nav.section)}
         <Placeholder page={$nav.section} />
       {:else if $nav.detail == null && (SECTIONS[$nav.section] ?? []).length === 1 && DETAIL[SECTIONS[$nav.section][0]]}
