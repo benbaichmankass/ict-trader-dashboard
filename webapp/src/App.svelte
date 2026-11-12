@@ -26,6 +26,7 @@
   import WakeSwitches from "./routes/WakeSwitches.svelte";
   import System from "./routes/System.svelte";
   import FeatureImpact from "./routes/FeatureImpact.svelte";
+  import SignalsCatalog from "./routes/SignalsCatalog.svelte";
   import WorkTopics from "./routes/WorkTopics.svelte";
   import SectionLanding from "./components/SectionLanding.svelte";
   import Placeholder from "./components/Placeholder.svelte";
@@ -118,6 +119,7 @@
     Promotion,
     Runbooks,
     "Feature Impact": FeatureImpact,
+    "Signals Catalog": SignalsCatalog,
     "Wake Switches": WakeSwitches,
     System,
   };
