@@ -139,9 +139,19 @@
   // account id → book, from /config (account_class + paper_role).
   const books = $derived(accountBooks(config));
   const unassignedPaper = $derived(isPaperBook(funding) ? countUnassigned(positions, books) : 0);
-  // The live chart's open-position markers follow the selected book (prop's
-  // open legs live in the prop journal, not /positions → none drawn for prop).
-  const chartPositions = $derived(positions.filter((p) => bookOfRow(p, books) === funding));
+  // The live chart's open-position markers + SL/TP lines follow the selected
+  // book. Prop's open legs live in the prop journal (/prop/overview
+  // open_trades), not /positions, so they are shaped into position rows here.
+  const chartPositions = $derived<Position[]>(
+    funding === "prop"
+      ? (propOverview?.open_trades ?? []).map((t: any) => ({
+          id: `prop-${t.id}`, symbol: t.symbol, side: t.side === "short" ? "sell" : "buy",
+          qty: t.qty, entryPrice: t.entry_price, account: t.account_id, accountClass: "prop",
+          stopLoss: typeof t.sl === "number" ? t.sl : null, takeProfit: typeof t.tp === "number" ? t.tp : null,
+          openedAt: t.opened_at, unrealizedPnl: typeof t.unrealized_pnl === "number" ? t.unrealized_pnl : null,
+        }) as unknown as Position)
+      : positions.filter((p) => bookOfRow(p, books) === funding),
+  );
 
 
   // Last closed trades under the open-positions table — same funding scope as

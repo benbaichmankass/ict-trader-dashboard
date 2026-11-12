@@ -58,6 +58,8 @@
     (propOverview?.open_trades ?? []).map((t: any) => ({
       id: `prop-${t.id}`, symbol: t.symbol, side: t.side === "short" ? "sell" : "buy",
       qty: t.qty, entryPrice: t.entry_price, pattern: "prop", account: t.account_id,
+      // PROP-UI-BRACKETS-CLOSED: the levels in force on the open prop trade (null → "—", never 0).
+      stopLoss: typeof t.sl === "number" ? t.sl : null, takeProfit: typeof t.tp === "number" ? t.tp : null,
       unrealizedPnl: typeof t.unrealized_pnl === "number" ? t.unrealized_pnl : null,
       unrealizedPnlSource: t.unrealized_provenance === "estimated" ? "estimate" : (t.unrealized_state ?? null),
       openedAt: t.opened_at, accountClass: "prop",
@@ -271,7 +273,7 @@
     {:else}
       <div class="scroll" bind:clientWidth={scrollW}>
         <table>
-          <thead><tr><th>Symbol</th><th>Side</th><th class="r">Qty</th><th class="r">Entry</th><th>Strategy</th><th>Account</th><th class="r">uPnL</th><th>Age</th></tr></thead>
+          <thead><tr><th>Symbol</th><th>Side</th><th class="r">Qty</th><th class="r">Entry</th><th class="r">SL</th><th class="r">TP</th><th>Strategy</th><th>Account</th><th class="r">uPnL</th><th>Age</th></tr></thead>
           <tbody>
             {#each segOpen as p, i (p.id ?? i)}
               {@const k = String(p.id ?? i)}
@@ -282,13 +284,16 @@
                 <td class={String(p.side).toLowerCase() === "sell" ? "neg" : "pos"}>{(p.side ?? DASH).toString().toUpperCase()}</td>
                 <td class="r mono">{p.qty ?? DASH}</td>
                 <td class="r mono">{money(p.entryPrice)}</td>
+                <!-- a 0 level is "no bracket set" on the venue → "—" (same rule as TradeCard) -->
+                <td class="r mono">{p.stopLoss ? money(p.stopLoss) : DASH}</td>
+                <td class="r mono">{p.takeProfit ? money(p.takeProfit) : DASH}</td>
                 <td class="muted">{p.pattern ?? DASH}</td>
                 <td class="muted">{p.account ?? DASH}</td>
                 <td class="r mono {signClass(p.unrealizedPnl)}">{p.unrealizedPnl == null ? DASH : money(p.unrealizedPnl, { sign: true })}{#if p.unrealizedPnl != null && (p as any).unrealizedPnlSource === "estimate"}<span class="est" title="Mark estimate: (Bybit mark − entry) × qty, not a venue figure"> est.</span>{/if}</td>
                 <td class="muted">{agoFromIso(p.openedAt)}</td>
               </tr>
               {#if openCards.has(k)}
-                <tr class="cardrow"><td colspan="8"><div class="cardpin" style:width={scrollW ? `${scrollW}px` : null}><TradeCard {p} /></div></td></tr>
+                <tr class="cardrow"><td colspan="10"><div class="cardpin" style:width={scrollW ? `${scrollW}px` : null}><TradeCard {p} /></div></td></tr>
               {/if}
             {/each}
           </tbody>
