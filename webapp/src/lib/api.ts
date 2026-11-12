@@ -529,6 +529,10 @@ export const api = {
   // roll-up of every work row, and pipeline items with kind:"insight".
   workTopics: (signal?: AbortSignal) => get<any>("/api/bot/work/topics", signal),
   workLedger: (signal?: AbortSignal) => get<any>("/api/bot/work/ledger", signal),
+  // Features catalog (docs/reference/signal-catalog.yaml joined with the served +
+  // candidate model.json feature lists; ungated, ~220 KB). `coverage` carries the
+  // bot's own counts, incl. n_models_missing_from_catalog (operator u8).
+  catalogFeatures: (signal?: AbortSignal) => get<any>("/api/bot/catalog/features", signal),
 
   // The work schedule (A9) — cadenced sessions (the daily sync, the three
   // project-level reviews) · decisions owed · monitoring coming due · cron
