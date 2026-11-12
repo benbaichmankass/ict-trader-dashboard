@@ -152,15 +152,33 @@ export interface Strategy {
 // ⚠️ If you add a second `fetch` anywhere under `webapp/src`, it will NOT carry
 // the bearer and any gated route it calls will 401. `webapp/tests/auth-bearer.mjs`
 // makes that a build failure rather than a silently dark tab.
-async function getRaw(path: string, signal?: AbortSignal): Promise<Response> {
+//
+// Writes go through the same call site (`init.method` + `init.body`), so a POST
+// carries the bearer exactly as a GET does. The SPA's only bot-API write here is
+// the trade-approval decision (session-gated, `require_session`).
+async function rawFetch(
+  path: string,
+  init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+): Promise<Response> {
   const url = `${getBotApiUrl()}${path}`;
-  const res = await fetch(url, { signal, headers: authHeaders() });
+  const hasBody = init.body !== undefined;
+  const res = await fetch(url, {
+    signal: init.signal,
+    method: init.method ?? "GET",
+    headers: authHeaders(hasBody ? { "Content-Type": "application/json" } : undefined),
+    body: hasBody ? JSON.stringify(init.body) : undefined,
+  });
   if (res.status === 401 || res.status === 403) {
     // Drop the dead session and surface the form. Throwing a distinct type
     // lets the route render a sign-in affordance instead of a status line.
     handleUnauthorized(res.status, path);
     throw new AuthRequiredError(res.status, path);
   }
+  return res;
+}
+
+async function getRaw(path: string, signal?: AbortSignal): Promise<Response> {
+  const res = await rawFetch(path, { signal });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${path}`);
   return res;
 }
@@ -177,7 +195,66 @@ function normalizeClosedTrade(r: ClosedTrade): ClosedTrade {
   return { ...r, pnl: r.pnl ?? r.realizedPnl ?? null, strategy: r.strategy ?? r.pattern ?? null };
 }
 
+/**
+ * One operator ask from `src/runtime/trade_approvals.py::offer` (bot), served by
+ * `GET /api/bot/trade-approvals` (require_session). Same store the Telegram
+ * Approve/Reject buttons decide: whichever surface decides first wins.
+ * `kind` is absent on trade asks; any other kind (e.g. a future `ops_job`) is
+ * rendered read-only because its decide path is not this route's contract yet.
+ */
+export interface TradeApprovalAsk {
+  token: string;
+  kind?: string | null;
+  review_id?: string | null;
+  order_package_id?: string | null;
+  leg?: string | null;
+  symbol?: string | null;
+  accounts?: string[] | null;
+  row_action?: string | null;
+  directed?: { action?: string | null; level?: number | null; fraction?: number | null } | null;
+  ev_delta_r?: number | null;
+  basis?: string | null;
+  confidence?: string | null;
+  reason?: string | null;
+  mechanics?: string | null;
+  route?: string | null;
+  created_at?: string | null;
+  expires_at?: string | null;
+  state?: string | null; // pending | approved | rejected | expired | refused
+  decided_at?: string | null;
+  record_id?: string | null;
+  title?: string | null;
+  summary?: string | null;
+}
+
+/** `POST /api/bot/trade-approvals/{token}` answer (`trade_approvals.decide`). */
+export interface TradeApprovalDecision {
+  outcome?: string | null; // approved | rejected | unknown | expired | already_<state> | refused | error
+  token?: string | null;
+  record_id?: string | null;
+  reply?: string | null;
+}
+
 export const api = {
+  // Trade approvals (TRADE-ACTION-DIRECT-PATH phase 1b, bot #25046) — both
+  // routes are behind `require_session`; a 401 surfaces the sign-in form.
+  tradeApprovals: (signal?: AbortSignal) =>
+    get<{ readState?: string; count?: number; asks?: TradeApprovalAsk[] }>("/api/bot/trade-approvals", signal),
+  // The decision is returned for every non-auth status: 404 unknown, 410
+  // expired and 409 already-decided all carry a `reply` the operator must see,
+  // so they are NOT thrown as errors.
+  decideTradeApproval: async (token: string, choice: "approve" | "reject"): Promise<TradeApprovalDecision & { status: number }> => {
+    const res = await rawFetch(`/api/bot/trade-approvals/${encodeURIComponent(token)}`, {
+      method: "POST",
+      body: { choice },
+    });
+    const body = (await res.json().catch(() => ({}))) as TradeApprovalDecision & { detail?: unknown };
+    if (!res.ok && !body.reply) {
+      body.reply = typeof body.detail === "string" ? body.detail : `${res.status} ${res.statusText}`;
+    }
+    return { ...body, status: res.status };
+  },
+
   stats: (signal?: AbortSignal) => get<BotStats>("/api/bot/stats", signal),
   positions: (signal?: AbortSignal) =>
     get<Position[]>("/api/bot/positions?include_paper=true", signal),

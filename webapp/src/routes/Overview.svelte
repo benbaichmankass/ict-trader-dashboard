@@ -6,6 +6,7 @@
   import { money, signClass, DASH, agoFromIso } from "../lib/format";
   import ExecSummary from "../components/ExecSummary.svelte";
   import EquityChart from "../components/EquityChart.svelte";
+  import TradeApprovals from "../components/TradeApprovals.svelte";
 
   // One funding toggle per tab — four books, never blended: Live money · Prop ·
   // Paper portfolio · Paper testing (lib/funding.ts) — + the 24h/7d/30d/All
@@ -303,6 +304,9 @@
   {#if apiError}
     <div class="err panel">Couldn't reach the bot API: <span class="mono">{apiError}</span></div>
   {/if}
+
+  <!-- Operator asks first: an approval expires in minutes (trade_approvals, bot #25046). -->
+  <TradeApprovals />
 
   <ExecSummary {stats} {perf} {positions} {balances} {config} {strategies} {funding} {win} {days} {propOverview} {testingPerf} onpick={(b) => (funding = b)} />
 

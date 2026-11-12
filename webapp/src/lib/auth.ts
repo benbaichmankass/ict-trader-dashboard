@@ -108,6 +108,16 @@ export function isSignedIn(): boolean {
   return getAuthToken() != null;
 }
 
+/**
+ * True when EITHER credential `authHeaders()` would send is held (device
+ * session or password JWT). Lets a panel skip a gated read while signed out
+ * instead of firing it, getting a 401 and popping the login prompt on a page
+ * the viewer only opened to read ungated data.
+ */
+export function hasAnyToken(): boolean {
+  return (currentDeviceToken() ?? getAuthToken()) != null;
+}
+
 /** Drop the stored session. Safe to call when already signed out. */
 export function clearSession(): void {
   writeStored(null);
