@@ -39,6 +39,7 @@
       api.tradeSnapshot(t.id as any).then((r) => {
         if (!alive) return;
         if (r.status === 200 && r.body?.snapshot) { snap = r.body.snapshot; snapState = "drawn"; snapNote = (r.body.partial_reasons ?? []).join(", ") || null; }
+        else if (r.status === 200 && r.body?.read_state === "no_record") { snapState = "no_record"; snapNote = (r.body?.partial_reasons ?? []).join(", ") || r.body?.detail || null; }
         else if (r.status === 200) { snapState = "not_built"; snapNote = r.body?.read_state ?? null; }
         else if (r.status === 404) { snapState = "missing"; }
         else { snapState = "error"; snapNote = `${r.status}`; }
@@ -86,6 +87,8 @@
       <div class="muted small">Loading…</div>
     {:else if snapState === "not_built"}
       <div class="muted small">— The bot has not built a snapshot for this trade yet (it is built once at close, plus a backfill). Nothing is drawn in its place.</div>
+    {:else if snapState === "no_record"}
+      <div class="muted small">— No record: the bot holds no data to build this trade's snapshot{snapNote ? ` (${snapNote})` : ""}. Nothing is drawn in its place.</div>
     {:else if snapState === "missing"}
       <div class="muted small">— Not available yet: the stored-snapshot route is not deployed on the bot. Nothing is drawn in its place.</div>
     {:else}
