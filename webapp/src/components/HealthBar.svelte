@@ -23,8 +23,32 @@
 
   let trader = $state<Chip>({ name: "Trader VM", light: "unknown", text: "loading", title: "" });
   let phone = $state<Chip>({ name: "Phone app", light: "unknown", text: "loading", title: "" });
-  const noSource = (name: string, why: string): Chip => ({ name, light: "unknown", text: "could not look", title: why });
-  const chips = $derived<Chip[]>([
+  const noSource = (name: string, why: string): Chip => ({ name, light: "unknown", text: "—", title: `could not look — ${why}` });
+  // /api/bot/health/infra (bot #25231) when deployed: the six components in the
+  // spec's order with state ok | degraded | down | could_not_look. Until then (404 /
+  // error) the per-source fallback below is used.
+  let infra = $state<Chip[] | null>(null);
+  const INFRA_LABEL: Record<string, string> = { trader_vm: "Trader VM", ib_gateway: "IB gateway", phone_app: "Phone app", trainer_vm: "Trainer VM", kaggle: "Kaggle", hugging_face: "Hugging Face" };
+  const INFRA_LIGHT: Record<string, Light> = { ok: "ok", degraded: "warn", down: "bad", could_not_look: "unknown" };
+  async function loadInfra(): Promise<boolean> {
+    try {
+      const r = await api.healthInfra();
+      const comps = r.status === 200 ? (r.body?.components ?? []) as any[] : [];
+      if (!comps.length) return false;
+      infra = comps.map((c) => {
+        const light = INFRA_LIGHT[String(c?.state)] ?? "unknown";
+        return {
+          name: INFRA_LABEL[c?.component] ?? String(c?.component ?? "—"),
+          light,
+          text: light === "unknown" ? "—" : `${c.state}${c.as_of ? ` · ${agoFromIso(c.as_of)}` : ""}`,
+          title: [c?.state === "could_not_look" ? "could not look" : null, c?.detail, c?.source ? `source: ${c.source}` : null, c?.provenance ? `provenance: ${c.provenance}` : null].filter(Boolean).join("\n"),
+        };
+      });
+      return true;
+    } catch { return false; }
+  }
+
+  const fallbackChips = $derived<Chip[]>([
     trader,
     noSource("IB gateway", "No dashboard route reads the IB gateway VM (it is isolated); the bot's health snapshot carries no gateway check."),
     phone,
@@ -73,7 +97,8 @@
   }
 
   let timer: ReturnType<typeof setInterval> | null = null;
-  const load = () => { loadTrader(); loadPhone(); };
+  const chips = $derived<Chip[]>(infra ?? fallbackChips);
+  const load = async () => { if (!(await loadInfra())) { infra = null; loadTrader(); loadPhone(); } };
   onMount(() => { load(); timer = setInterval(() => { if (!document.hidden) load(); }, 60000); });
   onDestroy(() => { if (timer) clearInterval(timer); });
 </script>

@@ -39,7 +39,10 @@
   let propOverview = $state<any>(null); // /api/bot/prop/overview (Prop book only)
   let workSnap = $state<any>(null); // /api/bot/work/snapshot (UI-UPGRADE-1 item 2)
   let workSnapError = $state<string | null>(null);
-  let ltrPending = $state(0); // LTR trade decisions waiting (bound out of TradeApprovals)
+  let ltrPending = $state(0);
+  // Work "testing queue" (GET /api/bot/work/testing-queue, bot #25231); null until it answers 200.
+  let tq = $state<any>(null);
+  let tqState = $state("loading"); // LTR trade decisions waiting (bound out of TradeApprovals)
   let pnl30 = $state<Array<{ date?: string; pnl?: number | null }>>([]);
   let apiError = $state<string | null>(null);
 
@@ -102,6 +105,8 @@
       }),
       // Prop lives in its own journal; a failure here must not blank the rest.
       (() => { const w = win; return api.propOverview(w).then((v) => { if (w === win) propOverview = v; }); })(),
+      api.testingQueue().then((r) => { if (r.status === 200 && r.body) { tq = r.body; tqState = "read"; } else { tq = null; tqState = String(r.status); } })
+        .catch(() => { tq = null; tqState = "error"; }),
       api.workSnapshot().then((v) => { workSnap = v; workSnapError = null; })
         .catch((e) => { workSnapError = e instanceof Error ? e.message : String(e); throw e; }),
       // Glance-card + sparkline data — each degrades to its own empty state.
@@ -361,8 +366,20 @@
         {/if}
       </div>
       <div class="wcard">
-        <div class="wh">🧪 Testing queue · {DASH}</div>
-        <div class="muted small">could not look — no route serves what is running on the ML/training infra yet.</div>
+        <div class="wh">🧪 Testing queue · {tq && tq.read_state !== "could_not_look" && tq.n_running != null ? tq.n_running : DASH}</div>
+        {#if !tq}
+          <div class="muted small">{tqState === "loading" ? "Loading…" : "could not look — the testing-queue route is not deployed on the bot yet."}</div>
+        {:else if tq.read_state === "could_not_look"}
+          <div class="muted small">could not look — {(tq.sources ?? []).map((x: any) => x.detail).filter(Boolean).join("; ") || "no source readable"}</div>
+        {:else}
+          {#each tq.running ?? [] as r (r.id)}
+            <div class="wrow" title={`${r.source ?? ""}${r.started_at ? ` · started ${r.started_at}` : ""}`}><span class="mono wid">{r.title ?? r.id}</span> <span class="muted">{r.infra ?? r.kind ?? DASH}{r.started_at ? ` · ${agoFromIso(r.started_at)}` : ""}</span></div>
+          {:else}
+            <div class="muted small">Nothing running on the ML/training infra.</div>
+          {/each}
+          {#if tq.read_state === "partial"}<div class="muted small">partial: {(tq.sources ?? []).filter((x: any) => x.read_state !== "read").map((x: any) => x.source).join(", ")} could not be read</div>{/if}
+          <div class="muted small">Hugging Face jobs: {tq.hf_jobs?.read_state === "could_not_look" ? "could not look" : (tq.hf_jobs?.read_state ?? DASH)}</div>
+        {/if}
       </div>
     </div>
   </div>

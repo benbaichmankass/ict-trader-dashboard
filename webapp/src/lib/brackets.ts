@@ -45,6 +45,14 @@ export async function packageForClosedTrade(t: { id?: unknown; openedAt?: string
   const id = String(t.id);
   const hit = (await packageIndex()).get(id);
   if (hit) return hit;
+  // ?linked_trade_id= (bot #25231). An older bot ignores the param and returns its
+  // newest rows, so the match on linkedTradeId below still decides — never trusted blind.
+  try {
+    const r: any = await api.orderPackages({ linkedTradeId: id, includePaper: true, limit: 5 });
+    const rows: any[] = Array.isArray(r) ? r : r?.rows ?? [];
+    const m = rows.find((x) => String(x?.linkedTradeId) === id);
+    if (m) return m;
+  } catch { /* fall through to the narrow read */ }
   const opened = t.openedAt ? Date.parse(t.openedAt) : NaN;
   if (Number.isNaN(opened)) return null;
   const r: any = await api.orderPackages({
