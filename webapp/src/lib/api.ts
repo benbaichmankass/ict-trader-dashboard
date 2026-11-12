@@ -543,6 +543,8 @@ export const api = {
   // from `available_dates` (default newest). Ungated.
   strategyReviews: (date?: string, signal?: AbortSignal) =>
     get<any>(`/api/bot/strategy-reviews${date ? `?date=${encodeURIComponent(date)}` : ""}`, signal),
+  // Wake-notification switches (ungated read; the POST is service-token gated bot-side).
+  wakeToggles: (signal?: AbortSignal) => get<any>("/api/bot/wake-toggles", signal),
   healthLatest: (signal?: AbortSignal) => get<any>("/api/bot/health/latest", signal),
   // Prop manual-bridge phone app's recent step runs (ungated) — the health bar reads
   // the newest run's `last_at` as the phone's last-seen time.
