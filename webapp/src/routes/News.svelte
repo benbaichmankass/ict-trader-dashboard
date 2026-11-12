@@ -1,4 +1,5 @@
 <script lang="ts">
+  import NewsSummary from "../components/NewsSummary.svelte";
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { agoFromIso, DASH } from "../lib/format";
@@ -34,6 +35,7 @@
 
 <section>
   <h2>News</h2>
+  <NewsSummary />
   {#if error}
     <div class="err panel">Couldn't load news: <span class="mono">{error}</span></div>
   {:else if loading}

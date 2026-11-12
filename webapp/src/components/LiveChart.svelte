@@ -13,6 +13,7 @@
     type Time,
   } from "lightweight-charts";
   import type { Candle, Position, ClosedTrade, BracketHistory, TradeDecision } from "../lib/api";
+  import { dispositionColor } from "../lib/chartTime";
 
   // Candles + trade context overlaid the way Streamlit's monitor does it:
   // live-position entry/SL/TP price-lines, buy/sell signal markers, and
@@ -252,14 +253,15 @@
     }
 
     // LTR / Claude decisions: ◆ at the bar; colour by disposition
-    // (applied = blue, advice-only = amber, refused = red, unknown = grey).
+    // (applied blue, advice-only amber, refused red, operator-ask orange, dry-run
+    // purple, no-action / unknown grey — lib/chartTime::dispositionColor).
     for (const d of decisions) {
       const sec = toSec(d.reviewed_at ?? d.at);
       if (sec == null) continue;
       const t = snap(sec, times);
       if (t == null) continue;
       const disp = String(d.disposition ?? "").toLowerCase();
-      const color = disp === "applied" ? "#4c8dff" : disp.startsWith("advice") ? "#d4a017" : disp === "refused" ? "#e5484d" : "#8b93a3";
+      const color = dispositionColor(disp);
       marks.push({
         time: t as UTCTimestamp, position: "aboveBar", color, shape: "square",
         text: `LTR ${d.action ?? "—"}${disp ? ` · ${disp.replace("_", "-")}` : ""}`,
