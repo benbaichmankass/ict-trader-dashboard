@@ -11,10 +11,15 @@
 // Scope: USDT linear perps (`*USDT`). Every other symbol keeps `/ws/market`
 // until T3b/T3c move it.
 //
-// Not wired: `tickers.*` (the spec lists it; the kline's live close already
-// gives a per-tick last price for the chart).
+// `tickers.<SYM>` feeds `bybitLast` (symbol → lastPrice) for the in-browser
+// live uPnL on crypto rows (SPA handoff § 1). Bybit's linear tickers send a
+// snapshot then deltas; a delta without `lastPrice` leaves the last value.
 
+import { writable } from "svelte/store";
 import type { Candle } from "./api";
+
+/** symbol → Bybit lastPrice (from `tickers.*`); absent until a tick arrives → render "—". */
+export const bybitLast = writable<Record<string, number>>({});
 
 export const BYBIT_PUBLIC_WS = "wss://stream.bybit.com/v5/public/linear";
 
@@ -70,6 +75,16 @@ export function parseKlineFrame(msg: any): Array<{ symbol: string; bar: Candle }
   return out;
 }
 
+/** Parse one Bybit `tickers.<SYM>` frame → {symbol, last} or null (no lastPrice in a delta). Exported for tests. */
+export function parseTickerFrame(msg: any): { symbol: string; last: number } | null {
+  const topic = typeof msg?.topic === "string" ? msg.topic : "";
+  if (!topic.startsWith("tickers.")) return null;
+  const symbol = topic.slice("tickers.".length);
+  const raw = msg?.data?.lastPrice;
+  const last = raw == null || raw === "" ? NaN : Number(raw);
+  return symbol && Number.isFinite(last) ? { symbol, last } : null;
+}
+
 function connect(): void {
   if (ws || topicRefs.size === 0) return;
   setStatus("connecting");
@@ -92,6 +107,8 @@ function connect(): void {
   sock.onmessage = (ev) => {
     let msg: any;
     try { msg = JSON.parse(String(ev.data)); } catch { return; }
+    const tk = parseTickerFrame(msg);
+    if (tk) { bybitLast.update((m) => ({ ...m, [tk.symbol]: tk.last })); return; }
     for (const { symbol, bar } of parseKlineFrame(msg)) for (const l of listeners) l(symbol, bar);
   };
   sock.onclose = () => {
@@ -122,7 +139,16 @@ function teardownIfIdle(): void {
 export function acquireKline(symbol: string, interval: string): (() => void) | null {
   const iv = bybitInterval(interval);
   if (!iv || !isBybitLinear(symbol)) return null;
-  const topic = `kline.${iv}.${symbol}`;
+  return acquireTopic(`kline.${iv}.${symbol}`);
+}
+
+/** Subscribe to one symbol's `tickers.*` stream (feeds `bybitLast`); release fn, or null if not servable. */
+export function acquireTicker(symbol: string): (() => void) | null {
+  if (!isBybitLinear(symbol)) return null;
+  return acquireTopic(`tickers.${symbol}`);
+}
+
+function acquireTopic(topic: string): () => void {
   const n = topicRefs.get(topic) ?? 0;
   topicRefs.set(topic, n + 1);
   if (n === 0) send({ op: "subscribe", args: [topic] });
@@ -158,4 +184,20 @@ export function upsertBar(arr: Candle[], bar: Candle, cap = 500): Candle[] {
   if (bar.time === last.time) return [...arr.slice(0, -1), bar];
   if (bar.time > last.time) return [...arr, bar].slice(-cap);
   return arr; // an older bar than we hold: ignore (history is REST's job)
+}
+
+/**
+ * In-browser live uPnL for a crypto row (SPA handoff § 1):
+ * (last − entry) × qty × (long ? 1 : −1). Null — rendered "—", never 0 — when
+ * no tick has arrived or entry/qty is missing. Assumes linear USDT perps
+ * (1 contract = 1 unit of the base coin).
+ */
+export function liveUpnl(
+  row: { side?: string | null; entryPrice?: number | null; qty?: number | null },
+  last: number | null | undefined,
+): number | null {
+  const e = row.entryPrice, q = row.qty;
+  if (last == null || !Number.isFinite(last) || e == null || !Number.isFinite(e) || q == null || !Number.isFinite(q) || !e) return null;
+  const short = /^(s|short)/i.test(String(row.side ?? ""));
+  return (last - e) * Math.abs(q) * (short ? -1 : 1);
 }
