@@ -522,6 +522,20 @@ export const api = {
   // roll-up of every work row, and pipeline items with kind:"insight".
   workTopics: (signal?: AbortSignal) => get<any>("/api/bot/work/topics", signal),
   workLedger: (signal?: AbortSignal) => get<any>("/api/bot/work/ledger", signal),
+  // Signals catalog (bot #25199, ungated): filtering and paging are the route's.
+  signalsCatalog: (
+    opts: { family?: string | null; kind?: string | null; q?: string; consumer?: string; limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ) => {
+    const q = new URLSearchParams();
+    if (opts.family) q.set("family", opts.family);
+    if (opts.kind) q.set("kind", opts.kind);
+    if (opts.q) q.set("q", opts.q);
+    if (opts.consumer && opts.consumer !== "any") q.set("consumer", opts.consumer);
+    q.set("limit", String(opts.limit ?? 50));
+    q.set("offset", String(opts.offset ?? 0));
+    return get<any>(`/api/bot/signals/catalog?${q.toString()}`, signal);
+  },
 
   // The work schedule (A9) — cadenced sessions (the daily sync, the three
   // project-level reviews) · decisions owed · monitoring coming due · cron
