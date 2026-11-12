@@ -52,6 +52,28 @@
   onMount(load);
 
   const closed = $derived(closedFills(fills));
+  // PROP-UI-BRACKETS-CLOSED (UI workplan §2, bot #24873): `/prop/fills` rows carry a
+  // `bracket` block {final_sl, final_tp, entry_sl, entry_tp, amendments, n_amendments,
+  // read_state}. `no_record` means the journal holds no levels — rendered "—", not 0.
+  const lvl = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? String(v) : DASH);
+  function bracketTip(b: any): string {
+    if (!b) return "no bracket block (older bot)";
+    if (b.read_state === "no_record") return "no bracket record in the prop journal";
+    const lines = [`entry SL ${lvl(b.entry_sl)} · entry TP ${lvl(b.entry_tp)}`, `final SL ${lvl(b.final_sl)} · final TP ${lvl(b.final_tp)}`];
+    const am = Array.isArray(b.amendments) ? b.amendments : [];
+    for (const a of am) {
+      const at = a?.at ?? a?.ts ?? a?.amended_at ?? "";
+      const parts = ["sl", "tp"].map((k) => {
+        const from = a?.before?.[k] ?? a?.[`${k}_before`];
+        const to = a?.after?.[k] ?? a?.[`${k}_after`] ?? a?.[k]; // prop_journal.amend_fill_levels: {at, sl_before, sl, tp_before, tp, source}
+        return from == null && to == null ? null : `${k.toUpperCase()} ${lvl(from)}→${lvl(to)}`;
+      }).filter(Boolean);
+      lines.push(`${at ? String(at).slice(0, 16).replace("T", " ") + "Z " : ""}${parts.join(", ") || JSON.stringify(a)}${a?.source ? ` · ${a.source}` : ""}`);
+    }
+    if (!am.length) lines.push(b.amendments == null ? "amendments: no record" : "no amendments");
+    return lines.join("\n");
+  }
+
   // The lifecycle log (placed / open / skipped / closed reports), newest first.
   const lifecycle = $derived([...fills].sort((a, b) => (b?.id ?? 0) - (a?.id ?? 0)));
 
@@ -114,7 +136,7 @@
         <div class="muted pad">No closed prop trades reported yet.</div>
       {:else}
         <table>
-          <thead><tr><th>Closed (UTC)</th><th>Account</th><th>Symbol</th><th>Dir</th><th class="r">Qty</th><th class="r">Entry</th><th class="r">Exit</th><th class="r">P&amp;L</th><th>Basis</th><th>Provenance</th><th>Reason</th></tr></thead>
+          <thead><tr><th>Closed (UTC)</th><th>Account</th><th>Symbol</th><th>Dir</th><th class="r">Qty</th><th class="r">Entry</th><th class="r">Exit</th><th class="r" title="Final stop in force at close (bracket.final_sl); hover for the entry level and amendments">SL</th><th class="r" title="Final target in force at close (bracket.final_tp)">TP</th><th class="r">P&amp;L</th><th>Basis</th><th>Provenance</th><th>Reason</th></tr></thead>
           <tbody>
             {#each closed as f, i (f.id ?? i)}
               {@const prov = fillProvenance(f)}
@@ -127,6 +149,8 @@
                 <td class="r mono">{num(f.qty, 4)}</td>
                 <td class="r mono">{money(f.entry_price)}</td>
                 <td class="r mono">{money(f.exit_price)}</td>
+                <td class="r mono" title={bracketTip(f.bracket)}>{lvl(f.bracket?.final_sl)}{#if (f.bracket?.n_amendments ?? 0) > 0}<span class="muted small"> ·{f.bracket.n_amendments}✎</span>{/if}</td>
+                <td class="r mono" title={bracketTip(f.bracket)}>{lvl(f.bracket?.final_tp)}</td>
                 <td class="r mono {prov === 'MEASURED' ? signClass(f.pnl) : 'unmeasured'}">{f.pnl == null ? DASH : money(f.pnl, { sign: true })}</td>
                 <td class="muted" title={fillBasisText(f) ?? "no P&L basis reported"}>{basis == null ? DASH : basis.toUpperCase()}</td>
                 <td><span class="badge {prov.toLowerCase()}">{prov === "UNKNOWN" ? DASH : prov}</span></td>

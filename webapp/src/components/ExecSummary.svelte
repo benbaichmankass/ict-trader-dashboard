@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { BotStats, Performance, Position } from "../lib/api";
   import { money, pct, num, signClass, agoFromIso, DASH } from "../lib/format";
+  import { acquireTicker, bybitLast, isBybitLinear, liveUpnl } from "../lib/bybitStream";
   import TradeCard from "./TradeCard.svelte";
   let scrollW = $state(0); // visible width of the open-trades scroll area (pins the trade card to it)
   import { accountBooks, bookOfRow, FUNDING_BOOKS, FUNDING_LABEL, type FundingBook } from "../lib/funding";
@@ -58,6 +59,8 @@
     (propOverview?.open_trades ?? []).map((t: any) => ({
       id: `prop-${t.id}`, symbol: t.symbol, side: t.side === "short" ? "sell" : "buy",
       qty: t.qty, entryPrice: t.entry_price, pattern: "prop", account: t.account_id,
+      // PROP-UI-BRACKETS-CLOSED: the levels in force on the open prop trade (null → "—", never 0).
+      stopLoss: typeof t.sl === "number" ? t.sl : null, takeProfit: typeof t.tp === "number" ? t.tp : null,
       unrealizedPnl: typeof t.unrealized_pnl === "number" ? t.unrealized_pnl : null,
       unrealizedPnlSource: t.unrealized_provenance === "estimated" ? "estimate" : (t.unrealized_state ?? null),
       openedAt: t.opened_at, accountClass: "prop",
@@ -66,6 +69,14 @@
   const segOpen = $derived(
     funding === "prop" ? propOpen : positions.filter((p) => bookOfRow(p, books) === funding),
   );
+  // Live uPnL for crypto rows from Bybit's public tickers stream (browser-direct,
+  // SPA handoff § 1): one ticker topic per open *USDT symbol in view, released
+  // when the symbol leaves the view. Shown BESIDE the broker/mark figure.
+  const cryptoSyms = $derived([...new Set(segOpen.map((p) => p.symbol).filter((s): s is string => !!s && isBybitLinear(s)))].sort().join(","));
+  $effect(() => {
+    const rels = cryptoSyms ? cryptoSyms.split(",").map((s) => acquireTicker(s)).filter((r): r is () => void => !!r) : [];
+    return () => { for (const r of rels) r(); };
+  });
   const openUpnl = $derived.by(() => {
     // Prop: the bot's BOOK figure, never a client sum of whichever trades happen to carry one. The measured
     // total first; else the total including labelled mark estimates (shown as "est."); else "—".
@@ -271,7 +282,7 @@
     {:else}
       <div class="scroll" bind:clientWidth={scrollW}>
         <table>
-          <thead><tr><th>Symbol</th><th>Side</th><th class="r">Qty</th><th class="r">Entry</th><th>Strategy</th><th>Account</th><th class="r">uPnL</th><th>Age</th></tr></thead>
+          <thead><tr><th>Symbol</th><th>Side</th><th class="r">Qty</th><th class="r">Entry</th><th class="r">SL</th><th class="r">TP</th><th>Strategy</th><th>Account</th><th class="r">uPnL</th><th>Age</th></tr></thead>
           <tbody>
             {#each segOpen as p, i (p.id ?? i)}
               {@const k = String(p.id ?? i)}
@@ -282,13 +293,16 @@
                 <td class={String(p.side).toLowerCase() === "sell" ? "neg" : "pos"}>{(p.side ?? DASH).toString().toUpperCase()}</td>
                 <td class="r mono">{p.qty ?? DASH}</td>
                 <td class="r mono">{money(p.entryPrice)}</td>
+                <!-- a 0 level is "no bracket set" on the venue → "—" (same rule as TradeCard) -->
+                <td class="r mono">{p.stopLoss ? money(p.stopLoss) : DASH}</td>
+                <td class="r mono">{p.takeProfit ? money(p.takeProfit) : DASH}</td>
                 <td class="muted">{p.pattern ?? DASH}</td>
                 <td class="muted">{p.account ?? DASH}</td>
-                <td class="r mono {signClass(p.unrealizedPnl)}">{p.unrealizedPnl == null ? DASH : money(p.unrealizedPnl, { sign: true })}{#if p.unrealizedPnl != null && (p as any).unrealizedPnlSource === "estimate"}<span class="est" title="Mark estimate: (Bybit mark − entry) × qty, not a venue figure"> est.</span>{/if}</td>
+                <td class="r mono {signClass(p.unrealizedPnl)}">{p.unrealizedPnl == null ? DASH : money(p.unrealizedPnl, { sign: true })}{#if p.unrealizedPnl != null && (p as any).unrealizedPnlSource === "estimate"}<span class="est" title="Mark estimate: (Bybit mark − entry) × qty, not a venue figure"> est.</span>{/if}{#if p.symbol && isBybitLinear(p.symbol)}{@const lu = liveUpnl(p, $bybitLast[p.symbol])}<div class="live {signClass(lu)}" title="(Bybit last − entry) × qty, from Bybit's public tickers stream in this browser — not a venue figure">{lu == null ? DASH : money(lu, { sign: true })} <span class="est">live (Bybit last)</span></div>{/if}</td>
                 <td class="muted">{agoFromIso(p.openedAt)}</td>
               </tr>
               {#if openCards.has(k)}
-                <tr class="cardrow"><td colspan="8"><div class="cardpin" style:width={scrollW ? `${scrollW}px` : null}><TradeCard {p} /></div></td></tr>
+                <tr class="cardrow"><td colspan="10"><div class="cardpin" style:width={scrollW ? `${scrollW}px` : null}><TradeCard {p} /></div></td></tr>
               {/if}
             {/each}
           </tbody>
@@ -299,6 +313,7 @@
 </div>
 
 <style>
+  .live { font-size: 11px; font-weight: 500; }
   .exec { padding: 14px; display: flex; flex-direction: column; gap: 10px; }
   .title { font-weight: 700; font-size: 15px; }
   .status { font-size: 13px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

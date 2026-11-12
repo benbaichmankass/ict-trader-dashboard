@@ -23,6 +23,8 @@
   import Backtesting from "./routes/Backtesting.svelte";
   import Promotion from "./routes/Promotion.svelte";
   import Runbooks from "./routes/Runbooks.svelte";
+  import FeatureImpact from "./routes/FeatureImpact.svelte";
+  import WorkTopics from "./routes/WorkTopics.svelte";
   import SectionLanding from "./components/SectionLanding.svelte";
   import Placeholder from "./components/Placeholder.svelte";
   import LoginPanel from "./components/LoginPanel.svelte";
@@ -44,6 +46,7 @@
   const WORK_VIEWS = [
     { value: "work", label: "Work" },
     { value: "roadmap", label: "Roadmap" },
+    { value: "topics", label: "Topics & insights" },
     { value: "gpu", label: "GPU spend" },
   ];
   let workView = $state(
@@ -112,6 +115,7 @@
     Backtesting,
     Promotion,
     Runbooks,
+    "Feature Impact": FeatureImpact,
   };
 
   // Settings is reachable from the top bar too: on phones the drawer's footer
@@ -209,7 +213,7 @@
       {:else if $nav.section === "Work"}
         <!-- UI-UPGRADE-1: Roadmap folded into Work — one tab, two views. -->
         <div class="worktabs"><Segmented options={WORK_VIEWS} bind:value={workView} /></div>
-        {#if workView === "roadmap"}<Roadmap />{:else if workView === "gpu"}<GPUSpend />{:else}<Work />{/if}
+        {#if workView === "roadmap"}<Roadmap />{:else if workView === "gpu"}<GPUSpend />{:else if workView === "topics"}<WorkTopics />{:else}<Work />{/if}
       {:else if isSpecial($nav.section)}
         <Placeholder page={$nav.section} />
       {:else if $nav.detail == null && (SECTIONS[$nav.section] ?? []).length === 1 && DETAIL[SECTIONS[$nav.section][0]]}

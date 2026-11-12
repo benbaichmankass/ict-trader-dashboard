@@ -152,15 +152,33 @@ export interface Strategy {
 // ⚠️ If you add a second `fetch` anywhere under `webapp/src`, it will NOT carry
 // the bearer and any gated route it calls will 401. `webapp/tests/auth-bearer.mjs`
 // makes that a build failure rather than a silently dark tab.
-async function getRaw(path: string, signal?: AbortSignal): Promise<Response> {
+//
+// Writes go through the same call site (`init.method` + `init.body`), so a POST
+// carries the bearer exactly as a GET does. The SPA's only bot-API write here is
+// the trade-approval decision (session-gated, `require_session`).
+async function rawFetch(
+  path: string,
+  init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+): Promise<Response> {
   const url = `${getBotApiUrl()}${path}`;
-  const res = await fetch(url, { signal, headers: authHeaders() });
+  const hasBody = init.body !== undefined;
+  const res = await fetch(url, {
+    signal: init.signal,
+    method: init.method ?? "GET",
+    headers: authHeaders(hasBody ? { "Content-Type": "application/json" } : undefined),
+    body: hasBody ? JSON.stringify(init.body) : undefined,
+  });
   if (res.status === 401 || res.status === 403) {
     // Drop the dead session and surface the form. Throwing a distinct type
     // lets the route render a sign-in affordance instead of a status line.
     handleUnauthorized(res.status, path);
     throw new AuthRequiredError(res.status, path);
   }
+  return res;
+}
+
+async function getRaw(path: string, signal?: AbortSignal): Promise<Response> {
+  const res = await rawFetch(path, { signal });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${path}`);
   return res;
 }
@@ -177,7 +195,225 @@ function normalizeClosedTrade(r: ClosedTrade): ClosedTrade {
   return { ...r, pnl: r.pnl ?? r.realizedPnl ?? null, strategy: r.strategy ?? r.pattern ?? null };
 }
 
+/**
+ * One operator ask from `src/runtime/trade_approvals.py::offer` (bot), served by
+ * `GET /api/bot/trade-approvals` (require_session). Same store the Telegram
+ * Approve/Reject buttons decide: whichever surface decides first wins.
+ * `kind` is absent on trade asks; any other kind (e.g. a future `ops_job`) gets
+ * the same Approve / Reject — the bot decides what it accepts.
+ */
+export interface TradeApprovalAsk {
+  token: string;
+  kind?: string | null;
+  review_id?: string | null;
+  order_package_id?: string | null;
+  leg?: string | null;
+  symbol?: string | null;
+  accounts?: string[] | null;
+  row_action?: string | null;
+  directed?: { action?: string | null; level?: number | null; fraction?: number | null } | null;
+  ev_delta_r?: number | null;
+  basis?: string | null;
+  confidence?: string | null;
+  reason?: string | null;
+  mechanics?: string | null;
+  route?: string | null;
+  created_at?: string | null;
+  expires_at?: string | null;
+  state?: string | null; // pending | approved | rejected | expired | refused
+  decided_at?: string | null;
+  record_id?: string | null;
+  title?: string | null;
+  summary?: string | null;
+}
+
+/**
+ * One LTR review / Claude decision on a trade, for chart markers (UI-REDESIGN-2026-11
+ * addendum 5). PROVISIONAL shape asked of the bot (source: comms/live_review/
+ * reviews.jsonl + live-review/rows + directed_actions receipts); no route serves it yet.
+ */
+export interface TradeDecision {
+  review_id?: string | null;
+  reviewed_at?: string | null; // ISO; `at` accepted as an alias
+  at?: string | null;
+  action?: string | null; // hold | tighten | partial_close | close | move_tp | …
+  disposition?: string | null; // applied | advice_only | refused
+}
+
+/** `POST /api/bot/trade-approvals/{token}` answer (`trade_approvals.decide`). */
+export interface TradeApprovalDecision {
+  outcome?: string | null; // approved | rejected | unknown | expired | already_<state> | refused | error
+  token?: string | null;
+  record_id?: string | null;
+  reply?: string | null;
+}
+
+/** One row of `GET /api/bot/performance/categories` (bot `src/runtime/perf_category.py::category_metrics`). */
+export interface PerfCategoryRow {
+  category: string; // live | prop | paper_portfolio | paper_testing
+  accounts?: string[] | null;
+  read_state?: string | null;
+  n_closed?: number | null;
+  net_pnl_usd?: number | null;
+  measured_usd?: number | null;
+  n_measured?: number | null;
+  not_measured_usd?: number | null;
+  n_not_measured?: number | null;
+  win_rate?: number | null; // fraction 0..1
+  n_priced?: number | null;
+  avg_realised_r?: number | null;
+  n_r_graded?: number | null;
+  r_insufficient_n?: boolean | null;
+  profit_factor?: number | null;
+  avg_hold_days?: number | null;
+  n_no_hold?: number | null;
+  return_on_time_in_trade_bps_per_notional_day?: number | null;
+  return_on_time_in_trade_all_rows_bps_per_notional_day?: number | null;
+  capital_utilisation?: number | null;
+  capital_utilisation_read_state?: string | null;
+  max_drawdown_usd?: number | null;
+  fees_usd?: number | null;
+  n_fees?: number | null;
+  funding_usd?: number | null;
+  n_funding?: number | null;
+  n_excluded_null_pnl?: number | null;
+}
+
+export interface PerfCategories {
+  as_of?: string | null;
+  window?: string | null;
+  read_state?: string | null;
+  categories?: PerfCategoryRow[];
+  excluded?: Array<{ account_id?: string; reason?: string }>;
+  population?: {
+    window?: string;
+    since?: string | null;
+    n_closed?: number | null;
+    rows_excluded_null_pnl?: number | null;
+    also_excluded?: string | null;
+  } | null;
+}
+
+export interface PnlPoint {
+  date: string; // YYYY-MM-DD (utc_day bucket) or an ISO instant (trade bucket, window=7d)
+  pnl_usd?: number | null;
+  n?: number | null;
+  cum_pnl_usd?: number | null;
+  cum_pnl_all_rows_usd?: number | null;
+  cum_pct?: number | null; // PERCENT units (cum / start capital * 100); null = no capital record
+  cum_pct_all_rows?: number | null;
+}
+
+export interface PnlSeries {
+  as_of?: string | null;
+  window?: string | null;
+  read_state?: string | null;
+  measured_only?: boolean | null;
+  bucket?: string | null;
+  series?: Array<{
+    category: string;
+    start_capital_usd?: number | null;
+    capital_read_state?: string | null;
+    n_rows?: number | null;
+    read_state?: string | null;
+    points?: PnlPoint[];
+  }>;
+  population?: { window?: string; since?: string | null; n_rows?: number | null; filters?: Record<string, string | null> } | null;
+}
+
+export interface BracketLevel {
+  kind: "sl" | "tp" | string;
+  price: number;
+  from_ts?: string | null;
+  to_ts?: string | null; // null = still in force
+  source?: string | null;
+  detail?: string | null;
+  provenance?: string | null;
+}
+export interface BracketUpdate {
+  ts?: string | null;
+  kind: "sl" | "tp" | string;
+  from?: number | null;
+  to?: number | null;
+  source?: string | null;
+  detail?: string | null;
+  bar_ts?: string | null;
+}
+export interface BracketHistory {
+  read_state?: string | null; // measured | partial | no_record
+  partial_reasons?: string[] | null;
+  tp_history?: unknown;
+  direction?: string | null;
+  levels?: BracketLevel[];
+  updates?: BracketUpdate[];
+}
+
 export const api = {
+  // PERF-PAGE-CATEGORY-TABLE / PERF-PAGE-PNL-CHART (bot #24893). Windows are
+  // 7d|30d|90d|all — the bot answers 400 for anything else (24h included).
+  perfCategories: (window = "30d", signal?: AbortSignal) =>
+    get<PerfCategories>(`/api/bot/performance/categories?window=${encodeURIComponent(window)}`, signal),
+  pnlSeries: (
+    opts: { window?: string; category?: string[]; strategy?: string; symbol?: string; assetClass?: string; measuredOnly?: boolean } = {},
+    signal?: AbortSignal,
+  ) => {
+    const q = new URLSearchParams();
+    q.set("window", opts.window ?? "30d");
+    if (opts.category && opts.category.length) q.set("category", opts.category.join(","));
+    if (opts.strategy) q.set("strategy", opts.strategy);
+    if (opts.symbol) q.set("symbol", opts.symbol);
+    if (opts.assetClass) q.set("asset_class", opts.assetClass);
+    q.set("measured_only", String(opts.measuredOnly ?? true));
+    return get<PnlSeries>(`/api/bot/performance/pnl-series?${q.toString()}`, signal);
+  },
+
+  // UI-CHART-BRACKET-HISTORY (bot #24893): SL/TP levels over time + one marker
+  // per update. Exactly one of order_package_id / prop_fill_id; interval must be
+  // one the bot knows (1m..1d) or it answers 400.
+  bracketsHistory: (sel: { orderPackageId?: string; propFillId?: number }, interval = "15m", signal?: AbortSignal) => {
+    const q = new URLSearchParams();
+    if (sel.orderPackageId) q.set("order_package_id", sel.orderPackageId);
+    if (sel.propFillId != null) q.set("prop_fill_id", String(sel.propFillId));
+    q.set("interval", interval);
+    return get<BracketHistory>(`/api/bot/brackets/history?${q.toString()}`, signal);
+  },
+
+  // FEATURE-IMPACT-MAP (bot #24926). measure: gain_share | split_share; by:
+  // asset_class | ml_type | stage — the bot answers 400 for anything else.
+  featureImpactHeatmap: (by = "asset_class", measure = "gain_share", signal?: AbortSignal) =>
+    get<any>(`/api/bot/feature-impact/heatmap?by=${encodeURIComponent(by)}&measure=${encodeURIComponent(measure)}`, signal),
+  featureImpactDetail: (
+    opts: { family?: string; assetClass?: string; stage?: string; measure?: string } = {},
+    signal?: AbortSignal,
+  ) => {
+    const q = new URLSearchParams();
+    if (opts.family) q.set("family", opts.family);
+    if (opts.assetClass) q.set("asset_class", opts.assetClass);
+    if (opts.stage) q.set("stage", opts.stage);
+    q.set("measure", opts.measure ?? "gain_share");
+    return get<any>(`/api/bot/feature-impact/detail?${q.toString()}`, signal);
+  },
+  featureImpactInvest: (signal?: AbortSignal) => get<any>("/api/bot/feature-impact/invest", signal),
+
+  // Trade approvals (TRADE-ACTION-DIRECT-PATH phase 1b, bot #25046) — both
+  // routes are behind `require_session`; a 401 surfaces the sign-in form.
+  tradeApprovals: (signal?: AbortSignal) =>
+    get<{ readState?: string; count?: number; asks?: TradeApprovalAsk[] }>("/api/bot/trade-approvals", signal),
+  // The decision is returned for every non-auth status: 404 unknown, 410
+  // expired and 409 already-decided all carry a `reply` the operator must see,
+  // so they are NOT thrown as errors.
+  decideTradeApproval: async (token: string, choice: "approve" | "reject"): Promise<TradeApprovalDecision & { status: number }> => {
+    const res = await rawFetch(`/api/bot/trade-approvals/${encodeURIComponent(token)}`, {
+      method: "POST",
+      body: { choice },
+    });
+    const body = (await res.json().catch(() => ({}))) as TradeApprovalDecision & { detail?: unknown };
+    if (!res.ok && !body.reply) {
+      body.reply = typeof body.detail === "string" ? body.detail : `${res.status} ${res.statusText}`;
+    }
+    return { ...body, status: res.status };
+  },
+
   stats: (signal?: AbortSignal) => get<BotStats>("/api/bot/stats", signal),
   positions: (signal?: AbortSignal) =>
     get<Position[]>("/api/bot/positions?include_paper=true", signal),
@@ -274,6 +510,10 @@ export const api = {
   // ~435 KB). closedRecent / openNow / next / waitingOnOperator, `present:false`
   // with a reason when the store is unreadable — never empty lists as "no work".
   workSnapshot: (signal?: AbortSignal) => get<any>("/api/bot/work/snapshot", signal),
+  // WORK-TOPIC-TAXONOMY (bot #24927) and INSIGHTS-LEDGER (bot #24919): topic
+  // roll-up of every work row, and pipeline items with kind:"insight".
+  workTopics: (signal?: AbortSignal) => get<any>("/api/bot/work/topics", signal),
+  workLedger: (signal?: AbortSignal) => get<any>("/api/bot/work/ledger", signal),
 
   // The work schedule (A9) — cadenced sessions (the daily sync, the three
   // project-level reviews) · decisions owed · monitoring coming due · cron
