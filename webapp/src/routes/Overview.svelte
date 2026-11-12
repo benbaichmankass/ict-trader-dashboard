@@ -3,10 +3,12 @@
   import { api, type BotStats, type Performance, type Position, type ClosedTrade } from "../lib/api";
   import { FUNDING_OPTIONS, DAY_SNAPS, sinceDays, perfWindowFor, gotoDetail } from "../lib/nav";
   import { accountBooks, bookOfRow, isPaperBook, normalizeFunding, countUnassigned, FUNDING_BOOKS, FUNDING_LABEL, type FundingBook } from "../lib/funding";
+  import ClosedTradeCard from "../components/ClosedTradeCard.svelte";
   import { money, signClass, DASH, agoFromIso } from "../lib/format";
   import ExecSummary from "../components/ExecSummary.svelte";
   import EquityChart from "../components/EquityChart.svelte";
   import TradeApprovals from "../components/TradeApprovals.svelte";
+  import HealthBar from "../components/HealthBar.svelte";
 
   // One funding toggle per tab — four books, never blended: Live money · Prop ·
   // Paper portfolio · Paper testing (lib/funding.ts) — + the 24h/7d/30d/All
@@ -160,6 +162,13 @@
     return String(t.id ?? `${t.symbol}-${t.closedAt}`);
   }
 
+  // Expanded closed-trade cards (UI-REDESIGN-2026-11 addendum 2) — several at once.
+  let openClosed = $state<Set<string>>(new Set());
+  function toggleClosed(k: string) {
+    const n = new Set(openClosed);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    openClosed = n;
+  }
   const RECENT_BATCH = 10; // "Show more" fetches the next server batch; // well within the bot's 200-row page cap (trades_closed.py)
 
   let recentClosedRows = $state<ClosedTrade[]>([]);
@@ -286,6 +295,9 @@
     <h2>Overview</h2>
   </div>
 
+  <!-- UI-REDESIGN-2026-11 (1): health bar across the top, money path first. -->
+  <HealthBar />
+
   <div class="controls">
     <label class="days">
       <span>Days back: <b>{days}</b></span>
@@ -402,14 +414,19 @@
           </thead>
           <tbody>
             {#each recentClosedRows as t (rowKey(t))}
-              <tr>
-                <td class="sym">{t.symbol}</td>
+              {@const ck = rowKey(t)}
+              <tr class="click" class:openrow={openClosed.has(ck)} onclick={() => toggleClosed(ck)} tabindex="0" role="button" aria-expanded={openClosed.has(ck)}
+                onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleClosed(ck); } }}>
+                <td class="sym">{openClosed.has(ck) ? "▾" : "▸"} {t.symbol}</td>
                 <td class={dirLabel(t) === "SHORT" ? "neg" : "pos"}>{dirLabel(t)}</td>
                 <td class="muted">{t.strategy ?? DASH}</td>
                 <td class="muted">{t.account ?? DASH}</td>
                 <td class="r mono {signClass(t.pnl)}">{money(t.pnl, { sign: true })}</td>
                 <td class="muted">{agoFromIso(t.closedAt)}</td>
               </tr>
+              {#if openClosed.has(ck)}
+                <tr class="cardrow"><td colspan="6"><ClosedTradeCard {t} /></td></tr>
+              {/if}
             {/each}
           </tbody>
         </table>
@@ -434,6 +451,9 @@
 </section>
 
 <style>
+  tr.click { cursor: pointer; }
+  tr.click:hover, tr.openrow { background: var(--panel-2); }
+  tr.cardrow > td { padding: 0; white-space: normal; }
   section {
     display: flex;
     flex-direction: column;

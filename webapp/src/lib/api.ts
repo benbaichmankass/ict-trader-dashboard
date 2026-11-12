@@ -472,9 +472,10 @@ export const api = {
   pnlHistory: (days = 30, signal?: AbortSignal) =>
     get<Array<{ date?: string; pnl?: number | null }>>(`/api/pnl/history?days=${days}`, signal),
   signals: (signal?: AbortSignal) => get<any>("/api/bot/signals", signal),
-  orderPackages: (opts: { since?: string; includePaper?: boolean; limit?: number } = {}, signal?: AbortSignal) => {
+  orderPackages: (opts: { since?: string; strategy?: string; includePaper?: boolean; limit?: number } = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams();
     if (opts.since) q.set("since", opts.since);
+    if (opts.strategy) q.set("strategy", opts.strategy);
     if (opts.includePaper) q.set("include_paper", "true");
     q.set("limit", String(opts.limit ?? 100));
     return get<any>(`/api/bot/order-packages?${q.toString()}`, signal);
@@ -539,6 +540,9 @@ export const api = {
   // Admin — health / logs / data explorer.
   healthServices: (signal?: AbortSignal) => get<any>("/api/bot/health/services", signal),
   healthLatest: (signal?: AbortSignal) => get<any>("/api/bot/health/latest", signal),
+  // Prop manual-bridge phone app's recent step runs (ungated) — the health bar reads
+  // the newest run's `last_at` as the phone's last-seen time.
+  phoneSteps: (signal?: AbortSignal) => get<any>("/api/bot/prop/phone_steps", signal),
   notifications: (signal?: AbortSignal) => get<any>("/api/bot/notifications", signal),
   logs: (opts: { limit?: number; level?: string } = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams();
