@@ -546,6 +546,8 @@ export const api = {
 
   // Admin — health / logs / data explorer.
   healthServices: (signal?: AbortSignal) => get<any>("/api/bot/health/services", signal),
+  // Wake-notification switches (ungated read; the POST is service-token gated bot-side).
+  wakeToggles: (signal?: AbortSignal) => get<any>("/api/bot/wake-toggles", signal),
   // ── Backend routes from JTA-Trader #25216 / #25231 (held at the time of writing).
   // Each returns { status, body } and does NOT throw on 404/4xx, so a page can say
   // "not available yet" / "could not look" instead of inventing a state.
