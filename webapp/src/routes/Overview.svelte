@@ -3,10 +3,12 @@
   import { api, type BotStats, type Performance, type Position, type ClosedTrade } from "../lib/api";
   import { FUNDING_OPTIONS, DAY_SNAPS, sinceDays, perfWindowFor, gotoDetail } from "../lib/nav";
   import { accountBooks, bookOfRow, isPaperBook, normalizeFunding, countUnassigned, FUNDING_BOOKS, FUNDING_LABEL, type FundingBook } from "../lib/funding";
+  import ClosedTradeCard from "../components/ClosedTradeCard.svelte";
   import { money, signClass, DASH, agoFromIso } from "../lib/format";
   import ExecSummary from "../components/ExecSummary.svelte";
   import EquityChart from "../components/EquityChart.svelte";
   import TradeApprovals from "../components/TradeApprovals.svelte";
+  import HealthBar from "../components/HealthBar.svelte";
   import DdSwitchControl from "../components/DdSwitchControl.svelte";
 
   // One funding toggle per tab — four books, never blended: Live money · Prop ·
@@ -40,6 +42,9 @@
   let workSnapError = $state<string | null>(null);
   let ddTripped = $state(0); // armed accounts whose daily drawdown switch is tripped
   let ltrPending = $state(0); // LTR trade decisions waiting (bound out of TradeApprovals)
+  // Work "testing queue" (GET /api/bot/work/testing-queue, bot #25231); null until it answers 200.
+  let tq = $state<any>(null);
+  let tqState = $state("loading");
   let pnl30 = $state<Array<{ date?: string; pnl?: number | null }>>([]);
   let apiError = $state<string | null>(null);
 
@@ -102,6 +107,8 @@
       }),
       // Prop lives in its own journal; a failure here must not blank the rest.
       (() => { const w = win; return api.propOverview(w).then((v) => { if (w === win) propOverview = v; }); })(),
+      api.testingQueue().then((r) => { if (r.status === 200 && r.body) { tq = r.body; tqState = "read"; } else { tq = null; tqState = String(r.status); } })
+        .catch(() => { tq = null; tqState = "error"; }),
       api.workSnapshot().then((v) => { workSnap = v; workSnapError = null; })
         .catch((e) => { workSnapError = e instanceof Error ? e.message : String(e); throw e; }),
       // Glance-card + sparkline data — each degrades to its own empty state.
@@ -162,6 +169,13 @@
     return String(t.id ?? `${t.symbol}-${t.closedAt}`);
   }
 
+  // Expanded closed-trade cards (UI-REDESIGN-2026-11 addendum 2) — several at once.
+  let openClosed = $state<Set<string>>(new Set());
+  function toggleClosed(k: string) {
+    const n = new Set(openClosed);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    openClosed = n;
+  }
   const RECENT_BATCH = 10; // "Show more" fetches the next server batch; // well within the bot's 200-row page cap (trades_closed.py)
 
   let recentClosedRows = $state<ClosedTrade[]>([]);
@@ -288,6 +302,9 @@
     <h2>Overview</h2>
   </div>
 
+  <!-- UI-REDESIGN-2026-11 (1): health bar across the top, money path first. -->
+  <HealthBar />
+
   <div class="controls">
     <label class="days">
       <span>Days back: <b>{days}</b></span>
@@ -353,8 +370,20 @@
         {/if}
       </div>
       <div class="wcard">
-        <div class="wh">🧪 Testing queue · {DASH}</div>
-        <div class="muted small">could not look — no route serves what is running on the ML/training infra yet.</div>
+        <div class="wh">🧪 Testing queue · {tq && tq.read_state !== "could_not_look" && tq.n_running != null ? tq.n_running : DASH}</div>
+        {#if !tq}
+          <div class="muted small">{tqState === "loading" ? "Loading…" : "could not look — the testing-queue route is not deployed on the bot yet."}</div>
+        {:else if tq.read_state === "could_not_look"}
+          <div class="muted small">could not look — {(tq.sources ?? []).map((x: any) => x.detail).filter(Boolean).join("; ") || "no source readable"}</div>
+        {:else}
+          {#each tq.running ?? [] as r (r.id)}
+            <div class="wrow" title={`${r.source ?? ""}${r.started_at ? ` · started ${r.started_at}` : ""}`}><span class="mono wid">{r.title ?? r.id}</span> <span class="muted">{r.infra ?? r.kind ?? DASH}{r.started_at ? ` · ${agoFromIso(r.started_at)}` : ""}</span></div>
+          {:else}
+            <div class="muted small">Nothing running on the ML/training infra.</div>
+          {/each}
+          {#if tq.read_state === "partial"}<div class="muted small">partial: {(tq.sources ?? []).filter((x: any) => x.read_state !== "read").map((x: any) => x.source).join(", ")} could not be read</div>{/if}
+          <div class="muted small">Hugging Face jobs: {tq.hf_jobs?.read_state === "could_not_look" ? "could not look" : (tq.hf_jobs?.read_state ?? DASH)}</div>
+        {/if}
       </div>
     </div>
   </div>
@@ -406,14 +435,19 @@
           </thead>
           <tbody>
             {#each recentClosedRows as t (rowKey(t))}
-              <tr>
-                <td class="sym">{t.symbol}</td>
+              {@const ck = rowKey(t)}
+              <tr class="click" class:openrow={openClosed.has(ck)} onclick={() => toggleClosed(ck)} tabindex="0" role="button" aria-expanded={openClosed.has(ck)}
+                onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleClosed(ck); } }}>
+                <td class="sym">{openClosed.has(ck) ? "▾" : "▸"} {t.symbol}</td>
                 <td class={dirLabel(t) === "SHORT" ? "neg" : "pos"}>{dirLabel(t)}</td>
                 <td class="muted">{t.strategy ?? DASH}</td>
                 <td class="muted">{t.account ?? DASH}</td>
                 <td class="r mono {signClass(t.pnl)}">{money(t.pnl, { sign: true })}</td>
                 <td class="muted">{agoFromIso(t.closedAt)}</td>
               </tr>
+              {#if openClosed.has(ck)}
+                <tr class="cardrow"><td colspan="6"><ClosedTradeCard {t} /></td></tr>
+              {/if}
             {/each}
           </tbody>
         </table>
@@ -438,6 +472,9 @@
 </section>
 
 <style>
+  tr.click { cursor: pointer; }
+  tr.click:hover, tr.openrow { background: var(--panel-2); }
+  tr.cardrow > td { padding: 0; white-space: normal; }
   section {
     display: flex;
     flex-direction: column;

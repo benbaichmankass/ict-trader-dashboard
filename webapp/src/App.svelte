@@ -23,6 +23,8 @@
   import Backtesting from "./routes/Backtesting.svelte";
   import Promotion from "./routes/Promotion.svelte";
   import Runbooks from "./routes/Runbooks.svelte";
+  import WakeSwitches from "./routes/WakeSwitches.svelte";
+  import System from "./routes/System.svelte";
   import FeatureImpact from "./routes/FeatureImpact.svelte";
   import WorkTopics from "./routes/WorkTopics.svelte";
   import SectionLanding from "./components/SectionLanding.svelte";
@@ -116,6 +118,8 @@
     Promotion,
     Runbooks,
     "Feature Impact": FeatureImpact,
+    "Wake Switches": WakeSwitches,
+    System,
   };
 
   // Settings is reachable from the top bar too: on phones the drawer's footer

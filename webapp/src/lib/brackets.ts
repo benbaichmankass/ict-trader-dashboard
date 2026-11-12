@@ -33,3 +33,33 @@ export async function bracketsForPosition(positionId: string, interval: string):
 export async function packageForPosition(positionId: string): Promise<any | null> {
   return (await packageIndex()).get(String(positionId)) ?? null;
 }
+
+/**
+ * The order package a CLOSED trade was opened from. `/order-packages` has no
+ * linked-trade filter, so: the shared recent index first, else one narrow read —
+ * packages for the trade's strategy created from 5 min before it opened — matched
+ * on `linkedTradeId`. null = not found (rendered "no linked order package").
+ */
+export async function packageForClosedTrade(t: { id?: unknown; openedAt?: string | null; strategy?: string | null; pattern?: string | null }): Promise<any | null> {
+  if (t.id == null) return null;
+  const id = String(t.id);
+  const hit = (await packageIndex()).get(id);
+  if (hit) return hit;
+  // ?linked_trade_id= (bot #25231). An older bot ignores the param and returns its
+  // newest rows, so the match on linkedTradeId below still decides — never trusted blind.
+  try {
+    const r: any = await api.orderPackages({ linkedTradeId: id, includePaper: true, limit: 5 });
+    const rows: any[] = Array.isArray(r) ? r : r?.rows ?? [];
+    const m = rows.find((x) => String(x?.linkedTradeId) === id);
+    if (m) return m;
+  } catch { /* fall through to the narrow read */ }
+  const opened = t.openedAt ? Date.parse(t.openedAt) : NaN;
+  if (Number.isNaN(opened)) return null;
+  const r: any = await api.orderPackages({
+    since: new Date(opened - 5 * 60_000).toISOString(),
+    strategy: t.strategy ?? t.pattern ?? undefined,
+    includePaper: true, limit: 50,
+  });
+  const rows: any[] = Array.isArray(r) ? r : r?.rows ?? [];
+  return rows.find((x) => String(x?.linkedTradeId) === id) ?? null;
+}

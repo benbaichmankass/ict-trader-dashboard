@@ -3,6 +3,7 @@
   import { api, type ClosedTrade } from "../lib/api";
   import { sinceFor, WINDOW_OPTIONS, FUNDING_OPTIONS } from "../lib/nav";
   import { accountBooks, bookOfRow, isPaperBook, normalizeFunding, countUnassigned } from "../lib/funding";
+  import ClosedTradeCard from "../components/ClosedTradeCard.svelte";
   import { money, num, pct, signClass, DASH, agoFromIso } from "../lib/format";
   import Segmented from "../components/Segmented.svelte";
 
@@ -15,6 +16,14 @@
   let error = $state<string | null>(null);
   let hasMore = $state(false);
   let lastUpdated = $state<number | null>(null);
+
+  // Expanded closed-trade cards (UI-REDESIGN-2026-11 addendum 2) — several at once.
+  let openClosed = $state<Set<string>>(new Set());
+  function toggleClosed(k: string) {
+    const n = new Set(openClosed);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    openClosed = n;
+  }
 
   function rowKey(t: ClosedTrade): string {
     return String(t.id ?? `${t.symbol}-${t.closedAt}`);
@@ -188,8 +197,10 @@
         </thead>
         <tbody>
           {#each rows as t (rowKey(t))}
-            <tr>
-              <td class="sym">{t.symbol}</td>
+            {@const ck = rowKey(t)}
+            <tr class="click" class:openrow={openClosed.has(ck)} onclick={() => toggleClosed(ck)} tabindex="0" role="button" aria-expanded={openClosed.has(ck)}
+              onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleClosed(ck); } }}>
+              <td class="sym">{openClosed.has(ck) ? "▾" : "▸"} {t.symbol}</td>
               <td class={dirLabel(t) === "SHORT" ? "neg" : "pos"}>{dirLabel(t)}</td>
               <td class="muted">{t.strategy ?? DASH}</td>
               <td class="r mono">{money(t.entryPrice)}</td>
@@ -197,6 +208,9 @@
               <td class="r mono {signClass(t.pnl)}" title={t.pnlProvenance ? `PnL provenance: ${t.pnlProvenance}` : undefined}>{money(t.pnl, { sign: true })}{#if provMark(t)}<sup class="prov">{provMark(t)}</sup>{/if}</td>
               <td class="muted">{agoFromIso(t.closedAt)}</td>
             </tr>
+            {#if openClosed.has(ck)}
+              <tr class="cardrow"><td colspan="7"><ClosedTradeCard {t} /></td></tr>
+            {/if}
           {/each}
         </tbody>
       </table>
@@ -210,6 +224,9 @@
 </section>
 
 <style>
+  tr.click { cursor: pointer; }
+  tr.click:hover, tr.openrow { background: var(--panel-2); }
+  tr.cardrow > td { padding: 0; white-space: normal; }
   section { display: flex; flex-direction: column; gap: 14px; }
   .head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
   h2 { margin: 0; font-size: 18px; }
