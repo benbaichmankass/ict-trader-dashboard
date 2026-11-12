@@ -1,4 +1,5 @@
 <script lang="ts">
+  import DdSwitchControl from "../components/DdSwitchControl.svelte";
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { money, num, agoFromIso, DASH } from "../lib/format";
@@ -67,6 +68,12 @@
     {#if source}<span class="muted src">source: {source}</span>{/if}
   </div>
 
+  <!-- m7: daily drawdown switch per armed account + the once-a-day override. -->
+  <div class="panel ddp">
+    <div class="ddh">Daily drawdown switch</div>
+    <DdSwitchControl />
+  </div>
+
   {#if error}
     <div class="err panel">Couldn't load accounts: <span class="mono">{error}</span></div>
   {:else if loading}
@@ -92,6 +99,8 @@
 </section>
 
 <style>
+  .ddp { padding: 8px 12px 10px; margin-bottom: 12px; }
+  .ddh { font-weight: 600; margin-bottom: 4px; }
   section { display: flex; flex-direction: column; gap: 14px; }
   .head { display: flex; align-items: baseline; justify-content: space-between; }
   h2 { margin: 0; font-size: 18px; }
