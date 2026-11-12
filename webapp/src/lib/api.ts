@@ -508,6 +508,23 @@ export const api = {
   insight: (endpoint: string, signal?: AbortSignal) => get<any>(`/api/bot/insights/${endpoint}`, signal),
   roadmap: (signal?: AbortSignal) => get<any>("/api/bot/roadmap", signal),
   work: (signal?: AbortSignal) => get<any>("/api/bot/work", signal),
+  // The work store's item list (WSD-S1, ungated read). Filters are the route's own:
+  // state, due (the due_now view), since (ISO), kind, limit<=1000, offset. NOTE:
+  // `total` is the WHOLE store's count (count_items()), not the filtered count, and
+  // there is no next_offset — a full page is the only "maybe more" signal.
+  workItems: (
+    q: { state?: string; due?: boolean; since?: string; kind?: string; limit?: number; offset?: number } = {},
+    signal?: AbortSignal,
+  ) => {
+    const u = new URLSearchParams();
+    if (q.state) u.set("state", q.state);
+    if (q.due) u.set("due", "1");
+    if (q.since) u.set("since", q.since);
+    if (q.kind) u.set("kind", q.kind);
+    u.set("limit", String(q.limit ?? 50));
+    u.set("offset", String(q.offset ?? 0));
+    return get<any>(`/api/bot/work/items?${u.toString()}`, signal);
+  },
 
   // The manager checklist, graded by the bot. ⚠️ `status.value` and
   // `status.basis` arrive ALREADY RECONCILED — the file carries two competing
