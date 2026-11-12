@@ -522,6 +522,15 @@ export const api = {
   // roll-up of every work row, and pipeline items with kind:"insight".
   workTopics: (signal?: AbortSignal) => get<any>("/api/bot/work/topics", signal),
   workLedger: (signal?: AbortSignal) => get<any>("/api/bot/work/ledger", signal),
+  // The alerts ledger (ungated read). `since` keeps the payload small — the
+  // whole 500-row default window is ~330 KB.
+  alerts: (opts: { since?: string; kind?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams();
+    if (opts.since) q.set("since", opts.since);
+    if (opts.kind) q.set("kind", opts.kind);
+    q.set("limit", String(opts.limit ?? 200));
+    return get<any>(`/api/bot/alerts?${q.toString()}`, signal);
+  },
 
   // The work schedule (A9) — cadenced sessions (the daily sync, the three
   // project-level reviews) · decisions owed · monitoring coming due · cron
