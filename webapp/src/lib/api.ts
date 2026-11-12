@@ -539,10 +539,6 @@ export const api = {
 
   // Admin — health / logs / data explorer.
   healthServices: (signal?: AbortSignal) => get<any>("/api/bot/health/services", signal),
-  // The committed daily strategy-review record (M7). `date` = a committed UTC date
-  // from `available_dates` (default newest). Ungated.
-  strategyReviews: (date?: string, signal?: AbortSignal) =>
-    get<any>(`/api/bot/strategy-reviews${date ? `?date=${encodeURIComponent(date)}` : ""}`, signal),
   healthLatest: (signal?: AbortSignal) => get<any>("/api/bot/health/latest", signal),
   // Prop manual-bridge phone app's recent step runs (ungated) — the health bar reads
   // the newest run's `last_at` as the phone's last-seen time.
