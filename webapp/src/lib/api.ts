@@ -183,6 +183,12 @@ async function getRaw(path: string, signal?: AbortSignal): Promise<Response> {
   return res;
 }
 
+/** GET that returns { status, body } for every non-auth status instead of throwing (401/403 still go to the sign-in flow). */
+async function statusGet(path: string, signal?: AbortSignal): Promise<{ status: number; body: any }> {
+  const res = await rawFetch(path, { signal });
+  return { status: res.status, body: await res.json().catch(() => null) };
+}
+
 async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   return (await getRaw(path, signal)).json() as Promise<T>;
 }
@@ -472,9 +478,11 @@ export const api = {
   pnlHistory: (days = 30, signal?: AbortSignal) =>
     get<Array<{ date?: string; pnl?: number | null }>>(`/api/pnl/history?days=${days}`, signal),
   signals: (signal?: AbortSignal) => get<any>("/api/bot/signals", signal),
-  orderPackages: (opts: { since?: string; includePaper?: boolean; limit?: number } = {}, signal?: AbortSignal) => {
+  orderPackages: (opts: { since?: string; strategy?: string; linkedTradeId?: string; includePaper?: boolean; limit?: number } = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams();
+    if (opts.linkedTradeId) q.set("linked_trade_id", opts.linkedTradeId);
     if (opts.since) q.set("since", opts.since);
+    if (opts.strategy) q.set("strategy", opts.strategy);
     if (opts.includePaper) q.set("include_paper", "true");
     q.set("limit", String(opts.limit ?? 100));
     return get<any>(`/api/bot/order-packages?${q.toString()}`, signal);
@@ -538,7 +546,27 @@ export const api = {
 
   // Admin — health / logs / data explorer.
   healthServices: (signal?: AbortSignal) => get<any>("/api/bot/health/services", signal),
+  // ── Backend routes from JTA-Trader #25216 / #25231 (held at the time of writing).
+  // Each returns { status, body } and does NOT throw on 404/4xx, so a page can say
+  // "not available yet" / "could not look" instead of inventing a state.
+  // Closed trade's STORED chart snapshot (built once at close; read_state measured |
+  // partial | not_built; snapshot null when not built; 404 while the trade is open).
+  tradeSnapshot: (tradeId: string | number) => statusGet(`/api/bot/trades/${encodeURIComponent(String(tradeId))}/snapshot`),
+  propTradeSnapshot: (fillId: string | number) => statusGet(`/api/bot/prop-trades/${encodeURIComponent(String(fillId))}/snapshot`),
+  // Open trade's markers: entry, entry_signal, brackets, decisions (LTR reviews).
+  tradeMarkers: (tradeId: string | number, interval = "1h") =>
+    statusGet(`/api/bot/trades/${encodeURIComponent(String(tradeId))}/markers?interval=${encodeURIComponent(interval)}`),
+  propTradeMarkers: (fillId: string | number, interval = "1h") =>
+    statusGet(`/api/bot/prop-trades/${encodeURIComponent(String(fillId))}/markers?interval=${encodeURIComponent(interval)}`),
+  // Infra health: components trader_vm, ib_gateway, phone_app, trainer_vm, kaggle,
+  // hugging_face; state ok | degraded | down | could_not_look.
+  healthInfra: () => statusGet("/api/bot/health/infra"),
+  // Work "testing queue": { read_state, n_running (nullable), running[], sources[], hf_jobs }.
+  testingQueue: () => statusGet("/api/bot/work/testing-queue"),
   healthLatest: (signal?: AbortSignal) => get<any>("/api/bot/health/latest", signal),
+  // Prop manual-bridge phone app's recent step runs (ungated) — the health bar reads
+  // the newest run's `last_at` as the phone's last-seen time.
+  phoneSteps: (signal?: AbortSignal) => get<any>("/api/bot/prop/phone_steps", signal),
   notifications: (signal?: AbortSignal) => get<any>("/api/bot/notifications", signal),
   logs: (opts: { limit?: number; level?: string } = {}, signal?: AbortSignal) => {
     const q = new URLSearchParams();
