@@ -327,6 +327,23 @@ export const api = {
     return get<PnlSeries>(`/api/bot/performance/pnl-series?${q.toString()}`, signal);
   },
 
+  // FEATURE-IMPACT-MAP (bot #24926). measure: gain_share | split_share; by:
+  // asset_class | ml_type | stage — the bot answers 400 for anything else.
+  featureImpactHeatmap: (by = "asset_class", measure = "gain_share", signal?: AbortSignal) =>
+    get<any>(`/api/bot/feature-impact/heatmap?by=${encodeURIComponent(by)}&measure=${encodeURIComponent(measure)}`, signal),
+  featureImpactDetail: (
+    opts: { family?: string; assetClass?: string; stage?: string; measure?: string } = {},
+    signal?: AbortSignal,
+  ) => {
+    const q = new URLSearchParams();
+    if (opts.family) q.set("family", opts.family);
+    if (opts.assetClass) q.set("asset_class", opts.assetClass);
+    if (opts.stage) q.set("stage", opts.stage);
+    q.set("measure", opts.measure ?? "gain_share");
+    return get<any>(`/api/bot/feature-impact/detail?${q.toString()}`, signal);
+  },
+  featureImpactInvest: (signal?: AbortSignal) => get<any>("/api/bot/feature-impact/invest", signal),
+
   // Trade approvals (TRADE-ACTION-DIRECT-PATH phase 1b, bot #25046) — both
   // routes are behind `require_session`; a 401 surfaces the sign-in form.
   tradeApprovals: (signal?: AbortSignal) =>

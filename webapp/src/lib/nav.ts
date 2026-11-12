@@ -18,7 +18,7 @@ import { writable } from "svelte/store";
 export const SECTIONS: Record<string, string[]> = {
   Overview: [],
   Performance: ["Performance"],
-  "Strategies & Models": ["Models", "Strategies", "Signals Catalog", "Order Packages", "Signals", "Backtesting", "News"],
+  "Strategies & Models": ["Models", "Strategies", "Feature Impact", "Signals Catalog", "Order Packages", "Signals", "Backtesting", "News"],
   Accounts: ["Accounts", "Prop"],
   // Activity removed (operator 2026-11-09): Order Packages + Signals moved to Strategies & Models,
   // the closed-trade log (Trades) renders at the bottom of the Performance page.
@@ -41,6 +41,7 @@ export const PAGE_DESC: Record<string, string> = {
   Strategies: "Live-runtime per-strategy status, routing, P&L curve, review packet.",
   Models: "ML fleet — per-model stage, training metric, drift.",
   "Signals Catalog": "Every signal family the system can emit — inputs, owner strategy, status. Placeholder: the catalog is not built yet (UI-UPGRADE-1 item 8).",
+  "Feature Impact": "Which feature families each ML leans on, by asset class / ML type / stage — drill into features. Model-internal importance share, not edge.",
   "GPU Spend": "Spot-GPU training cost — per-session + monthly total vs the $10 cap.",
   "Exit Ladder": "ExitPlan laddered-vs-single-target soak (observe-only).",
   Backtesting: "Trainer-VM sweeps + on-demand /test runs.",
@@ -84,6 +85,7 @@ export const IMPLEMENTED_PAGES = new Set<string>([
   "Backtesting",
   "Promotion",
   "Runbooks",
+  "Feature Impact",
 ]);
 
 // Insights / Exit Ladder / Promotion / Positions are no longer in SECTIONS
