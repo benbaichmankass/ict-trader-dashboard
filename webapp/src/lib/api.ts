@@ -8,6 +8,7 @@ import { getBotApiUrl } from "./config";
 import { authHeaders, handleUnauthorized } from "./auth";
 import type { DbOverview } from "./dbOverview";
 import { buildCatalogQuery, type CatalogQuery, type CatalogResponse, type CatalogDetail } from "./catalog";
+import { buildGatesQuery, type GateFilters, type GatesResponse, type GateDetailResponse } from "./gates";
 
 /**
  * A read the bot refused for want of a session. Thrown instead of the generic
@@ -169,6 +170,41 @@ async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   return (await getRaw(path, signal)).json() as Promise<T>;
 }
 
+/** The bot's raw answer to a write: status + parsed JSON (or null) + raw text. Never thrown on a 4xx/5xx. */
+export interface PostResult {
+  ok: boolean;
+  status: number;
+  body: unknown;
+  text: string;
+}
+
+// The SPA's one authenticated WRITE path to /api/bot/*. Same bearer as `getRaw`
+// (`authHeaders()` — the device session, else the password JWT), so a route
+// gated by `require_session` sees exactly the session the reads carry.
+//
+// Unlike `get`, it does NOT throw on a non-2xx: a write's refusal is an answer
+// the operator must see verbatim (the gate registry shows the server's
+// `detail` next to the row). A 401/403 still drops the dead session and puts
+// the sign-in form up, as for reads. Only a network failure throws.
+async function post(path: string, body: unknown, signal?: AbortSignal): Promise<PostResult> {
+  const url = `${getBotApiUrl()}${path}`;
+  const res = await fetch(url, {
+    method: "POST",
+    signal,
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401 || res.status === 403) handleUnauthorized(res.status, path);
+  const text = await res.text().catch(() => "");
+  let parsed: unknown = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = null;
+  }
+  return { ok: res.ok, status: res.status, body: parsed, text };
+}
+
 function normalizeClosedTrade(r: ClosedTrade): ClosedTrade {
   // Normalise the bot's field names so every consumer reads pnl/strategy: the
   // endpoint returns `realizedPnl` (not `pnl`) and carries the strategy in
@@ -326,6 +362,17 @@ export const api = {
     get<CatalogResponse>(`/api/bot/research/catalog?${buildCatalogQuery(q)}`, signal),
   researchUnit: (id: string, signal?: AbortSignal) =>
     get<CatalogDetail>(`/api/bot/research/catalog/${encodeURIComponent(id)}`, signal),
+
+  // Admin → Gates: the gate registry (operator ask 2026-11-12). Reads go
+  // through `get` like every other route; the decision is the one write.
+  gates: (f: GateFilters = {}, signal?: AbortSignal) => {
+    const q = buildGatesQuery(f);
+    return get<GatesResponse>(`/api/bot/gates${q ? `?${q}` : ""}`, signal);
+  },
+  gate: (id: string, signal?: AbortSignal) =>
+    get<GateDetailResponse>(`/api/bot/gates/${encodeURIComponent(id)}`, signal),
+  gateDecision: (id: string, decision: string, note: string, signal?: AbortSignal) =>
+    post(`/api/bot/gates/${encodeURIComponent(id)}/decision`, { decision, note }, signal),
 
   // Strategies & Models.
   gpuSpend: (signal?: AbortSignal) => get<any>("/api/bot/gpu/spend", signal),

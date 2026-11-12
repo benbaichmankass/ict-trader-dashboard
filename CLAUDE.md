@@ -9,6 +9,11 @@
 > the **Learning** tab POSTs to `/api/bot/learning/progress` to mark a curriculum
 > resource done — likewise a pure observability write (no order path, no live
 > state). These two are the only writes the dashboard makes.
+> **Third write (2026-11-12):** **Admin → Gates** POSTs an operator decision
+> (keep / remove / report_only / undecided + note) to
+> `/api/bot/gates/{id}/decision` with the operator session, via `api.ts::post`
+> (same `authHeaders()` bearer as reads). A gate-registry decision record — it
+> places/modifies no order.
 
 ## Operating rules live in the bot repo
 

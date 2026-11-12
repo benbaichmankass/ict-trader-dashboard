@@ -287,7 +287,9 @@ export function authHeaders(extra?: Record<string, string>): Record<string, stri
  * DOES have other bearer schemes that 401 — the diag token (`routers/diag.py`),
  * and the write tokens on `routers/prop.py` / `work.py` / `devices.py` — but
  * `api.ts` calls none of those routes (they are POST/write paths; the SPA is
- * read-only apart from routes it does not call). If a SPA route ever starts
+ * read-only apart from routes it does not call). The one bot write `api.ts`
+ * does make — `POST /api/bot/gates/{id}/decision` (2026-11-12) — is gated by
+ * the same operator session, so the assumption still holds for it. If a SPA route ever starts
  * calling a differently-gated endpoint, a 401 from it would wrongly clear the
  * session here, and this function needs to discriminate by path.
  */

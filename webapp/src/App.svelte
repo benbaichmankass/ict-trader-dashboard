@@ -23,6 +23,7 @@
   import Backtesting from "./routes/Backtesting.svelte";
   import Promotion from "./routes/Promotion.svelte";
   import Runbooks from "./routes/Runbooks.svelte";
+  import Gates from "./routes/Gates.svelte";
   import SectionLanding from "./components/SectionLanding.svelte";
   import Placeholder from "./components/Placeholder.svelte";
   import LoginPanel from "./components/LoginPanel.svelte";
@@ -112,6 +113,7 @@
     Backtesting,
     Promotion,
     Runbooks,
+    Gates,
   };
 
   // Settings is reachable from the top bar too: on phones the drawer's footer
