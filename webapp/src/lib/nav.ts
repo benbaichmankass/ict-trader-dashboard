@@ -40,7 +40,7 @@ export const PAGE_DESC: Record<string, string> = {
   Reports: "Consolidated /system-report executive reports (health + trading + ML).",
   Strategies: "Live-runtime per-strategy status, routing, P&L curve, review packet.",
   Models: "ML fleet — per-model stage, training metric, drift.",
-  "Signals Catalog": "Every signal family the system can emit — inputs, owner strategy, status. Placeholder: the catalog is not built yet (UI-UPGRADE-1 item 8).",
+  "Signals Catalog": "Every input the system reads — family, kind, timeframe, which strategies and models consume it, health and freshness.",
   "Feature Impact": "Which feature families each ML leans on, by asset class / ML type / stage — drill into features. Model-internal importance share, not edge.",
   "GPU Spend": "Spot-GPU training cost — per-session + monthly total vs the $10 cap.",
   "Exit Ladder": "ExitPlan laddered-vs-single-target soak (observe-only).",
@@ -86,6 +86,7 @@ export const IMPLEMENTED_PAGES = new Set<string>([
   "Promotion",
   "Runbooks",
   "Feature Impact",
+  "Signals Catalog",
 ]);
 
 // Insights / Exit Ladder / Promotion / Positions are no longer in SECTIONS

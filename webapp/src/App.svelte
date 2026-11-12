@@ -24,6 +24,7 @@
   import Promotion from "./routes/Promotion.svelte";
   import Runbooks from "./routes/Runbooks.svelte";
   import FeatureImpact from "./routes/FeatureImpact.svelte";
+  import SignalsCatalog from "./routes/SignalsCatalog.svelte";
   import WorkTopics from "./routes/WorkTopics.svelte";
   import SectionLanding from "./components/SectionLanding.svelte";
   import Placeholder from "./components/Placeholder.svelte";
@@ -116,6 +117,7 @@
     Promotion,
     Runbooks,
     "Feature Impact": FeatureImpact,
+    "Signals Catalog": SignalsCatalog,
   };
 
   // Settings is reachable from the top bar too: on phones the drawer's footer

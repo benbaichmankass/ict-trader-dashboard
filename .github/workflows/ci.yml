@@ -229,6 +229,22 @@ jobs:
       - name: Catalog reads must exist in the real response
         run: node webapp/tests/catalog-contract.mjs
 
+  webapp-signals-catalog:
+    # Signals Catalog tab (bot #25199): every field the route reads must exist in
+    # a REAL captured /api/bot/signals/catalog response, and the render helpers
+    # must map null to an em-dash (never 0 / "unknown"). --self-test plants bogus reads.
+    name: webapp-signals-catalog
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Prove the checker can fail
+        run: node webapp/tests/signals-catalog.mjs --self-test
+      - name: Catalog reads must exist in the real response
+        run: node webapp/tests/signals-catalog.mjs
+
   webapp-explorer-views:
     # Data Explorer Trades/Signals/Order-packages tabs + the DB-health overview:
     # every declared column/facet key must exist in REAL captured rows, and the

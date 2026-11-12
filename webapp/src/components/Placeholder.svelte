@@ -7,11 +7,7 @@
   <h2>{page}</h2>
   <div class="panel pad">
     <p>{PAGE_DESC[page] ?? ""}</p>
-    {#if page === "Signals Catalog"}
-      <p class="muted">Not built yet — a placeholder so the catalog has a home (UI-UPGRADE-1).</p>
-    {:else}
-      <p class="muted">This screen is being ported from the Streamlit dashboard — coming soon.</p>
-    {/if}
+    <p class="muted">This screen is being ported from the Streamlit dashboard — coming soon.</p>
   </div>
 </section>
 

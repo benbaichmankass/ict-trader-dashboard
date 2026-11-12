@@ -7,6 +7,7 @@
 import { getBotApiUrl } from "./config";
 import { authHeaders, handleUnauthorized } from "./auth";
 import type { DbOverview } from "./dbOverview";
+import { buildSignalsCatalogQuery, type SignalsCatalogQuery } from "./signalsCatalog";
 import { buildCatalogQuery, type CatalogQuery, type CatalogResponse, type CatalogDetail } from "./catalog";
 
 /**
@@ -394,6 +395,12 @@ export const api = {
     return get<any>(`/api/bot/feature-impact/detail?${q.toString()}`, signal);
   },
   featureImpactInvest: (signal?: AbortSignal) => get<any>("/api/bot/feature-impact/invest", signal),
+
+  // SIGNALS-CATALOG (bot #25199, UI-UPGRADE-1 item 8). Filters are server-side:
+  // limit/offset/family/kind/q/consumer(any|with|without). Uncached ~2-3 s.
+  // Returns the raw Response so the route can show the HTTP status on a non-200.
+  signalsCatalog: (o: SignalsCatalogQuery = {}, signal?: AbortSignal) =>
+    rawFetch(`/api/bot/signals/catalog?${buildSignalsCatalogQuery(o)}`, { signal }),
 
   // Trade approvals (TRADE-ACTION-DIRECT-PATH phase 1b, bot #25046) — both
   // routes are behind `require_session`; a 401 surfaces the sign-in form.
