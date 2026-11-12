@@ -55,7 +55,7 @@
           </div>
           {#if r.top_items && r.top_items.length}
             <div class="items">
-              {#each r.top_items as it (it.url ?? it.headline)}
+              {#each r.top_items as it, j (`${j}:${it.url ?? it.headline}`)}
                 <a class="hl" href={it.url} target="_blank" rel="noopener noreferrer">{it.headline}</a>
               {/each}
             </div>
