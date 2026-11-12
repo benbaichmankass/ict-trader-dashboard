@@ -235,7 +235,98 @@ export interface TradeApprovalDecision {
   reply?: string | null;
 }
 
+/** One row of `GET /api/bot/performance/categories` (bot `src/runtime/perf_category.py::category_metrics`). */
+export interface PerfCategoryRow {
+  category: string; // live | prop | paper_portfolio | paper_testing
+  accounts?: string[] | null;
+  read_state?: string | null;
+  n_closed?: number | null;
+  net_pnl_usd?: number | null;
+  measured_usd?: number | null;
+  n_measured?: number | null;
+  not_measured_usd?: number | null;
+  n_not_measured?: number | null;
+  win_rate?: number | null; // fraction 0..1
+  n_priced?: number | null;
+  avg_realised_r?: number | null;
+  n_r_graded?: number | null;
+  r_insufficient_n?: boolean | null;
+  profit_factor?: number | null;
+  avg_hold_days?: number | null;
+  n_no_hold?: number | null;
+  return_on_time_in_trade_bps_per_notional_day?: number | null;
+  return_on_time_in_trade_all_rows_bps_per_notional_day?: number | null;
+  capital_utilisation?: number | null;
+  capital_utilisation_read_state?: string | null;
+  max_drawdown_usd?: number | null;
+  fees_usd?: number | null;
+  n_fees?: number | null;
+  funding_usd?: number | null;
+  n_funding?: number | null;
+  n_excluded_null_pnl?: number | null;
+}
+
+export interface PerfCategories {
+  as_of?: string | null;
+  window?: string | null;
+  read_state?: string | null;
+  categories?: PerfCategoryRow[];
+  excluded?: Array<{ account_id?: string; reason?: string }>;
+  population?: {
+    window?: string;
+    since?: string | null;
+    n_closed?: number | null;
+    rows_excluded_null_pnl?: number | null;
+    also_excluded?: string | null;
+  } | null;
+}
+
+export interface PnlPoint {
+  date: string; // YYYY-MM-DD (utc_day bucket) or an ISO instant (trade bucket, window=7d)
+  pnl_usd?: number | null;
+  n?: number | null;
+  cum_pnl_usd?: number | null;
+  cum_pnl_all_rows_usd?: number | null;
+  cum_pct?: number | null; // PERCENT units (cum / start capital * 100); null = no capital record
+  cum_pct_all_rows?: number | null;
+}
+
+export interface PnlSeries {
+  as_of?: string | null;
+  window?: string | null;
+  read_state?: string | null;
+  measured_only?: boolean | null;
+  bucket?: string | null;
+  series?: Array<{
+    category: string;
+    start_capital_usd?: number | null;
+    capital_read_state?: string | null;
+    n_rows?: number | null;
+    read_state?: string | null;
+    points?: PnlPoint[];
+  }>;
+  population?: { window?: string; since?: string | null; n_rows?: number | null; filters?: Record<string, string | null> } | null;
+}
+
 export const api = {
+  // PERF-PAGE-CATEGORY-TABLE / PERF-PAGE-PNL-CHART (bot #24893). Windows are
+  // 7d|30d|90d|all — the bot answers 400 for anything else (24h included).
+  perfCategories: (window = "30d", signal?: AbortSignal) =>
+    get<PerfCategories>(`/api/bot/performance/categories?window=${encodeURIComponent(window)}`, signal),
+  pnlSeries: (
+    opts: { window?: string; category?: string[]; strategy?: string; symbol?: string; assetClass?: string; measuredOnly?: boolean } = {},
+    signal?: AbortSignal,
+  ) => {
+    const q = new URLSearchParams();
+    q.set("window", opts.window ?? "30d");
+    if (opts.category && opts.category.length) q.set("category", opts.category.join(","));
+    if (opts.strategy) q.set("strategy", opts.strategy);
+    if (opts.symbol) q.set("symbol", opts.symbol);
+    if (opts.assetClass) q.set("asset_class", opts.assetClass);
+    q.set("measured_only", String(opts.measuredOnly ?? true));
+    return get<PnlSeries>(`/api/bot/performance/pnl-series?${q.toString()}`, signal);
+  },
+
   // Trade approvals (TRADE-ACTION-DIRECT-PATH phase 1b, bot #25046) — both
   // routes are behind `require_session`; a 401 surfaces the sign-in form.
   tradeApprovals: (signal?: AbortSignal) =>

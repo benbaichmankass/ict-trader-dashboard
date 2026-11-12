@@ -6,6 +6,7 @@
   import Segmented from "../components/Segmented.svelte";
   import EquityChart from "../components/EquityChart.svelte";
   import Trades from "./Trades.svelte";
+  import CategoryPerformance from "../components/CategoryPerformance.svelte";
 
   let win = $state("30d");
   let perf = $state<Performance | null>(null);
@@ -114,6 +115,8 @@
       </div>
     {/if}
   {/if}
+  <!-- Per-category table + cumulative P&L (UI workplan §4/§5). Own 7d/30d/90d/All axis: the routes 400 on 24h. -->
+  <CategoryPerformance />
   <!-- The closed-trade log lives at the bottom of Performance (operator 2026-11-09; Activity tab retired). -->
   <div class="tradelog"><Trades /></div>
 </section>
