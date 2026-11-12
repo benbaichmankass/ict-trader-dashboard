@@ -23,6 +23,11 @@
   import { hasAnyToken, requestLogin, session } from "../lib/auth";
   import { DASH } from "../lib/format";
 
+  // `embedded`: rendered inside the Overview "Waiting on me" card (UI-REDESIGN-2026-11
+  // addendum 1) — no panel chrome, and trade asks are RED so a real-money decision is
+  // never confused with a housekeeping ask. `pendingCount` is bound out for the card title.
+  let { embedded = false, pendingCount = $bindable(0) }: { embedded?: boolean; pendingCount?: number } = $props();
+
   let asks = $state<TradeApprovalAsk[] | null>(null);
   let error = $state<string | null>(null);
   let signedIn = $state(hasAnyToken());
@@ -35,6 +40,7 @@
   const expired = (a: TradeApprovalAsk) => !!a.expires_at && Date.parse(a.expires_at) <= now;
   const pending = $derived((asks ?? []).filter((a) => a.state === "pending"));
   const decided = $derived((asks ?? []).filter((a) => a.state !== "pending").slice(0, 10));
+  $effect(() => { pendingCount = pending.length; });
 
   function fmtLevel(v: number | null | undefined): string {
     return v == null || Number.isNaN(v) ? DASH : String(v);
@@ -124,10 +130,12 @@
   });
 </script>
 
-<div class="panel ta" class:hot={pending.length > 0}>
-  <div class="ph">
-    <span>🔔 Trade approvals{asks ? ` · ${pending.length} waiting` : ""}</span>
-  </div>
+<div class="ta" class:panel={!embedded} class:embedded class:hot={pending.length > 0}>
+  {#if !embedded}
+    <div class="ph">
+      <span>🔔 Trade approvals{asks ? ` · ${pending.length} waiting` : ""}</span>
+    </div>
+  {/if}
 
   {#if !signedIn}
     <div class="pad muted small">
@@ -142,8 +150,9 @@
     {#if error}<div class="pad err small">Last refresh failed: <span class="mono">{error}</span></div>{/if}
     {#each pending as a (a.token)}
       {#if isTradeAsk(a)}
-        <div class="ask">
+        <div class="ask money">
           <div class="top">
+            <span class="tag">💰 TRADE DECISION</span>
             <b>{a.symbol ?? DASH}</b>
             <span class="muted">{a.leg ?? DASH}</span>
             <span class="cd mono" class:late={expired(a)}>{countdown(a.expires_at)}</span>
@@ -181,7 +190,7 @@
         </div>
       {/if}
     {:else}
-      <div class="pad muted small">Nothing waiting on you.</div>
+      <div class="pad muted small">No trade decisions waiting on you.</div>
     {/each}
 
     {#each Object.entries(results).filter(([t]) => !pending.some((a) => a.token === t)) as [t, r] (t)}
@@ -224,6 +233,11 @@
   .warn { color: #d4a017; }
   .ask { padding: 10px 12px; border-bottom: 1px solid var(--border); display: grid; gap: 6px; }
   .ask.other { opacity: 0.85; }
+  /* Real-money decisions are RED (addendum 1): never mistaken for a housekeeping ask. */
+  .ask.money { border: 2px solid var(--neg); border-radius: 8px; background: color-mix(in srgb, var(--neg) 8%, transparent); margin: 6px 0; }
+  .tag { background: var(--neg); color: #fff; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; letter-spacing: 0.03em; }
+  .embedded .pad { padding: 4px 0; }
+  .embedded .link { padding: 6px 0; }
   .top { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
   .cd { margin-left: auto; color: var(--muted); }
   .cd.late { color: var(--neg); }

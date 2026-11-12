@@ -12,17 +12,22 @@
     type UTCTimestamp,
     type Time,
   } from "lightweight-charts";
-  import type { Candle, Position, ClosedTrade, BracketHistory } from "../lib/api";
+  import type { Candle, Position, ClosedTrade, BracketHistory, TradeDecision } from "../lib/api";
 
   // Candles + trade context overlaid the way Streamlit's monitor does it:
   // live-position entry/SL/TP price-lines, buy/sell signal markers, and
   // closed-trade exit markers — all scoped to the charted symbol upstream.
   let {
-    candles = [], positions = [], signals = [], closedTrades = [], brackets = null,
+    candles = [], positions = [], signals = [], closedTrades = [], brackets = null, decisions = [],
     height = 320,
   }: {
     candles?: Candle[]; positions?: Position[]; signals?: any[];
-    closedTrades?: ClosedTrade[]; brackets?: BracketHistory | null; height?: number;
+    closedTrades?: ClosedTrade[]; brackets?: BracketHistory | null;
+    // UI-REDESIGN-2026-11 addendum 5: one marker per LTR review / Claude decision at
+    // the bar it was made. Hook only — the per-trade read route is being built
+    // bot-side (lane CLOSED-TRADE-SNAPSHOT); empty → nothing drawn, never invented.
+    decisions?: TradeDecision[];
+    height?: number;
   } = $props();
 
   let el: HTMLDivElement;
@@ -243,6 +248,21 @@
         color: "#d4a017",
         shape: u.kind === "tp" ? "square" : up ? "arrowUp" : "arrowDown",
         text: `${String(u.kind).toUpperCase()} ${fmt(u.from)}→${fmt(u.to)}`,
+      });
+    }
+
+    // LTR / Claude decisions: ◆ at the bar; colour by disposition
+    // (applied = blue, advice-only = amber, refused = red, unknown = grey).
+    for (const d of decisions) {
+      const sec = toSec(d.reviewed_at ?? d.at);
+      if (sec == null) continue;
+      const t = snap(sec, times);
+      if (t == null) continue;
+      const disp = String(d.disposition ?? "").toLowerCase();
+      const color = disp === "applied" ? "#4c8dff" : disp.startsWith("advice") ? "#d4a017" : disp === "refused" ? "#e5484d" : "#8b93a3";
+      marks.push({
+        time: t as UTCTimestamp, position: "aboveBar", color, shape: "square",
+        text: `LTR ${d.action ?? "—"}${disp ? ` · ${disp.replace("_", "-")}` : ""}`,
       });
     }
 

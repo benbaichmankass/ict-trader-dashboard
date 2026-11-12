@@ -227,6 +227,19 @@ export interface TradeApprovalAsk {
   summary?: string | null;
 }
 
+/**
+ * One LTR review / Claude decision on a trade, for chart markers (UI-REDESIGN-2026-11
+ * addendum 5). PROVISIONAL shape asked of the bot (source: comms/live_review/
+ * reviews.jsonl + live-review/rows + directed_actions receipts); no route serves it yet.
+ */
+export interface TradeDecision {
+  review_id?: string | null;
+  reviewed_at?: string | null; // ISO; `at` accepted as an alias
+  at?: string | null;
+  action?: string | null; // hold | tighten | partial_close | close | move_tp | …
+  disposition?: string | null; // applied | advice_only | refused
+}
+
 /** `POST /api/bot/trade-approvals/{token}` answer (`trade_approvals.decide`). */
 export interface TradeApprovalDecision {
   outcome?: string | null; // approved | rejected | unknown | expired | already_<state> | refused | error
