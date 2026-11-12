@@ -237,6 +237,7 @@ function runOverTree() {
   let checked = 0;
   const findings = [];
   const sockets = [];
+  const eventSources = [];
   for (const full of files) {
     const relPath = posix(relative(SRC, full));
     const src = readFileSync(full, "utf8");
@@ -245,8 +246,9 @@ function runOverTree() {
     findings.push(...graded.findings);
     const { masked } = scan(src);
     if (/new\s+WebSocket\s*\(/.test(masked)) sockets.push(relPath);
+    if (/new\s+EventSource\s*\(/.test(masked)) eventSources.push(relPath);
   }
-  return { files: files.length, checked, findings, sockets };
+  return { files: files.length, checked, findings, sockets, eventSources };
 }
 
 // ---------------------------------------------------------------------------
@@ -338,7 +340,7 @@ function selfTest() {
 if (process.argv.includes("--self-test")) {
   selfTest();
 } else {
-  const { files, checked, findings, sockets } = runOverTree();
+  const { files, checked, findings, sockets, eventSources } = runOverTree();
 
   // A checker that reports success over an empty population has measured
   // nothing. If there is no fetch under webapp/src at all, something moved and
@@ -358,6 +360,15 @@ if (process.argv.includes("--self-test")) {
         `DELIBERATELY NOT CHECKED: /ws/market is ungated today and a browser WebSocket cannot ` +
         `send an Authorization header. If the read gate widens to the socket, this needs a ` +
         `query-param or subprotocol scheme — a separate piece of work, not a header.`,
+    );
+  }
+
+  if (eventSources.length) {
+    console.log(
+      `auth-bearer: note — ${eventSources.length} file(s) open an EventSource (${eventSources.join(", ")}). ` +
+        `DELIBERATELY NOT CHECKED: a browser EventSource cannot send an Authorization header; ` +
+        `/api/bot/stream takes a single-use ?ticket= from POST /api/auth/ws-ticket instead ` +
+        `(lib/session.ts::streamTicket), minted fresh on every reconnect.`,
     );
   }
 

@@ -8,6 +8,7 @@
   import ExecSummary from "../components/ExecSummary.svelte";
   import EquityChart from "../components/EquityChart.svelte";
   import TradeApprovals from "../components/TradeApprovals.svelte";
+  import { acquireStream, onStreamFrame, streamStatus, isStreamLive } from "../lib/stream";
   import HealthBar from "../components/HealthBar.svelte";
 
   // One funding toggle per tab — four books, never blended: Live money · Prop ·
@@ -69,6 +70,18 @@
   });
 
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  // T2 (UI-TRADING-PUSH): positions follow the bot's push stream. positionsAt = when the
+  // REST /positions snapshot (incl. broker uPnL) was last read, shown on the page so a
+  // pushed view never looks fresher than it is.
+  let positionsAt = $state<number | null>(null);
+  let posTimer: ReturnType<typeof setTimeout> | null = null;
+  function refreshPositionsSoon() {
+    if (posTimer) return;
+    posTimer = setTimeout(() => {
+      posTimer = null;
+      api.positions().then((v) => { positions = v; positionsAt = Date.now(); }).catch(() => {});
+    }, 400);
+  }
   let refreshing = $state(false);
   let lastUpdated = $state<number | null>(null);
 
@@ -92,8 +105,9 @@
     const slices: Array<Promise<unknown>> = [
       api.stats().then((v) => { stats = v; }),
       (() => { const w = win; return api.performance(w).then((v) => { if (w === win) perf = v; }); })(),
-      // REST is authoritative for the row SET — the WS only refreshes uPnL below
-      api.positions().then((v) => { positions = v; }),
+      // T2: while the push stream is live, /positions is re-read ONLY on its frames
+      // (see onStreamFrame below) — this poll reads it only as the labelled fallback.
+      isStreamLive() ? Promise.resolve() : api.positions().then((v) => { positions = v; positionsAt = Date.now(); }),
       api.balances().then((v) => { balances = v; }),
       api.config().then((v) => { config = v; }),
       api.strategies().then((v) => { strategies = v; }),
@@ -278,7 +292,20 @@
     }).catch(() => { if (w === win) testingPerf = null; });
   });
 
+  let releaseStream: (() => void) | null = null;
+  let offFrames: (() => void) | null = null;
   onMount(() => {
+    releaseStream = acquireStream();
+    offFrames = onStreamFrame((f) => {
+      if (f.type === "resnapshot" || f.type === "position") refreshPositionsSoon();
+      else if (f.type === "trade" && f.payload?.exit_price != null) refreshPositionsSoon(); // a close
+      else if (f.type === "bracket" && f.payload?.trade_id != null) {
+        // SL/TP moved: update that row in place (the chart's price lines follow).
+        const id = String(f.payload.trade_id);
+        positions = positions.map((p) => String(p.id) === id
+          ? { ...p, stopLoss: f.payload.stop_loss ?? p.stopLoss, takeProfit: f.payload.take_profit_1 ?? p.takeProfit } : p);
+      }
+    });
     poll();
     // 15 s (was 30 s): /positions is now a server-side snapshot, so a poll is
     // cheap. Skipped while the tab is hidden; refreshed at once when it returns.
@@ -290,6 +317,8 @@
   }
   onDestroy(() => {
     if (pollTimer) clearInterval(pollTimer);
+    if (posTimer) clearTimeout(posTimer);
+    offFrames?.(); releaseStream?.();
     if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible);
   });
 
@@ -316,6 +345,10 @@
   {#if lastUpdated}
     <div class="muted small">Updated {agoFromIso(new Date(lastUpdated).toISOString())}</div>
   {/if}
+  <div class="muted small streamline">
+    Open positions: {$streamStatus === "live" ? "pushed (live stream)" : $streamStatus === "connecting" ? "connecting to the live stream…" : "polling every 15 s (live stream down)"}
+    · broker uPnL as of {positionsAt ? agoFromIso(new Date(positionsAt).toISOString()) : DASH}{$streamStatus === "live" ? " (re-read when the open set changes; crypto rows tick live from Bybit)" : ""}
+  </div>
 
   {#if unassignedPaper > 0}
     <div class="muted small">{unassignedPaper} open paper position(s) can't be placed in either paper book (no account recorded, or /config unreadable) and are hidden.</div>

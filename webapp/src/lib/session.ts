@@ -102,6 +102,20 @@ export function signalUnauthorized(): void {
   window.dispatchEvent(new Event('metis:unauthorized'));
 }
 
+/**
+ * Single-use ticket for GET /api/bot/stream?ticket=… (a browser EventSource cannot send
+ * headers either). null when it cannot be minted (signed out, or the site gate is off
+ * and the bot does not need one) — the caller then opens the stream without it.
+ */
+export async function streamTicket(): Promise<string | null> {
+  try {
+    const { ticket } = await authCall<{ ticket: string }>('/api/auth/ws-ticket', { method: 'POST' });
+    return typeof ticket === 'string' && ticket ? ticket : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Single-use 60 s ticket for WS /ws/market?ticket=… (a browser WebSocket cannot send headers). */
 export async function marketSocketUrl(query = ''): Promise<string> {
   const { ticket } = await authCall<{ ticket: string }>('/api/auth/ws-ticket', { method: 'POST' });
