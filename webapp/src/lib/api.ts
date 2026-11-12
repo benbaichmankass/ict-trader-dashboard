@@ -561,6 +561,14 @@ export const api = {
   // Infra health: components trader_vm, ib_gateway, phone_app, trainer_vm, kaggle,
   // hugging_face; state ok | degraded | down | could_not_look.
   healthInfra: () => statusGet("/api/bot/health/infra"),
+  // /performance over an explicit calendar range (bot #25231). Date-only strings;
+  // `until` is inclusive. ⚠️ A bot without the feature IGNORES since/until and
+  // answers all-time, so the caller must check the echo `window === "range"`.
+  performanceRange: (since: string, until: string) =>
+    statusGet(`/api/bot/performance?since=${encodeURIComponent(since)}&until=${encodeURIComponent(until)}`),
+  // The weekly performance-review outputs: list + one review's content (bot #25231).
+  performanceReviews: (limit = 50) => statusGet(`/api/bot/performance/reviews?limit=${limit}`),
+  performanceReview: (id: string) => statusGet(`/api/bot/performance/reviews/${encodeURIComponent(id)}`),
   // Work "testing queue": { read_state, n_running (nullable), running[], sources[], hf_jobs }.
   testingQueue: () => statusGet("/api/bot/work/testing-queue"),
   healthLatest: (signal?: AbortSignal) => get<any>("/api/bot/health/latest", signal),
