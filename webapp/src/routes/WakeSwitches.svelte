@@ -3,8 +3,8 @@
   // switch page — which events wake a Claude session. Source: GET
   // /api/bot/wake-toggles (ungated). Every flip is logged bot-side with who/when.
   //
-  // FLIP (addendum 4: "view + flip, same backend as set_wake_toggle"): POST
-  // /api/bot/wake-toggles {key, on} with the SESSION bearer, after a confirm step;
+  // FLIP (addendum 4: "view + flip, same backend as set_wake_toggle"): one press POSTs
+  // /api/bot/wake-toggles {key, on} with the SESSION bearer (no confirm step);
   // the bot's answer is shown verbatim and the page re-reads. ⚠️ As of 2026-11-12 the
   // bot gates that POST with its static service token (prop.py::_require_write_token),
   // so a flip from here is refused with 401 until the bot also accepts require_session.
@@ -13,7 +13,6 @@
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { DASH, agoFromIso } from "../lib/format";
-  import { hasAnyToken } from "../lib/auth";
 
   let data = $state<any>(null);
   let error = $state<string | null>(null);
@@ -24,13 +23,14 @@
   }
   onMount(load);
 
-  let confirming = $state<{ key: string; label: string; to: boolean } | null>(null);
   let busy = $state(false);
   let result = $state<{ ok: boolean; text: string } | null>(null);
-  async function flip() {
-    if (!confirming) return;
+  // One press flips (operator 2026-11-12: "no more gates that I don't explicitly give
+  // you permission for") — no confirm step, no signed-out disable; the bot decides and
+  // its answer is shown verbatim.
+  async function flip(c: { key: string; label: string; to: boolean }) {
     busy = true;
-    const c = confirming;
+    result = null;
     try {
       const r = await api.flipWakeToggle(c.key, c.to);
       const why = typeof r.body?.detail === "string" ? r.body.detail : r.body?.detail ? JSON.stringify(r.body.detail) : null;
@@ -41,7 +41,7 @@
     } catch (e) {
       result = { ok: false, text: e instanceof Error ? e.message : String(e) };
     } finally {
-      busy = false; confirming = null;
+      busy = false;
       await load();
     }
   }
@@ -60,15 +60,6 @@
 <section>
   <div class="head"><h2>Wake switches</h2><button class="refresh" onclick={load}>↻ Refresh</button></div>
   <div class="muted small">Which events wake a Claude session. Source: /api/bot/wake-toggles{data?.population ? ` · ${data.population}` : ""}{data?.read_state ? ` · read_state ${data.read_state}` : ""}.</div>
-  {#if confirming}
-    <div class="confirm panel">
-      <div>Turn <b>{confirming.label}</b> <b>{confirming.to ? "ON" : "OFF"}</b>? This changes which events wake a Claude session.</div>
-      <div class="btns">
-        <button class="go" disabled={busy} onclick={flip}>{busy ? "Sending…" : `Yes, turn ${confirming.to ? "on" : "off"}`}</button>
-        <button disabled={busy} onclick={() => (confirming = null)}>Cancel</button>
-      </div>
-    </div>
-  {/if}
   {#if result}<div class="panel res" class:okmsg={result.ok} class:err={!result.ok}>{result.text}</div>{/if}
 
   {#if error}
@@ -92,7 +83,7 @@
                 <td class="muted">{stateText(r.default)}</td>
                 <td class="muted">{r.changed_at ? agoFromIso(r.changed_at) : DASH}</td>
                 <td class="muted">{r.changed_by ?? DASH}</td>
-                <td>{#if r.on === true || r.on === false}<button class="flip" disabled={busy || !hasAnyToken()} title={hasAnyToken() ? "" : "Sign in to flip"} onclick={() => { result = null; confirming = { key: r.key, label: r.label ?? r.key, to: !r.on }; }}>Turn {r.on ? "off" : "on"}</button>{/if}</td>
+                <td>{#if r.on === true || r.on === false}<button class="flip" disabled={busy} onclick={() => flip({ key: r.key, label: r.label ?? r.key, to: !r.on })}>{busy ? "Sending…" : `Turn ${r.on ? "off" : "on"}`}</button>{/if}</td>
               </tr>
             {/each}
           </tbody>
@@ -120,11 +111,8 @@
   .head { display: flex; align-items: center; justify-content: space-between; }
   h2 { margin: 0; font-size: 18px; }
   .refresh { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
-  .confirm { padding: 10px 12px; display: grid; gap: 8px; border-color: #d4a017; }
-  .btns { display: flex; gap: 8px; }
-  .btns button, .flip { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12.5px; }
-  .btns .go { background: #d4a017; color: #111; border-color: #d4a017; font-weight: 600; }
-  .flip:disabled, .btns button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .flip { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12.5px; }
+  .flip:disabled { opacity: 0.5; cursor: not-allowed; }
   .res { padding: 8px 12px; font-size: 13px; }
   .okmsg { color: var(--pos); }
   .warn { padding: 8px 12px; color: #d4a017; }
