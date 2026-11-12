@@ -19,8 +19,8 @@
   const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
 
   let book = $state<FundingBook>(normalizeFunding("real"));
-  let start = $state(daysAgo(30));
-  let end = $state(today());
+  // The range is bindable so the page can share it (the category table follows it).
+  let { start = $bindable(daysAgo(30)), end = $bindable(today()) }: { start?: string; end?: string } = $props();
 
   // The bot window that equals [start, end], or null.
   const win = $derived.by(() => {

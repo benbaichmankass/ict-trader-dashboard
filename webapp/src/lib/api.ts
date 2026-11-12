@@ -288,8 +288,15 @@ export interface PerfCategoryRow {
 export interface PerfCategories {
   as_of?: string | null;
   window?: string | null;
+  // bot #25241: start/end (inclusive UTC days) are echoed when asked for; `total`
+  // is the bot's own roll-up of the four rows (additive fields summed, ratios
+  // recomputed, max DD null + max_drawdown_read_state "not_additive").
+  start?: string | null;
+  end?: string | null;
   read_state?: string | null;
   categories?: PerfCategoryRow[];
+  total?: (PerfCategoryRow & { max_drawdown_read_state?: string | null; label?: string | null; provenance?: Record<string, string> | null }) | null;
+  capital_flows?: { read_state?: string | null; reason?: string | null; effect?: string | null } | null;
   excluded?: Array<{ account_id?: string; reason?: string }>;
   population?: {
     window?: string;
@@ -359,6 +366,10 @@ export const api = {
   // 7d|30d|90d|all — the bot answers 400 for anything else (24h included).
   perfCategories: (window = "30d", signal?: AbortSignal) =>
     get<PerfCategories>(`/api/bot/performance/categories?window=${encodeURIComponent(window)}`, signal),
+  // Exact inclusive UTC-day range (bot #25241). The caller must check the echoed
+  // start/end: an older bot ignores the params and answers its default window.
+  perfCategoriesRange: (start: string, end: string, signal?: AbortSignal) =>
+    get<PerfCategories>(`/api/bot/performance/categories?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, signal),
   pnlSeries: (
     opts: { window?: string; category?: string[]; strategy?: string; symbol?: string; assetClass?: string; measuredOnly?: boolean } = {},
     signal?: AbortSignal,

@@ -28,6 +28,10 @@
   ];
   const ASSET_CLASSES = ["", "crypto", "equity", "index", "commodity", "fx"];
 
+  // The table follows the page's start/end (bot #25241: exact inclusive UTC days,
+  // echoed back). The P&L series route takes a window only, so `win` drives the
+  // chart — and the table too when no range is passed.
+  let { start = null, end = null }: { start?: string | null; end?: string | null } = $props();
   let win = $state("30d");
   let measuredOnly = $state(true);
   let unit = $state<"pct" | "usd">("pct");
@@ -42,11 +46,23 @@
   let series = $state<PnlSeries | null>(null);
   let seriesErr = $state<string | null>(null);
 
-  async function loadCats(w: string) {
+  let catSeq = 0;
+  async function loadCats(w: string, s0: string | null, e0: string | null) {
+    const my = ++catSeq;
     catErr = null;
     try {
-      cats = await api.perfCategories(w);
+      const r = s0 && e0 ? await api.perfCategoriesRange(s0, e0) : await api.perfCategories(w);
+      if (my !== catSeq) return;
+      // An older bot ignores start/end and answers its default window: never show
+      // that as the asked-for range.
+      if (s0 && e0 && (r?.start !== s0 || r?.end !== e0)) {
+        cats = null;
+        catErr = `could not look — the bot did not answer ${s0} → ${e0} (it echoed ${r?.start ?? DASH} → ${r?.end ?? DASH})`;
+        return;
+      }
+      cats = r;
     } catch (e) {
+      if (my !== catSeq) return;
       cats = null;
       catErr = e instanceof Error ? e.message : String(e);
     }
@@ -63,7 +79,7 @@
     }
   }
   const selected = $derived(Object.keys(picked).filter((k) => picked[k]));
-  $effect(() => { loadCats(win); });
+  $effect(() => { loadCats(win, start, end); });
   $effect(() => { loadSeries(win, measuredOnly, selected, assetClass, applied); });
 
   function pnlHead(r: PerfCategoryRow): number | null | undefined {
@@ -74,47 +90,36 @@
   }
   const fx = (v: number | null | undefined, d = 2) => (v == null || Number.isNaN(v) ? DASH : v.toFixed(d));
   const pctOf = (v: number | null | undefined, d = 1) => (v == null || Number.isNaN(v) ? DASH : `${(v * 100).toFixed(d)}%`);
-  // u5 (operator decision 2026-11-12: "four separate rows, plus a computed total").
-  // Only ADDITIVE columns are totalled, and only from the bot's own per-category
-  // figures — a plain sum, not a recomputed metric. Ratios (win rate, PF, avg R,
-  // ret/time, utilisation, hold) and max drawdown do not add across books, and
-  // the route publishes no total for them, so they stay "—". A category with no
-  // figure (null) is left out of the sum, never counted as 0, and the cell carries
-  // a visible "excl." badge naming it, so a partial sum never passes for a
-  // complete one. No figure in any category → "—".
-  type Sum = { v: number | null; missing: string[] };
-  function sumOf(rows: PerfCategoryRow[], pick: (r: PerfCategoryRow) => number | null | undefined): Sum {
-    let v = 0;
-    const missing: string[] = [];
-    for (const r of rows) {
-      const x = pick(r);
-      if (x == null || Number.isNaN(x)) missing.push(CAT_LABEL[r.category] ?? r.category);
-      else v += x;
-    }
-    return { v: missing.length < rows.length ? v : null, missing };
-  }
-  const totals = $derived.by(() => {
-    const rows = cats?.categories ?? [];
-    return {
-      n: rows.length,
-      closed: sumOf(rows, (r) => r.n_closed),
-      pnl: sumOf(rows, pnlHead),
-      notMeasured: sumOf(rows, (r) => r.not_measured_usd),
-      fees: sumOf(rows, (r) => r.fees_usd),
-      funding: sumOf(rows, (r) => r.funding_usd),
-    };
-  });
-  const sumTitle = (s: Sum) =>
-    s.v == null ? "no category has a figure" : s.missing.length ? `sum of the other rows; no figure for ${s.missing.join(", ")}` : "sum of the category rows above";
-  const NOT_ADDITIVE = "not additive across books, and the bot publishes no total for it";
   const noCapital = $derived(
     (series?.series ?? []).filter((s) => s.start_capital_usd == null).map((s) => CAT_LABEL[s.category] ?? s.category),
   );
 </script>
 
+{#snippet catRow(r: any, isTotal: boolean)}
+            <tr class:total={isTotal} title={(r.accounts ?? []).length ? `accounts: ${(r.accounts ?? []).join(", ")}` : "no accounts in this category"}>
+              <td class="sym">{isTotal ? (r.label ?? "Total") : (CAT_LABEL[r.category] ?? r.category)}{#if r.read_state && r.read_state !== "measured"} <span class="muted small">({r.read_state})</span>{/if}</td>
+              <td class="r mono">{num(r.n_closed)}</td>
+              <td class="r mono {signClass(pnlHead(r))}">{money(pnlHead(r), { sign: true })}</td>
+              <td class="r mono muted" title={`${num(r.n_not_measured)} row(s)`}>{money(r.not_measured_usd, { sign: true })}</td>
+              <td class="r mono" title={`over ${num(r.n_priced)} priced close(s)`}>{pctOf(r.win_rate)}</td>
+              <td class="r mono {signClass(r.avg_realised_r)}" title={`over ${num(r.n_r_graded)} R-graded row(s)`}>
+                {fx(r.avg_realised_r, 2)}{#if r.r_insufficient_n && r.avg_realised_r != null} <span class="badge" title="fewer than 10 R-graded rows">n&lt;10</span>{/if}
+              </td>
+              <td class="r mono">{fx(r.profit_factor, 2)}</td>
+              <td class="r mono {signClass(rot(r))}" title={rot(r) == null ? "" : `annualised ≈ ${((rot(r) ?? 0) * 365 / 100).toFixed(1)}% of notional · all rows: ${fx(r.return_on_time_in_trade_all_rows_bps_per_notional_day, 1)}`}>{fx(rot(r), 1)}</td>
+              <td class="r mono" title={r.capital_utilisation == null ? (r.capital_utilisation_read_state ?? "") : "ESTIMATED"}>{pctOf(r.capital_utilisation, 0)}</td>
+              <td class="r mono">{fx(r.avg_hold_days, 2)}</td>
+              <td class="r mono" title={r.max_drawdown_usd == null ? (r.max_drawdown_read_state ?? "") : ""}>{money(r.max_drawdown_usd)}</td>
+              <td class="r mono" title={`${num(r.n_fees)} fee record(s)`}>{money(r.fees_usd)}</td>
+              <td class="r mono" title={`${num(r.n_funding)} funding record(s)`}>{money(r.funding_usd)}</td>
+            </tr>
+{/snippet}
+
+
 <div class="panel card">
   <div class="top">
     <div class="ph">By category</div>
+    {#if start && end}<span class="muted small">table: {start} → {end} · chart window</span>{/if}
     <Segmented options={WINDOWS} bind:value={win} />
     <label class="tog"><input type="checkbox" bind:checked={measuredOnly} /> Measured only</label>
   </div>
@@ -147,48 +152,28 @@
         </thead>
         <tbody>
           {#each cats.categories ?? [] as r (r.category)}
-            <tr title={(r.accounts ?? []).length ? `accounts: ${(r.accounts ?? []).join(", ")}` : "no accounts in this category"}>
-              <td class="sym">{CAT_LABEL[r.category] ?? r.category}{#if r.read_state && r.read_state !== "measured"} <span class="muted small">({r.read_state})</span>{/if}</td>
-              <td class="r mono">{num(r.n_closed)}</td>
-              <td class="r mono {signClass(pnlHead(r))}">{money(pnlHead(r), { sign: true })}</td>
-              <td class="r mono muted" title={`${num(r.n_not_measured)} row(s)`}>{money(r.not_measured_usd, { sign: true })}</td>
-              <td class="r mono" title={`over ${num(r.n_priced)} priced close(s)`}>{pctOf(r.win_rate)}</td>
-              <td class="r mono {signClass(r.avg_realised_r)}" title={`over ${num(r.n_r_graded)} R-graded row(s)`}>
-                {fx(r.avg_realised_r, 2)}{#if r.r_insufficient_n && r.avg_realised_r != null} <span class="badge" title="fewer than 10 R-graded rows">n&lt;10</span>{/if}
-              </td>
-              <td class="r mono">{fx(r.profit_factor, 2)}</td>
-              <td class="r mono {signClass(rot(r))}" title={rot(r) == null ? "" : `annualised ≈ ${((rot(r) ?? 0) * 365 / 100).toFixed(1)}% of notional · all rows: ${fx(r.return_on_time_in_trade_all_rows_bps_per_notional_day, 1)}`}>{fx(rot(r), 1)}</td>
-              <td class="r mono" title={r.capital_utilisation == null ? (r.capital_utilisation_read_state ?? "") : "ESTIMATED"}>{pctOf(r.capital_utilisation, 0)}</td>
-              <td class="r mono">{fx(r.avg_hold_days, 2)}</td>
-              <td class="r mono">{money(r.max_drawdown_usd)}</td>
-              <td class="r mono" title={`${num(r.n_fees)} fee record(s)`}>{money(r.fees_usd)}</td>
-              <td class="r mono" title={`${num(r.n_funding)} funding record(s)`}>{money(r.funding_usd)}</td>
-            </tr>
+            {@render catRow(r, false)}
           {/each}
         </tbody>
-        {#if totals.n > 1}
-          <tfoot>
-            <tr class="total">
-              <td class="sym" title="sum of the {totals.n} category rows; accounts outside every category are not included">Total</td>
-              <td class="r mono" title={sumTitle(totals.closed)}>{num(totals.closed.v)}{#if totals.closed.v != null && totals.closed.missing.length} <span class="badge">excl. {totals.closed.missing.length}</span>{/if}</td>
-              <td class="r mono {signClass(totals.pnl.v)}" title={sumTitle(totals.pnl)}>{money(totals.pnl.v, { sign: true })}{#if totals.pnl.v != null && totals.pnl.missing.length} <span class="badge">excl. {totals.pnl.missing.length}</span>{/if}</td>
-              <td class="r mono muted" title={sumTitle(totals.notMeasured)}>{money(totals.notMeasured.v, { sign: true })}{#if totals.notMeasured.v != null && totals.notMeasured.missing.length} <span class="badge">excl. {totals.notMeasured.missing.length}</span>{/if}</td>
-              <!-- win rate · avg R · PF · ret/time · utilisation · avg hold · max DD -->
-              {#each Array(7) as _, i (i)}<td class="r mono muted" title={NOT_ADDITIVE}>{DASH}</td>{/each}
-              <td class="r mono" title={sumTitle(totals.fees)}>{money(totals.fees.v)}{#if totals.fees.v != null && totals.fees.missing.length} <span class="badge">excl. {totals.fees.missing.length}</span>{/if}</td>
-              <td class="r mono" title={sumTitle(totals.funding)}>{money(totals.funding.v)}{#if totals.funding.v != null && totals.funding.missing.length} <span class="badge">excl. {totals.funding.missing.length}</span>{/if}</td>
-            </tr>
-          </tfoot>
+        {#if cats.total}
+          <tfoot>{@render catRow(cats.total, true)}</tfoot>
         {/if}
       </table>
     </div>
     <div class="muted small foot">
-      Window {cats.population?.window ?? DASH}{cats.population?.since ? ` (since ${cats.population.since.slice(0, 10)})` : ""}
+      {#if cats.start && cats.end && start}Range {cats.start} → {cats.end} (UTC days, inclusive; the page's dates){:else}Window {cats.population?.window ?? DASH}{cats.population?.since ? ` (since ${cats.population.since.slice(0, 10)})` : ""}{/if}
+      {#if cats.total} · Total: {cats.total.provenance?.total ?? "the bot's roll-up of the four rows"}{/if}
       · {num(cats.population?.n_closed)} closed
       · {num(cats.population?.rows_excluded_null_pnl)} excluded for null P&L
       · also excluded: {cats.population?.also_excluded ?? DASH}
       {#if (cats.excluded ?? []).length} · accounts outside every category: {(cats.excluded ?? []).map((e) => `${e.account_id} (${e.reason})`).join(", ")}{/if}
     </div>
+    {#if cats.capital_flows && cats.capital_flows.read_state !== "measured"}
+      <div class="muted small foot" title={cats.capital_flows.reason ?? ""}>
+        Deposits / withdrawals: {cats.capital_flows.read_state ?? DASH}{cats.capital_flows.reason ? ` — ${cats.capital_flows.reason}` : ""}.
+        {#if cats.capital_flows.effect}{cats.capital_flows.effect}.{/if}
+      </div>
+    {/if}
   {/if}
 
   <div class="sub">
@@ -203,7 +188,7 @@
       <input placeholder="Strategy" bind:value={strategy} onkeydown={(e) => e.key === "Enter" && (applied = { strategy: strategy.trim(), symbol: symbol.trim() })} />
       <input placeholder="Symbol" bind:value={symbol} onkeydown={(e) => e.key === "Enter" && (applied = { strategy: strategy.trim(), symbol: symbol.trim() })} />
       <button onclick={() => (applied = { strategy: strategy.trim(), symbol: symbol.trim() })}>Apply</button>
-      <Segmented options={[{ value: "pct", label: "% of capital" }, { value: "usd", label: "$" }]} bind:value={unit} />
+      <Segmented options={[{ value: "pct", label: "% · capital at start of window" }, { value: "usd", label: "$" }]} bind:value={unit} />
     </div>
     {#if seriesErr}
       <div class="err">Couldn't load the P&L series: <span class="mono">{seriesErr}</span></div>
@@ -215,6 +200,7 @@
       <PnlSeriesChart data={series} {unit} labels={CAT_LABEL} showAllRows={measuredOnly} />
       <div class="muted small foot">
         {series.bucket === "trade" ? "One point per closed trade" : "One point per UTC day"}
+        {#if unit === "pct"} · % = cumulative P&L ÷ capital at start of window{/if}
         · {num(series.population?.n_rows)} row(s)
         {#if measuredOnly} · dotted line = all rows incl. not-measured{/if}
         {#if unit === "pct" && noCapital.length} · no capital record, shown in $ mode only: {noCapital.join(", ")}{/if}
