@@ -1,7 +1,14 @@
 <script lang="ts">
+  import ModelGoodCalls from "../components/ModelGoodCalls.svelte";
+  import ModelHistory from "../components/ModelHistory.svelte";
+  import VariantMetrics from "../components/VariantMetrics.svelte";
+  import CatalogCoverage from "../components/CatalogCoverage.svelte";
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { num, agoFromIso, DASH } from "../lib/format";
+  import ModelsTable from "../components/ModelsTable.svelte";
+  import Segmented from "../components/Segmented.svelte";
+  let view = $state("cards");
 
   let models = $state<any[]>([]);
   // 2026-11-09 ML-REGISTRY-CONSOLIDATE: slot (D1..D10) -> breed -> lineage card -> variants, from /api/bot/ml/registry `by_slot`.
@@ -75,6 +82,11 @@
   // read. Revisit only if a row ever disagrees (e.g. an advisory model with
   // `linked_strategies: []`), which is the case that would make it earn a
   // column.
+  // ⚠️ REVISITED 2026-11-12 (UI-SPA lane): measured over all 106 live rows, 8 now
+  // carry NO stage ("—") yet a deployment bucket — 5 LIVE, 3 SHADOW (overlays such
+  // as overlay-td-v1, deployment_bucket LIVE via stage_from_config). The bucket
+  // is no longer a function of the stage, so the Table view shows it as
+  // "Deployed". The card view is unchanged.
   function desc(m: any): string { return m.description ?? m.manifest?.description ?? m.manifest?.notes ?? ""; }
 
   async function load() {
@@ -103,6 +115,8 @@
 
 <section>
   <h2>Models <span class="muted sub">· by decision slot · registry (candidate → shadow → advisory)</span></h2>
+  <ModelGoodCalls />
+  <CatalogCoverage />
   {#if error}
     <div class="err panel">Couldn't load models: <span class="mono">{error}</span></div>
   {:else if loading}
@@ -110,6 +124,10 @@
   {:else if models.length === 0}
     <div class="panel pad muted">No models in the registry.</div>
   {:else}
+    <div class="viewtog"><Segmented options={[{ value: "cards", label: "Cards" }, { value: "table", label: "Table" }]} bind:value={view} /></div>
+    {#if view === "table"}
+      <ModelsTable {models} stageOf={stage} />
+    {:else}
     {#if bySlot}
       {#each slotKeys(bySlot) as sk (sk)}
         {@const sl = bySlot[sk]}
@@ -138,7 +156,9 @@
                         {#if v.consuming_accounts?.length}<span class="muted small">{v.consuming_accounts.join(", ")}</span>{/if}
                       </div>
                       {#if row && desc(row)}<div class="desc small muted">{desc(row)}</div>{/if}
+                      {#if row}<ModelHistory {row} />{/if}
                     {/each}
+                    <VariantMetrics variants={card.variants} rowOf={byId} />
                   </div>
                 </div>
               {/each}
@@ -174,13 +194,14 @@
               {#if m.manifest?.dataset}
                 <div class="muted small">dataset: {m.manifest.dataset.family ?? DASH} · {m.manifest.dataset.symbol_scope ?? DASH} · {m.manifest.dataset.timeframe ?? DASH}</div>
               {/if}
-              {#if m.created_at}<div class="muted small">registered {agoFromIso(m.created_at)}</div>{/if}
+              <ModelHistory row={m} />
             </div>
           {/if}
         </div>
       {/each}
     </div>
     {/if}
+  {/if}
   {/if}
 </section>
 

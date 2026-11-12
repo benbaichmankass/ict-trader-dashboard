@@ -18,7 +18,7 @@ import { writable } from "svelte/store";
 export const SECTIONS: Record<string, string[]> = {
   Overview: [],
   Performance: ["Performance"],
-  "Strategies & Models": ["Models", "Strategies", "Signals Catalog", "Order Packages", "Signals", "Backtesting", "News"],
+  "Strategies & Models": ["Models", "Strategies", "Feature Impact", "Signals Catalog", "Order Packages", "Signals", "Backtesting", "News"],
   Accounts: ["Accounts", "Prop"],
   // Activity removed (operator 2026-11-09): Order Packages + Signals moved to Strategies & Models,
   // the closed-trade log (Trades) renders at the bottom of the Performance page.
@@ -29,7 +29,7 @@ export const SECTIONS: Record<string, string[]> = {
   Work: [],
   Learning: [],
   // Archive folded into Admin (operator 2026-11-09): Reports is the old-workflow report log.
-  Admin: ["Data Explorer", "Logs", "Health", "Runbooks", "Reports", "Gates"],
+  Admin: ["System", "Data Explorer", "Wake Switches", "Logs", "Health", "Runbooks", "Reports", "Gates"],
 };
 export const SECTION_NAMES = Object.keys(SECTIONS);
 
@@ -40,7 +40,8 @@ export const PAGE_DESC: Record<string, string> = {
   Reports: "Consolidated /system-report executive reports (health + trading + ML).",
   Strategies: "Live-runtime per-strategy status, routing, P&L curve, review packet.",
   Models: "ML fleet — per-model stage, training metric, drift.",
-  "Signals Catalog": "Every signal family the system can emit — inputs, owner strategy, status. Placeholder: the catalog is not built yet (UI-UPGRADE-1 item 8).",
+  "Signals Catalog": "Every input the system reads — family, kind, timeframe, which strategies and models consume it, health and freshness.",
+  "Feature Impact": "Which feature families each ML leans on, by asset class / ML type / stage — drill into features. Model-internal importance share, not edge.",
   "GPU Spend": "Spot-GPU training cost — per-session + monthly total vs the $10 cap.",
   "Exit Ladder": "ExitPlan laddered-vs-single-target soak (observe-only).",
   Backtesting: "Trainer-VM sweeps + on-demand /test runs.",
@@ -55,6 +56,8 @@ export const PAGE_DESC: Record<string, string> = {
   "Data Explorer": "Read-only browse of the federated canonical store.",
   Logs: "Merged pipeline + outcome log feed.",
   Health: "VM / service health + last-tick + snapshot checks.",
+  System: "The system map: VMs, services, exchanges and the trade pipeline (static, from the console).",
+  "Wake Switches": "Which events wake a Claude session — the console's wake switches (view; flips stay on the console for now).",
   Gates: "Live gate registry — every gate, where it sits, what it blocks, its authorization and the operator's keep/remove/report-only decision. Drift and unregistered gates pinned on top; decide in one press.",
   Runbooks: "Operating schematic, the coordination board, and what is due today.",
   Work: "THE live workflow page — with the product roadmap one toggle away (Roadmap was folded in here). Today's daily brief (what came due, and the unrouted count) at the top, then the manager checklist as the managers keep it (collapsed by default — open a row for full detail), the decisions waiting on you, the live work sessions with how stale each reading is, and the work store underneath. Read-only; carries its own as-of stamp, so it is as fresh as the last push plus ict-git-sync's ~5-minute pull.",
@@ -85,6 +88,10 @@ export const IMPLEMENTED_PAGES = new Set<string>([
   "Backtesting",
   "Promotion",
   "Runbooks",
+  "Feature Impact",
+  "Signals Catalog",
+  "Wake Switches",
+  "System",
   "Gates",
 ]);
 

@@ -185,21 +185,20 @@
 
   {#if loadError && !resp}
     <div class="err panel">
-      Couldn't load the gate registry: <span class="mono">{loadError}</span>
+      Could not look: the gate registry did not answer (no gate count is known, not zero). <span class="mono">{loadError}</span>
       {#if authNeeded}<div class="muted">Sign in from ⚙ Settings, then refresh.</div>{/if}
     </div>
   {:else if loading && !resp}
     <div class="muted pad">Loading…</div>
   {:else if resp}
     {#if loadError}
-      <div class="err panel">Last refresh failed (showing the previous read): <span class="mono">{loadError}</span></div>
+      <div class="err panel">Could not look on the last refresh (showing the previous read): <span class="mono">{loadError}</span></div>
     {/if}
 
     {#if unreadable}
       <div class="err panel">
         <b>Registry unreadable</b> (readState: <span class="mono">{dash(resp.readState)}</span>). The bot could not read the
         gate registry, so no gate count is known — this is not "zero gates".
-        <div class="mono">error: {dash(resp.error)}</div>
       </div>
     {:else}
       <div class="counts">

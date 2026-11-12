@@ -54,6 +54,17 @@ const FIXTURES = join(HERE, "fixtures");
  * off the alias is checked against the right sub-object.
  */
 const BINDINGS = {
+  // GATE-REGISTRY (2026-11-12): Admin -> Gates. The fixture is a REAL captured
+  // GET /api/bot/gates (rows trimmed to one per decision/state/drift combination,
+  // and only rows with no IP, dollar amount or account id; the repo is public).
+  // `g` is the each-block row; a renamed row key bot-side fails here instead of
+  // rendering a quiet em-dash.
+  "Gates.svelte": {
+    fixture: "gates.json",
+    root: "resp",
+    paths: { resp: "" },
+    rowPaths: { g: "gates" },
+  },
   "Prop.svelte": {
     fixture: "prop_status.json",
     root: "status",

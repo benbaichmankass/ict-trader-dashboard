@@ -3,9 +3,13 @@
   import { api, type BotStats, type Performance, type Position, type ClosedTrade } from "../lib/api";
   import { FUNDING_OPTIONS, DAY_SNAPS, sinceDays, perfWindowFor, gotoDetail } from "../lib/nav";
   import { accountBooks, bookOfRow, isPaperBook, normalizeFunding, countUnassigned, FUNDING_BOOKS, FUNDING_LABEL, type FundingBook } from "../lib/funding";
+  import ClosedTradeCard from "../components/ClosedTradeCard.svelte";
+  import { closedFills, fillClosedAt, fillProvenance } from "../lib/propPnl";
   import { money, signClass, DASH, agoFromIso } from "../lib/format";
   import ExecSummary from "../components/ExecSummary.svelte";
   import EquityChart from "../components/EquityChart.svelte";
+  import TradeApprovals from "../components/TradeApprovals.svelte";
+  import HealthBar from "../components/HealthBar.svelte";
 
   // One funding toggle per tab — four books, never blended: Live money · Prop ·
   // Paper portfolio · Paper testing (lib/funding.ts) — + the 24h/7d/30d/All
@@ -36,19 +40,25 @@
   let propOverview = $state<any>(null); // /api/bot/prop/overview (Prop book only)
   let workSnap = $state<any>(null); // /api/bot/work/snapshot (UI-UPGRADE-1 item 2)
   let workSnapError = $state<string | null>(null);
+  let ltrPending = $state(0);
+  // Work "testing queue" (GET /api/bot/work/testing-queue, bot #25231); null until it answers 200.
+  let tq = $state<any>(null);
+  let tqState = $state("loading"); // LTR trade decisions waiting (bound out of TradeApprovals)
   let pnl30 = $state<Array<{ date?: string; pnl?: number | null }>>([]);
   let apiError = $state<string | null>(null);
 
-  // News glance — top clickable source headlines across recent decisions.
-  const headlines = $derived.by(() => {
-    const items: Array<{ headline: string; url?: string; score?: number }> = [];
-    const seen = new Set<string>();
-    for (const rec of news?.records ?? []) {
-      for (const it of rec?.top_items ?? []) {
-        if (it?.headline && !seen.has(it.headline)) { seen.add(it.headline); items.push(it); }
-      }
-    }
-    return items.sort((a, b) => Math.abs(b.score ?? 0) - Math.abs(a.score ?? 0)).slice(0, 4);
+  // "In flight now": open rows a Claude lane is working (state in_flight, lane set).
+  const inFlight = $derived(((workSnap?.openNow ?? []) as any[]).filter((r) => r?.state === "in_flight" && r?.lane));
+
+  // News banner: the most recent news-layer decision + its strongest headline.
+  const latestNews = $derived.by(() => {
+    const recs = ((news?.records ?? []) as any[]).filter((r) => r?.ts);
+    if (!recs.length) return null;
+    return recs.reduce((a, b) => (Date.parse(b.ts) > Date.parse(a.ts) ? b : a));
+  });
+  const newsHeadline = $derived.by(() => {
+    const items = ((latestNews?.top_items ?? []) as any[]).filter((it) => it?.headline);
+    return items.length ? items.reduce((a, b) => (Math.abs(b.score ?? 0) > Math.abs(a.score ?? 0) ? b : a)) : null;
   });
 
   // 30-day realised-P&L → cumulative points for the sparkline.
@@ -96,6 +106,8 @@
       }),
       // Prop lives in its own journal; a failure here must not blank the rest.
       (() => { const w = win; return api.propOverview(w).then((v) => { if (w === win) propOverview = v; }); })(),
+      api.testingQueue().then((r) => { if (r.status === 200 && r.body) { tq = r.body; tqState = "read"; } else { tq = null; tqState = String(r.status); } })
+        .catch(() => { tq = null; tqState = "error"; }),
       api.workSnapshot().then((v) => { workSnap = v; workSnapError = null; })
         .catch((e) => { workSnapError = e instanceof Error ? e.message : String(e); throw e; }),
       // Glance-card + sparkline data — each degrades to its own empty state.
@@ -156,6 +168,13 @@
     return String(t.id ?? `${t.symbol}-${t.closedAt}`);
   }
 
+  // Expanded closed-trade cards (UI-REDESIGN-2026-11 addendum 2) — several at once.
+  let openClosed = $state<Set<string>>(new Set());
+  function toggleClosed(k: string) {
+    const n = new Set(openClosed);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    openClosed = n;
+  }
   const RECENT_BATCH = 10; // "Show more" fetches the next server batch; // well within the bot's 200-row page cap (trades_closed.py)
 
   let recentClosedRows = $state<ClosedTrade[]>([]);
@@ -225,6 +244,37 @@
     }
   }
 
+  // Prop closed trades (spec: the Last-closed filter covers live / prop / paper
+  // portfolio / paper testing). Prop is not in /trades/closed — it lives in the
+  // prop journal — so when Prop is ticked a separate sub-list reads /prop/fills
+  // (the same closedFills / fillClosedAt / fillProvenance helpers as the Prop
+  // tab), keeps the days-back window, newest first, 10 at a time.
+  const PROP_FILLS_LIMIT = 200;
+  const PROP_BATCH = 10;
+  let propFillsRaw = $state<any[] | null>(null);
+  let propClosedErr = $state<string | null>(null);
+  let propShown = $state(PROP_BATCH);
+  $effect(() => {
+    const on = closedBooks.includes("prop");
+    days;
+    propShown = PROP_BATCH;
+    if (!on) return;
+    propClosedErr = null;
+    api.propFills(PROP_FILLS_LIMIT)
+      .then((r) => { propFillsRaw = r?.fills ?? []; })
+      .catch((e) => { propFillsRaw = null; propClosedErr = e instanceof Error ? e.message : String(e); });
+  });
+  const propClosedRows = $derived.by(() => {
+    if (!propFillsRaw) return [];
+    const cut = sinceDays(days);
+    return closedFills(propFillsRaw)
+      .filter((f) => { const at = fillClosedAt(f); return at != null && at >= cut; })
+      .sort((a, b) => String(fillClosedAt(b)).localeCompare(String(fillClosedAt(a))));
+  });
+  // The journal read is the newest PROP_FILLS_LIMIT fills; if it came back full,
+  // older closes inside the window may not have been read — say so.
+  const propReadFull = $derived((propFillsRaw?.length ?? 0) >= PROP_FILLS_LIMIT);
+
   // Reset to the first batch whenever the book filter or days-back changes.
   $effect(() => {
     closedBooks;
@@ -282,6 +332,9 @@
     <h2>Overview</h2>
   </div>
 
+  <!-- UI-REDESIGN-2026-11 (1): health bar across the top, money path first. -->
+  <HealthBar />
+
   <div class="controls">
     <label class="days">
       <span>Days back: <b>{days}</b></span>
@@ -306,51 +359,79 @@
 
   <ExecSummary {stats} {perf} {positions} {balances} {config} {strategies} {funding} {win} {days} {propOverview} {testingPerf} onpick={(b) => (funding = b)} />
 
-  <!-- UI-UPGRADE-1 item 2: work-queue glance from /api/bot/work/snapshot.
-       `present:false` is "we could not read the checklist", shown as such —
-       never as an empty queue. -->
+  <!-- UI-REDESIGN-2026-11 (4): the work queue as THREE cards — waiting on me ·
+       in flight now (Claude lanes) · testing queue — plus the link to Work.
+       Addendum 1: "waiting on me" also carries the LTR trade decisions (RED,
+       Approve/Reject through the same state machine as Telegram). An unreadable
+       source says "could not look", never an empty queue. -->
   <div class="panel workq">
     <div class="ph">Work queue <a class="wlink" href="#/Work">open Work →</a></div>
-    {#if workSnap && workSnap.present === false}
-      <div class="err pad">Checklist unreadable: <span class="mono">{workSnap.reason ?? DASH}</span></div>
-    {:else if !workSnap && workSnapError}
-      <div class="err pad">Couldn't load the work queue: <span class="mono">{workSnapError}</span></div>
-    {:else if !workSnap}
-      <div class="muted pad">Loading…</div>
-    {:else}
-      <div class="wbox" class:wempty={!(workSnap.waitingOnOperator ?? []).length}>
-        <div class="wh">⏳ Waiting on you · {(workSnap.waitingOnOperator ?? []).length}</div>
-        {#each workSnap.waitingOnOperator ?? [] as r (r.id)}
-          <div class="wrow"><span class="mono wid">{r.id}</span> {(r.asks ?? []).map((a: any) => a.what).filter(Boolean).join(" · ") || r.title}</div>
+    <div class="wcards">
+      <div class="wcard" class:hotcard={ltrPending > 0 || (workSnap?.waitingOnOperator ?? []).length > 0}>
+        <div class="wh">⏳ Waiting on me · {ltrPending + (workSnap?.waitingOnOperator ?? []).length}</div>
+        <TradeApprovals embedded bind:pendingCount={ltrPending} />
+        <div class="wsub">Other asks</div>
+        {#if workSnap && workSnap.present === false}
+          <div class="err small">could not look: <span class="mono">{workSnap.reason ?? DASH}</span></div>
+        {:else if !workSnap && workSnapError}
+          <div class="err small">could not look: <span class="mono">{workSnapError}</span></div>
+        {:else if !workSnap}
+          <div class="muted small">Loading…</div>
         {:else}
-          <div class="muted small">Nothing is blocked on an operator decision.</div>
-        {/each}
+          {#each workSnap.waitingOnOperator ?? [] as r (r.id)}
+            <div class="wrow" title={r.title ?? ""}><span class="mono wid">{r.id}</span> {(r.asks ?? []).map((a: any) => a.what).filter(Boolean).join(" · ") || r.title}</div>
+          {:else}
+            <div class="muted small">Nothing else is blocked on you.</div>
+          {/each}
+        {/if}
       </div>
-      <div class="wgrid">
-        {#each [["Open now", workSnap.openNow], ["Next up", workSnap.next], ["Recently closed", workSnap.closedRecent]] as [label, rows] (label)}
-          <div>
-            <div class="wh">{label} · {(rows ?? []).length}</div>
-            {#each rows ?? [] as r (r.id)}
-              <div class="wrow" title={r.title ?? ""}><span class="mono wid">{r.id}</span> <span class="muted">{r.state}</span></div>
-            {:else}
-              <div class="muted small">—</div>
-            {/each}
-          </div>
-        {/each}
+      <div class="wcard">
+        <div class="wh">🛠 In flight now · {workSnap && workSnap.present !== false ? inFlight.length : DASH}</div>
+        {#if !workSnap || workSnap.present === false}
+          <div class="muted small">{workSnapError || workSnap?.present === false ? "could not look" : "Loading…"}</div>
+        {:else}
+          {#each inFlight as r (r.id)}
+            <div class="wrow" title={r.title ?? ""}><span class="mono wid">{r.id}</span> <span class="muted">{r.owner ?? r.lane ?? DASH}</span></div>
+          {:else}
+            <div class="muted small">No Claude lane has a row in flight.</div>
+          {/each}
+        {/if}
       </div>
-    {/if}
+      <div class="wcard">
+        <div class="wh">🧪 Testing queue · {tq && tq.read_state !== "could_not_look" && tq.n_running != null ? tq.n_running : DASH}</div>
+        {#if !tq}
+          <div class="muted small">{tqState === "loading" ? "Loading…" : "could not look — the testing-queue route is not deployed on the bot yet."}</div>
+        {:else if tq.read_state === "could_not_look"}
+          <div class="muted small">could not look — {(tq.sources ?? []).map((x: any) => x.detail).filter(Boolean).join("; ") || "no source readable"}</div>
+        {:else}
+          {#each tq.running ?? [] as r (r.id)}
+            <div class="wrow" title={`${r.source ?? ""}${r.started_at ? ` · started ${r.started_at}` : ""}`}><span class="mono wid">{r.title ?? r.id}</span> <span class="muted">{r.infra ?? r.kind ?? DASH}{r.started_at ? ` · ${agoFromIso(r.started_at)}` : ""}</span></div>
+          {:else}
+            <div class="muted small">Nothing running on the ML/training infra.</div>
+          {/each}
+          {#if tq.read_state === "partial"}<div class="muted small">partial: {(tq.sources ?? []).filter((x: any) => x.read_state !== "read").map((x: any) => x.source).join(", ")} could not be read</div>{/if}
+          <div class="muted small">Hugging Face jobs: {tq.hf_jobs?.read_state === "could_not_look" ? "could not look" : (tq.hf_jobs?.read_state ?? DASH)}</div>
+        {/if}
+      </div>
+    </div>
   </div>
 
-  <div class="glances">
-    {#if headlines.length}
-      <div class="glance panel">
-        <div class="gh">📰 News</div>
-        <ul class="hl">
-          {#each headlines as h (h.headline)}
-            <li>{#if h.url}<a href={h.url} target="_blank" rel="noopener">{h.headline}</a>{:else}{h.headline}{/if}</li>
-          {/each}
-        </ul>
-      </div>
+  <!-- UI-REDESIGN-2026-11 decision: news is ONE LINE — the latest news-layer
+       decision's sentiment + one headline. Absent → "—". -->
+  <div class="newsbar panel">
+    <span class="nb-k">📰 News</span>
+    {#if latestNews}
+      <span class="nb-s {latestNews.decision === 'boost' ? 'pos' : latestNews.decision === 'reduce' || latestNews.veto ? 'neg' : 'muted'}">
+        {latestNews.veto ? "veto" : (latestNews.decision ?? DASH)}{typeof latestNews.adjustment === "number" ? ` ${latestNews.adjustment >= 0 ? "+" : ""}${latestNews.adjustment.toFixed(2)}` : ""}
+      </span>
+      <span class="muted nb-m">{latestNews.symbol ?? DASH} · {agoFromIso(latestNews.ts)}</span>
+      {#if newsHeadline}
+        <span class="nb-h">{#if newsHeadline.url}<a href={newsHeadline.url} target="_blank" rel="noopener">{newsHeadline.headline}</a>{:else}{newsHeadline.headline}{/if}</span>
+      {:else}
+        <span class="muted">{DASH}</span>
+      {/if}
+    {:else}
+      <span class="muted">{DASH}</span>
     {/if}
   </div>
 
@@ -362,12 +443,52 @@
       {/each}
     </div>
     {#if closedBooks.includes("prop")}
-      <div class="muted pad small">Prop closed trades come from the prop journal (Prop tab) — not included here yet.</div>
+      <div class="subh">Prop <span class="muted small">· from the prop journal (P&amp;L provenance per row; never blended with the other books)</span></div>
+      {#if propClosedErr}
+        <div class="err pad small">Couldn't load prop closed trades: <span class="mono">{propClosedErr}</span></div>
+      {:else if propFillsRaw == null}
+        <div class="muted pad small">Loading…</div>
+      {:else if propClosedRows.length === 0}
+        <div class="muted pad small">No prop trades closed in the last {days}d{propReadFull ? ` (only the newest ${PROP_FILLS_LIMIT} journal fills were read)` : ""}.</div>
+      {:else}
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Symbol</th><th>Dir</th><th>Account</th><th class="r">P&amp;L</th><th>Provenance</th><th>Closed</th></tr></thead>
+            <tbody>
+              {#each propClosedRows.slice(0, propShown) as f, i (f.id ?? i)}
+                {@const prov = fillProvenance(f)}
+                {@const pk = `prop:${f.id ?? i}`}
+                <tr class="click" class:openrow={openClosed.has(pk)} onclick={() => toggleClosed(pk)} tabindex="0" role="button" aria-expanded={openClosed.has(pk)}
+                  onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleClosed(pk); } }}>
+                  <td class="sym">{openClosed.has(pk) ? "▾" : "▸"} {f.symbol ?? DASH}</td>
+                  <td class={/^(s|short)/i.test(String(f.direction ?? "")) ? "neg" : "pos"}>{String(f.direction ?? DASH).toUpperCase()}</td>
+                  <td class="muted">{f.account_id ?? DASH}</td>
+                  <td class="r mono {prov === 'MEASURED' ? signClass(f.pnl) : 'muted'}">{f.pnl == null ? DASH : money(f.pnl, { sign: true })}</td>
+                  <td class="muted small">{prov === "UNKNOWN" ? DASH : prov}</td>
+                  <td class="muted">{agoFromIso(fillClosedAt(f))}</td>
+                </tr>
+                {#if openClosed.has(pk)}
+                  <tr class="cardrow"><td colspan="6">{#if typeof f.id === "number"}<ClosedTradeCard t={{ id: f.id, symbol: f.symbol, direction: f.direction, qty: f.qty, entryPrice: f.entry_price, exitPrice: f.exit_price, pnl: f.pnl, openedAt: f.opened_at, closedAt: fillClosedAt(f), account: f.account_id, closeReason: f.reason, pnlProvenance: prov } as any} propFillId={f.id} />{:else}<div class="muted small">No fill id on this row, so there is no snapshot to look up.</div>{/if}</td></tr>
+                {/if}
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        {#if propClosedRows.length > propShown}
+          <button class="more" onclick={() => (propShown += PROP_BATCH)}>Show more ({propClosedRows.length - propShown} more)</button>
+        {/if}
+        <div class="muted pad small">
+          {propClosedRows.length} prop close(s) in the last {days}d{propReadFull ? ` · only the newest ${PROP_FILLS_LIMIT} journal fills were read, so older closes in this window may be missing` : ""} · click a row for its trade card.
+        </div>
+      {/if}
+      {#if closedBooks.some((b) => b !== "prop")}<div class="subh">Other books</div>{/if}
     {/if}
     {#if recentClosedError}
       <div class="err pad">Couldn't load closed trades: <span class="mono">{recentClosedError}</span></div>
     {:else if closedBooks.length === 0}
       <div class="muted pad">Tick at least one book above.</div>
+    {:else if !closedBooks.some((b) => b !== "prop")}
+      <!-- only Prop ticked: the prop sub-list above is the whole answer -->
     {:else if recentClosedLoading}
       <div class="muted pad">Loading…</div>
     {:else if recentClosedRows.length === 0}
@@ -382,14 +503,19 @@
           </thead>
           <tbody>
             {#each recentClosedRows as t (rowKey(t))}
-              <tr>
-                <td class="sym">{t.symbol}</td>
+              {@const ck = rowKey(t)}
+              <tr class="click" class:openrow={openClosed.has(ck)} onclick={() => toggleClosed(ck)} tabindex="0" role="button" aria-expanded={openClosed.has(ck)}
+                onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleClosed(ck); } }}>
+                <td class="sym">{openClosed.has(ck) ? "▾" : "▸"} {t.symbol}</td>
                 <td class={dirLabel(t) === "SHORT" ? "neg" : "pos"}>{dirLabel(t)}</td>
                 <td class="muted">{t.strategy ?? DASH}</td>
                 <td class="muted">{t.account ?? DASH}</td>
                 <td class="r mono {signClass(t.pnl)}">{money(t.pnl, { sign: true })}</td>
                 <td class="muted">{agoFromIso(t.closedAt)}</td>
               </tr>
+              {#if openClosed.has(ck)}
+                <tr class="cardrow"><td colspan="6"><ClosedTradeCard {t} /></td></tr>
+              {/if}
             {/each}
           </tbody>
         </table>
@@ -414,6 +540,9 @@
 </section>
 
 <style>
+  tr.click { cursor: pointer; }
+  tr.click:hover, tr.openrow { background: var(--panel-2); }
+  tr.cardrow > td { padding: 0; white-space: normal; }
   section {
     display: flex;
     flex-direction: column;
@@ -441,11 +570,13 @@
   .ticks .cur { color: var(--text); font-weight: 700; }
   .chkrow { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0 12px 6px; font-size: 12.5px; }
   .chk { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
-  .glances { display: grid; grid-template-columns: 1fr; gap: 10px; }
-  .glance { padding: 12px; text-decoration: none; color: inherit; display: block; }
-  .hl { margin: 0; padding-left: 16px; font-size: 12.5px; line-height: 1.5; }
-  .hl a { color: var(--accent); text-decoration: none; }
-  .hl a:hover { text-decoration: underline; }
+  .subh { font-weight: 600; font-size: 13px; margin: 10px 12px 4px; }
+  .newsbar { display: flex; gap: 10px; align-items: baseline; padding: 8px 12px; font-size: 12.5px; white-space: nowrap; overflow: hidden; }
+  .nb-k { font-weight: 600; }
+  .nb-s { font-weight: 600; }
+  .nb-h { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .nb-h a { color: var(--accent); text-decoration: none; }
+  .nb-h a:hover { text-decoration: underline; }
   .spark { padding: 4px 12px 12px; }
   .spark .ph { padding: 12px 0 6px; }
   .positions {
@@ -494,10 +625,11 @@
   .refresh:disabled { opacity: 0.6; cursor: default; }
   .workq { padding: 4px 12px 12px; }
   .wlink { float: right; font-weight: 400; font-size: 12px; color: var(--accent); text-decoration: none; }
-  .wbox { border: 1px solid var(--accent); border-radius: 8px; padding: 8px 10px; margin: 4px 0 10px; }
-  .wbox.wempty { border-color: var(--border); }
-  .wgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-  @media (max-width: 720px) { .wgrid { grid-template-columns: 1fr; } }
+  .wcards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 900px) { .wcards { grid-template-columns: 1fr; } }
+  .wcard { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+  .wcard.hotcard { border-color: var(--neg); }
+  .wsub { font-size: 11.5px; color: var(--muted); margin: 6px 0 2px; }
   .wh { font-weight: 600; font-size: 12.5px; margin-bottom: 4px; }
   .wrow { font-size: 12.5px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wid { font-weight: 600; }

@@ -23,6 +23,14 @@
   import Backtesting from "./routes/Backtesting.svelte";
   import Promotion from "./routes/Promotion.svelte";
   import Runbooks from "./routes/Runbooks.svelte";
+  import WakeSwitches from "./routes/WakeSwitches.svelte";
+  import System from "./routes/System.svelte";
+  import FeatureImpact from "./routes/FeatureImpact.svelte";
+  import SignalsCatalog from "./routes/SignalsCatalog.svelte";
+  import WorkTopics from "./routes/WorkTopics.svelte";
+  import WorkOverview from "./components/WorkOverview.svelte";
+  import WorkDecisions from "./components/WorkDecisions.svelte";
+  import WorkThisWeek from "./components/WorkThisWeek.svelte";
   import Gates from "./routes/Gates.svelte";
   import SectionLanding from "./components/SectionLanding.svelte";
   import Placeholder from "./components/Placeholder.svelte";
@@ -42,13 +50,21 @@
 
   // Work + Roadmap share one tab (UI-UPGRADE-1). An old `#/Roadmap` link opens
   // the Roadmap view; parseHash() already maps the section onto Work.
+  // "Overview" = the JTA console's overview page (UI-REDESIGN-2026-11 WORK), the
+  // default; "Work" keeps the full register.
   const WORK_VIEWS = [
+    { value: "overview", label: "Overview" },
+    // Work-queue tabs (bot PR #25354 § "Work queue tabs (SPA)"): Decisions, This week;
+    // R&D registry / Plans slot in here as their routes land (Gates is Admin's).
+    { value: "decisions", label: "Decisions" },
+    { value: "week", label: "This week" },
     { value: "work", label: "Work" },
     { value: "roadmap", label: "Roadmap" },
+    { value: "topics", label: "Topics & insights" },
     { value: "gpu", label: "GPU spend" },
   ];
   let workView = $state(
-    typeof location !== "undefined" && location.hash.replace(/^#\/?/, "").startsWith("Roadmap") ? "roadmap" : "work",
+    typeof location !== "undefined" && location.hash.replace(/^#\/?/, "").startsWith("Roadmap") ? "roadmap" : "overview",
   );
 
   // A gated read that came back 401/403 raises `authPrompt`; opening Settings
@@ -113,6 +129,10 @@
     Backtesting,
     Promotion,
     Runbooks,
+    "Feature Impact": FeatureImpact,
+    "Signals Catalog": SignalsCatalog,
+    "Wake Switches": WakeSwitches,
+    System,
     Gates,
   };
 
@@ -211,7 +231,7 @@
       {:else if $nav.section === "Work"}
         <!-- UI-UPGRADE-1: Roadmap folded into Work — one tab, two views. -->
         <div class="worktabs"><Segmented options={WORK_VIEWS} bind:value={workView} /></div>
-        {#if workView === "roadmap"}<Roadmap />{:else if workView === "gpu"}<GPUSpend />{:else}<Work />{/if}
+        {#if workView === "roadmap"}<Roadmap />{:else if workView === "gpu"}<GPUSpend />{:else if workView === "topics"}<WorkTopics />{:else if workView === "overview"}<WorkOverview />{:else if workView === "decisions"}<WorkDecisions />{:else if workView === "week"}<WorkThisWeek />{:else}<Work />{/if}
       {:else if isSpecial($nav.section)}
         <Placeholder page={$nav.section} />
       {:else if $nav.detail == null && (SECTIONS[$nav.section] ?? []).length === 1 && DETAIL[SECTIONS[$nav.section][0]]}
