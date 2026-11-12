@@ -1,5 +1,6 @@
 <script lang="ts">
   import ModelGoodCalls from "../components/ModelGoodCalls.svelte";
+  import ModelHistory from "../components/ModelHistory.svelte";
   import CatalogCoverage from "../components/CatalogCoverage.svelte";
   import { onMount } from "svelte";
   import { api } from "../lib/api";
@@ -154,6 +155,7 @@
                         {#if v.consuming_accounts?.length}<span class="muted small">{v.consuming_accounts.join(", ")}</span>{/if}
                       </div>
                       {#if row && desc(row)}<div class="desc small muted">{desc(row)}</div>{/if}
+                      {#if row}<ModelHistory {row} />{/if}
                     {/each}
                   </div>
                 </div>
@@ -190,7 +192,7 @@
               {#if m.manifest?.dataset}
                 <div class="muted small">dataset: {m.manifest.dataset.family ?? DASH} · {m.manifest.dataset.symbol_scope ?? DASH} · {m.manifest.dataset.timeframe ?? DASH}</div>
               {/if}
-              {#if m.created_at}<div class="muted small">registered {agoFromIso(m.created_at)}</div>{/if}
+              <ModelHistory row={m} />
             </div>
           {/if}
         </div>
