@@ -10,9 +10,12 @@
   // the bot's directed-action spool (each account's own RiskManager, read back
   // from the venue); this panel decides nothing about the trade itself.
   //
-  // One press executes, exactly like the Telegram button — no confirm dialog
-  // (no new gates). An expired ask's button is disabled because the bot would
-  // answer 410 anyway; that is display, not a gate.
+  // One press executes, exactly like the Telegram button — no confirm dialog and
+  // no client-side refusal (operator 2026-11-12: "no more gates that I don't
+  // explicitly give you permission for"). The countdown is display only: an
+  // expired ask is still pressable and the bot's own 410 answer is shown verbatim
+  // (a browser clock can be wrong; the bot decides). Every kind of pending ask
+  // gets the buttons — the bot's decide route takes any ask token.
   //
   // Polls every 15 s while the tab is visible. ⚠️ When T2 lands (the SPA on
   // /api/bot/stream) this poll should move onto a stream frame if the
@@ -168,10 +171,10 @@
             <div class="warn small">⚠️ mechanics: {a.mechanics} (the venue read did not complete at review time)</div>
           {/if}
           <div class="btns">
-            <button class="approve" disabled={busy[a.token] || expired(a)} onclick={() => decide(a, "approve")}>
+            <button class="approve" disabled={busy[a.token]} onclick={() => decide(a, "approve")}>
               {busy[a.token] ? "Sending…" : "✅ Approve"}
             </button>
-            <button class="reject" disabled={busy[a.token] || expired(a)} onclick={() => decide(a, "reject")}>✖ Reject</button>
+            <button class="reject" disabled={busy[a.token]} onclick={() => decide(a, "reject")}>✖ Reject</button>
             <span class="muted small mono">{a.review_id ?? DASH}</span>
           </div>
           <div class="muted small">Approve executes now on every account carrying the package, through each account's own risk checks.</div>
@@ -180,13 +183,19 @@
           {/if}
         </div>
       {:else}
-        <!-- Non-trade ask (e.g. kind ops_job): shown, not decidable here — the
-             SPA route's decide contract covers trade asks only. -->
+        <!-- Non-trade ask (e.g. kind ops_job): same buttons, same route — the bot
+             decides whether it accepts the token and its answer is shown verbatim. -->
         <div class="ask other">
           <div class="top"><b>{a.title ?? a.kind}</b> <span class="muted">{a.kind}</span>
             <span class="cd mono" class:late={expired(a)}>{countdown(a.expires_at)}</span></div>
           {#if a.summary ?? a.reason}<div class="reason small">{a.summary ?? a.reason}</div>{/if}
-          <div class="muted small">Decide this one in Telegram — the console button covers trade asks only.</div>
+          <div class="btns">
+            <button class="approve" disabled={busy[a.token]} onclick={() => decide(a, "approve")}>{busy[a.token] ? "Sending…" : "✅ Approve"}</button>
+            <button class="reject" disabled={busy[a.token]} onclick={() => decide(a, "reject")}>✖ Reject</button>
+          </div>
+          {#if results[a.token]}
+            <div class="small" class:okmsg={results[a.token].ok} class:err={!results[a.token].ok}>{results[a.token].text}</div>
+          {/if}
         </div>
       {/if}
     {:else}

@@ -199,8 +199,8 @@ function normalizeClosedTrade(r: ClosedTrade): ClosedTrade {
  * One operator ask from `src/runtime/trade_approvals.py::offer` (bot), served by
  * `GET /api/bot/trade-approvals` (require_session). Same store the Telegram
  * Approve/Reject buttons decide: whichever surface decides first wins.
- * `kind` is absent on trade asks; any other kind (e.g. a future `ops_job`) is
- * rendered read-only because its decide path is not this route's contract yet.
+ * `kind` is absent on trade asks; any other kind (e.g. a future `ops_job`) gets
+ * the same Approve / Reject — the bot decides what it accepts.
  */
 export interface TradeApprovalAsk {
   token: string;
