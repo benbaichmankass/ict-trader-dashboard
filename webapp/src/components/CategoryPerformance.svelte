@@ -74,6 +74,39 @@
   }
   const fx = (v: number | null | undefined, d = 2) => (v == null || Number.isNaN(v) ? DASH : v.toFixed(d));
   const pctOf = (v: number | null | undefined, d = 1) => (v == null || Number.isNaN(v) ? DASH : `${(v * 100).toFixed(d)}%`);
+  // u5 (operator decision 2026-11-12: "four separate rows, plus a computed total").
+  // Only ADDITIVE columns are totalled, and only from the bot's own per-category
+  // figures — a plain sum, not a recomputed metric. Ratios (win rate, PF, avg R,
+  // ret/time, utilisation, hold) and max drawdown do not add across books, and
+  // the route publishes no total for them, so they stay "—". A category with no
+  // figure (null) is left out of the sum, never counted as 0, and the cell carries
+  // a visible "excl." badge naming it, so a partial sum never passes for a
+  // complete one. No figure in any category → "—".
+  type Sum = { v: number | null; missing: string[] };
+  function sumOf(rows: PerfCategoryRow[], pick: (r: PerfCategoryRow) => number | null | undefined): Sum {
+    let v = 0;
+    const missing: string[] = [];
+    for (const r of rows) {
+      const x = pick(r);
+      if (x == null || Number.isNaN(x)) missing.push(CAT_LABEL[r.category] ?? r.category);
+      else v += x;
+    }
+    return { v: missing.length < rows.length ? v : null, missing };
+  }
+  const totals = $derived.by(() => {
+    const rows = cats?.categories ?? [];
+    return {
+      n: rows.length,
+      closed: sumOf(rows, (r) => r.n_closed),
+      pnl: sumOf(rows, pnlHead),
+      notMeasured: sumOf(rows, (r) => r.not_measured_usd),
+      fees: sumOf(rows, (r) => r.fees_usd),
+      funding: sumOf(rows, (r) => r.funding_usd),
+    };
+  });
+  const sumTitle = (s: Sum) =>
+    s.v == null ? "no category has a figure" : s.missing.length ? `sum of the other rows; no figure for ${s.missing.join(", ")}` : "sum of the category rows above";
+  const NOT_ADDITIVE = "not additive across books, and the bot publishes no total for it";
   const noCapital = $derived(
     (series?.series ?? []).filter((s) => s.start_capital_usd == null).map((s) => CAT_LABEL[s.category] ?? s.category),
   );
@@ -133,6 +166,20 @@
             </tr>
           {/each}
         </tbody>
+        {#if totals.n > 1}
+          <tfoot>
+            <tr class="total">
+              <td class="sym" title="sum of the {totals.n} category rows; accounts outside every category are not included">Total</td>
+              <td class="r mono" title={sumTitle(totals.closed)}>{num(totals.closed.v)}{#if totals.closed.v != null && totals.closed.missing.length} <span class="badge">excl. {totals.closed.missing.length}</span>{/if}</td>
+              <td class="r mono {signClass(totals.pnl.v)}" title={sumTitle(totals.pnl)}>{money(totals.pnl.v, { sign: true })}{#if totals.pnl.v != null && totals.pnl.missing.length} <span class="badge">excl. {totals.pnl.missing.length}</span>{/if}</td>
+              <td class="r mono muted" title={sumTitle(totals.notMeasured)}>{money(totals.notMeasured.v, { sign: true })}{#if totals.notMeasured.v != null && totals.notMeasured.missing.length} <span class="badge">excl. {totals.notMeasured.missing.length}</span>{/if}</td>
+              <!-- win rate · avg R · PF · ret/time · utilisation · avg hold · max DD -->
+              {#each Array(7) as _, i (i)}<td class="r mono muted" title={NOT_ADDITIVE}>{DASH}</td>{/each}
+              <td class="r mono" title={sumTitle(totals.fees)}>{money(totals.fees.v)}{#if totals.fees.v != null && totals.fees.missing.length} <span class="badge">excl. {totals.fees.missing.length}</span>{/if}</td>
+              <td class="r mono" title={sumTitle(totals.funding)}>{money(totals.funding.v)}{#if totals.funding.v != null && totals.funding.missing.length} <span class="badge">excl. {totals.funding.missing.length}</span>{/if}</td>
+            </tr>
+          </tfoot>
+        {/if}
       </table>
     </div>
     <div class="muted small foot">
@@ -189,6 +236,7 @@
   th { color: var(--muted); font-weight: 500; border-bottom: 1px solid var(--border); font-size: 12px; }
   tbody tr { border-bottom: 1px solid var(--border); }
   .r { text-align: right; }
+  tfoot .total td { border-top: 2px solid var(--border); font-weight: 600; }
   .sym { font-weight: 600; }
   .small { font-size: 12px; }
   .foot { line-height: 1.5; }

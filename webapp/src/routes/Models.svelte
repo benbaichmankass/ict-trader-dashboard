@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ModelGoodCalls from "../components/ModelGoodCalls.svelte";
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { num, agoFromIso, DASH } from "../lib/format";
@@ -111,6 +112,7 @@
 
 <section>
   <h2>Models <span class="muted sub">· by decision slot · registry (candidate → shadow → advisory)</span></h2>
+  <ModelGoodCalls />
   {#if error}
     <div class="err panel">Couldn't load models: <span class="mono">{error}</span></div>
   {:else if loading}
