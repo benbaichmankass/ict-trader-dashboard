@@ -7,7 +7,6 @@
   import ExecSummary from "../components/ExecSummary.svelte";
   import EquityChart from "../components/EquityChart.svelte";
   import TradeApprovals from "../components/TradeApprovals.svelte";
-  import OverviewChart from "../components/OverviewChart.svelte";
 
   // One funding toggle per tab — four books, never blended: Live money · Prop ·
   // Paper portfolio · Paper testing (lib/funding.ts) — + the 24h/7d/30d/All
@@ -139,19 +138,6 @@
   // account id → book, from /config (account_class + paper_role).
   const books = $derived(accountBooks(config));
   const unassignedPaper = $derived(isPaperBook(funding) ? countUnassigned(positions, books) : 0);
-  // The live chart's open-position markers + SL/TP lines follow the selected
-  // book. Prop's open legs live in the prop journal (/prop/overview
-  // open_trades), not /positions, so they are shaped into position rows here.
-  const chartPositions = $derived<Position[]>(
-    funding === "prop"
-      ? (propOverview?.open_trades ?? []).map((t: any) => ({
-          id: `prop-${t.id}`, symbol: t.symbol, side: t.side === "short" ? "sell" : "buy",
-          qty: t.qty, entryPrice: t.entry_price, account: t.account_id, accountClass: "prop",
-          stopLoss: typeof t.sl === "number" ? t.sl : null, takeProfit: typeof t.tp === "number" ? t.tp : null,
-          openedAt: t.opened_at, unrealizedPnl: typeof t.unrealized_pnl === "number" ? t.unrealized_pnl : null,
-        }) as unknown as Position)
-      : positions.filter((p) => bookOfRow(p, books) === funding),
-  );
 
 
   // Last closed trades under the open-positions table — same funding scope as
@@ -323,9 +309,6 @@
   <TradeApprovals />
 
   <ExecSummary {stats} {perf} {positions} {balances} {config} {strategies} {funding} {win} {days} {propOverview} {testingPerf} onpick={(b) => (funding = b)} />
-
-  <!-- UI-OVERVIEW-WORK-PROP: the live chart sits directly under the trade overview. -->
-  <OverviewChart positions={chartPositions} {signals} {closedTrades} />
 
   <!-- UI-UPGRADE-1 item 2: work-queue glance from /api/bot/work/snapshot.
        `present:false` is "we could not read the checklist", shown as such —
