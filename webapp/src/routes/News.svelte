@@ -1,4 +1,5 @@
 <script lang="ts">
+  import NewsSummary from "../components/NewsSummary.svelte";
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { agoFromIso, DASH } from "../lib/format";
@@ -34,6 +35,7 @@
 
 <section>
   <h2>News</h2>
+  <NewsSummary />
   {#if error}
     <div class="err panel">Couldn't load news: <span class="mono">{error}</span></div>
   {:else if loading}
@@ -55,7 +57,7 @@
           </div>
           {#if r.top_items && r.top_items.length}
             <div class="items">
-              {#each r.top_items as it (it.url ?? it.headline)}
+              {#each r.top_items as it, j (`${j}:${it.url ?? it.headline}`)}
                 <a class="hl" href={it.url} target="_blank" rel="noopener noreferrer">{it.headline}</a>
               {/each}
             </div>
