@@ -7,6 +7,7 @@
   import ExecSummary from "../components/ExecSummary.svelte";
   import EquityChart from "../components/EquityChart.svelte";
   import TradeApprovals from "../components/TradeApprovals.svelte";
+  import OverviewChart from "../components/OverviewChart.svelte";
 
   // One funding toggle per tab — four books, never blended: Live money · Prop ·
   // Paper portfolio · Paper testing (lib/funding.ts) — + the 24h/7d/30d/All
@@ -138,6 +139,9 @@
   // account id → book, from /config (account_class + paper_role).
   const books = $derived(accountBooks(config));
   const unassignedPaper = $derived(isPaperBook(funding) ? countUnassigned(positions, books) : 0);
+  // The live chart's open-position markers follow the selected book (prop's
+  // open legs live in the prop journal, not /positions → none drawn for prop).
+  const chartPositions = $derived(positions.filter((p) => bookOfRow(p, books) === funding));
 
 
   // Last closed trades under the open-positions table — same funding scope as
@@ -310,6 +314,9 @@
 
   <ExecSummary {stats} {perf} {positions} {balances} {config} {strategies} {funding} {win} {days} {propOverview} {testingPerf} onpick={(b) => (funding = b)} />
 
+  <!-- UI-OVERVIEW-WORK-PROP: the live chart sits directly under the trade overview. -->
+  <OverviewChart positions={chartPositions} {signals} {closedTrades} />
+
   <!-- UI-UPGRADE-1 item 2: work-queue glance from /api/bot/work/snapshot.
        `present:false` is "we could not read the checklist", shown as such —
        never as an empty queue. -->
@@ -347,14 +354,14 @@
 
   <div class="glances">
     {#if headlines.length}
-      <div class="glance panel">
-        <div class="gh">📰 News</div>
+      <details class="glance panel">
+        <summary class="gh">📰 News · {headlines.length} headline(s)</summary>
         <ul class="hl">
           {#each headlines as h (h.headline)}
             <li>{#if h.url}<a href={h.url} target="_blank" rel="noopener">{h.headline}</a>{:else}{h.headline}{/if}</li>
           {/each}
         </ul>
-      </div>
+      </details>
     {/if}
   </div>
 
@@ -447,6 +454,8 @@
   .chk { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
   .glances { display: grid; grid-template-columns: 1fr; gap: 10px; }
   .glance { padding: 12px; text-decoration: none; color: inherit; display: block; }
+  summary.gh { cursor: pointer; font-weight: 600; }
+  details[open] summary.gh { margin-bottom: 6px; }
   .hl { margin: 0; padding-left: 16px; font-size: 12.5px; line-height: 1.5; }
   .hl a { color: var(--accent); text-decoration: none; }
   .hl a:hover { text-decoration: underline; }
