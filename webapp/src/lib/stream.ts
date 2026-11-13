@@ -26,6 +26,11 @@ type Listener = (f: StreamFrame) => void;
 const listeners = new Set<Listener>();
 let refs = 0;
 let es: EventSource | null = null;
+// True while connect() is between its guard and assigning `es` (the ticket is minted
+// across an await). Without it, a second acquireStream() or a retry firing inside that
+// await passes the `es` guard and opens a SECOND EventSource — the first is orphaned,
+// never closed, still dispatching (AM-UI review of #246, 2026-11-13).
+let connecting = false;
 let lastSeq: number | null = null;
 let backoff = 1000;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -37,21 +42,26 @@ function dispatch(f: StreamFrame) {
 }
 
 async function connect() {
-  if (es || refs === 0) return;
-  streamStatus.set("connecting");
-  const q = new URLSearchParams();
-  const t = await streamTicket();
-  if (refs === 0) { streamStatus.set("idle"); return; }
-  if (t) q.set("ticket", t);
-  if (lastSeq != null) q.set("last_event_id", String(lastSeq));
+  if (es || connecting || refs === 0) return;
+  connecting = true;
   let src: EventSource;
   try {
-    src = new EventSource(`${getBotApiUrl()}/api/bot/stream${q.toString() ? `?${q}` : ""}`);
-  } catch {
-    scheduleRetry();
-    return;
+    streamStatus.set("connecting");
+    const q = new URLSearchParams();
+    const t = await streamTicket();
+    if (refs === 0) { streamStatus.set("idle"); return; }
+    if (t) q.set("ticket", t);
+    if (lastSeq != null) q.set("last_event_id", String(lastSeq));
+    try {
+      src = new EventSource(`${getBotApiUrl()}/api/bot/stream${q.toString() ? `?${q}` : ""}`);
+    } catch {
+      scheduleRetry();
+      return;
+    }
+    es = src;
+  } finally {
+    connecting = false;
   }
-  es = src;
   for (const type of TYPES) {
     src.addEventListener(type, (ev: MessageEvent) => {
       let f: StreamFrame;
