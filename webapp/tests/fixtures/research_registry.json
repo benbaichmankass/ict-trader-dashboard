@@ -1,0 +1,699 @@
+{
+ "schema": 1,
+ "generated_at": "2026-11-13T01:53:57Z",
+ "population": "every strategy leg in config/strategies.yaml; every ML registry row in bucket LIVE/SHADOW (plus OFFLINE rows with an attributed unit); every unit-subject that is neither; every ML plan item that is an idea; every programme question node with attributed units or an open needs_authoring",
+ "stages": [
+  {
+   "stage": "idea",
+   "label": "idea (not yet authored)"
+  },
+  {
+   "stage": "queued",
+   "label": "queued"
+  },
+  {
+   "stage": "testing_offline",
+   "label": "testing offline (Stage 0 running)"
+  },
+  {
+   "stage": "failed",
+   "label": "failed"
+  },
+  {
+   "stage": "iterating",
+   "label": "iterating (failed, open iteration unit)"
+  },
+  {
+   "stage": "passed_waiting",
+   "label": "passed, waiting to promote"
+  },
+  {
+   "stage": "testing_book",
+   "label": "testing book (Stage 1 demo floor)"
+  },
+  {
+   "stage": "production",
+   "label": "production (real money)"
+  },
+  {
+   "stage": "shadow_advisory",
+   "label": "shadow / advisory (ML)"
+  },
+  {
+   "stage": "retired",
+   "label": "retired (by record)"
+  },
+  {
+   "stage": "stuck",
+   "label": "stuck"
+  }
+ ],
+ "read_state": {
+  "research_catalog": {
+   "state": "ok",
+   "n": 2259,
+   "read_errors": 0
+  },
+  "strategy_status": {
+   "state": "ok",
+   "n": 62
+  },
+  "ml_registry": {
+   "state": "ok",
+   "source": "live /api/bot/ml/registry rows",
+   "n": 106
+  },
+  "model_names": {
+   "state": "ok",
+   "n": 31
+  },
+  "ml_plan_items": {
+   "state": "ok",
+   "n": 80
+  },
+  "programmes": {
+   "state": "ok",
+   "files": 8,
+   "nodes": 437
+  },
+  "checklist": {
+   "state": "ok",
+   "n": 1796
+  },
+  "survivor_definitions": {
+   "state": "ok",
+   "source": "scripts/research/research_slo.py"
+  },
+  "strategy_evidence": {
+   "state": "ok",
+   "n": 58,
+   "note": "PARTIAL by design: an absent record means nobody ran the producer"
+  }
+ },
+ "summary": {
+  "ideas": 360,
+  "per_track": {
+   "STRATEGY": 220,
+   "ML": 140
+  },
+  "per_stage_per_track": {
+   "STRATEGY": {
+    "idea": 118,
+    "queued": 1,
+    "testing_offline": 2,
+    "failed": 21,
+    "iterating": 1,
+    "passed_waiting": 10,
+    "testing_book": 49,
+    "production": 8,
+    "shadow_advisory": 0,
+    "retired": 3,
+    "stuck": 7
+   },
+   "ML": {
+    "idea": 50,
+    "queued": 1,
+    "testing_offline": 1,
+    "failed": 16,
+    "iterating": 2,
+    "passed_waiting": 4,
+    "testing_book": 3,
+    "production": 5,
+    "shadow_advisory": 19,
+    "retired": 0,
+    "stuck": 39
+   }
+  },
+  "changed_last_7d": {
+   "basis": "idea's newest attributed-unit activity (result, dispatch or grading) on/after 2026-11-06T01:53:57Z",
+   "count": 77,
+   "items": [
+    {
+     "id": "strategy:ict_scalp_mgc_15m",
+     "name": "ict_scalp_mgc_15m",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-13T01:12:21Z"
+    },
+    {
+     "id": "strategy:slv_trend_1h",
+     "name": "slv_trend_1h",
+     "track": "STRATEGY",
+     "stage": "production",
+     "verdict": "indeterminate",
+     "last_activity": "2026-11-12T22:39:29Z"
+    },
+    {
+     "id": "strategy:ml_entry",
+     "name": "ml_entry",
+     "track": "STRATEGY",
+     "stage": "production",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T21:58:51Z"
+    },
+    {
+     "id": "strategy:trend_donchian",
+     "name": "trend_donchian",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T21:10:00Z"
+    },
+    {
+     "id": "strategy:ief_pullback_1d",
+     "name": "ief_pullback_1d",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "indeterminate",
+     "last_activity": "2026-11-12T19:26:45Z"
+    },
+    {
+     "id": "hypothesis:ml-tm-action-value",
+     "name": "ml-tm-action-value",
+     "track": "ML",
+     "stage": "iterating",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T11:43:00Z"
+    },
+    {
+     "id": "hypothesis:ml-exit-head-donchian-1h",
+     "name": "ml-exit-head-donchian-1h",
+     "track": "ML",
+     "stage": "failed",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T10:01:35Z"
+    },
+    {
+     "id": "strategy:tlt_pullback_1h",
+     "name": "tlt_pullback_1h",
+     "track": "STRATEGY",
+     "stage": "testing_offline",
+     "verdict": "indeterminate",
+     "last_activity": "2026-11-12T08:20:15Z"
+    },
+    {
+     "id": "strategy:qqq_pullback_1h",
+     "name": "qqq_pullback_1h",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "pass",
+     "last_activity": "2026-11-12T07:05:58Z"
+    },
+    {
+     "id": "strategy:spy_pullback_1h",
+     "name": "spy_pullback_1h",
+     "track": "STRATEGY",
+     "stage": "iterating",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T04:29:51Z"
+    },
+    {
+     "id": "strategy:ada_pullback_2h",
+     "name": "ada_pullback_2h",
+     "track": "STRATEGY",
+     "stage": "production",
+     "verdict": "pass",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:avax_pullback_2h",
+     "name": "avax_pullback_2h",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:eth_pullback_2h",
+     "name": "eth_pullback_2h",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "pass",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:eth_pullback_prop_2h",
+     "name": "eth_pullback_prop_2h",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:fade_breakout_4h",
+     "name": "fade_breakout_4h",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": null,
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:fvg_range_15m",
+     "name": "fvg_range_15m",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": null,
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:gdx_pullback_1d",
+     "name": "gdx_pullback_1d",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:gld_pullback_1d",
+     "name": "gld_pullback_1d",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "indeterminate",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:gld_pullback_1h",
+     "name": "gld_pullback_1h",
+     "track": "STRATEGY",
+     "stage": "retired",
+     "verdict": "pass",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:htf_pullback_trend_2h",
+     "name": "htf_pullback_trend_2h",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:iaum_pullback_1d",
+     "name": "iaum_pullback_1d",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "indeterminate",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:ict_scalp_5m",
+     "name": "ict_scalp_5m",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:ict_scalp_avax_5m",
+     "name": "ict_scalp_avax_5m",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:ict_scalp_eth_15m",
+     "name": "ict_scalp_eth_15m",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:ict_scalp_sol_15m",
+     "name": "ict_scalp_sol_15m",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:ict_scalp_sol_5m",
+     "name": "ict_scalp_sol_5m",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:ict_scalp_xrp_15m",
+     "name": "ict_scalp_xrp_15m",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:ict_scalp_xrp_5m",
+     "name": "ict_scalp_xrp_5m",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:iwm_trend_long_1d",
+     "name": "iwm_trend_long_1d",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "indeterminate",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:mes_trend_long_1d",
+     "name": "mes_trend_long_1d",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "indeterminate",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:mgc_pullback_1d",
+     "name": "mgc_pullback_1d",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:mgc_trend_1h",
+     "name": "mgc_trend_1h",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:mhg_pullback_1d",
+     "name": "mhg_pullback_1d",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "pass",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:ml_entry_eq_struct",
+     "name": "ml_entry_eq_struct",
+     "track": "STRATEGY",
+     "stage": "production",
+     "verdict": null,
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:qld_trend_long_1d",
+     "name": "qld_trend_long_1d",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:qqq_trend_long_1d",
+     "name": "qqq_trend_long_1d",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:scha_trend_long_1d",
+     "name": "scha_trend_long_1d",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "indeterminate",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:slv_pullback_1d",
+     "name": "slv_pullback_1d",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:sol_pullback_2h",
+     "name": "sol_pullback_2h",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "fail",
+     "last_activity": "2026-11-12T00:00:00Z"
+    },
+    {
+     "id": "strategy:splg_trend_long_1d",
+     "name": "splg_trend_long_1d",
+     "track": "STRATEGY",
+     "stage": "testing_book",
+     "verdict": "indeterminate",
+     "last_activity": "2026-11-12T00:00:00Z"
+    }
+   ]
+  },
+  "stage_changes_since_previous": null,
+  "units": {
+   "total": 2259,
+   "attributed": 1426,
+   "unattributed": 833,
+   "by_attribution": {
+    "declared_subject": 487,
+    "title_match": 856,
+    "ml_plan_ref": 33,
+    "programme_node": 50
+   },
+   "check": "attributed + unattributed == total"
+  },
+  "unattributed_units": {
+   "count": 833,
+   "by_theme": {
+    "new_strategy_prop": 306,
+    "ml_health": 203,
+    "macro": 122,
+    "live_strategy": 97,
+    "timeframes": 35,
+    "infra": 27,
+    "regime": 26,
+    "none": 16,
+    "new_venue": 1
+   },
+   "by_status": {
+    "result": 720,
+    "dispatched": 6,
+    "queued": 12,
+    "retired": 8,
+    "due": 10,
+    "blocked": 77
+   },
+   "note": "units no rule could tie to one strategy/ML idea (cross-cutting infra, macro event studies, prop book compositions...). Counted, never dropped; still in /api/bot/research/catalog"
+  },
+  "ml_per_slot": {
+   "basis": "ML ideas by registry slot (docs/reference/model_names.yaml breed slot via the registry); plan items and hypotheses carry no slot -> unassigned. units = units attributed to those ideas; models_production = models with a real-money order consumer",
+   "provenance": "measured",
+   "slots": {
+    "D2": {
+     "ideas": 20,
+     "units": 15,
+     "models_production": 0,
+     "models_testing_book": 0,
+     "survivors": 0
+    },
+    "D3": {
+     "ideas": 5,
+     "units": 2,
+     "models_production": 3,
+     "models_testing_book": 2,
+     "survivors": 0
+    },
+    "D4": {
+     "ideas": 1,
+     "units": 0,
+     "models_production": 1,
+     "models_testing_book": 0,
+     "survivors": 0
+    },
+    "D7": {
+     "ideas": 1,
+     "units": 1,
+     "models_production": 1,
+     "models_testing_book": 0,
+     "survivors": 0
+    },
+    "D8": {
+     "ideas": 1,
+     "units": 0,
+     "models_production": 0,
+     "models_testing_book": 1,
+     "survivors": 0
+    },
+    "unassigned": {
+     "ideas": 112,
+     "units": 93,
+     "models_production": 0,
+     "models_testing_book": 0,
+     "survivors": 3
+    }
+   }
+  },
+  "survivors": {
+   "definition": "effective pass AND registered_before_run AND research_slo.classify_evidence holdout in HELDOUT_KINDS (attributed units only, all time)",
+   "per_track": {
+    "STRATEGY": 36,
+    "ML": 3
+   },
+   "by_class": {
+    "revalidation": 14,
+    "lever": 21,
+    "unknown": 4
+   },
+   "read_state": "ok",
+   "provenance": "measured"
+  },
+  "excluded": {
+   "ml_plan_build_items": 26,
+   "data_infra_programme_nodes": 5
+  }
+ },
+ "ideas": [
+  {
+   "id": "mlplan:ML-F23",
+   "name": "Frontier infra: ML/frontier research OFF the saturated trainer (market-only shards published to a private Kaggle dataset; trainer as its own queue)",
+   "track": "ML",
+   "kind": "ml_plan_item",
+   "programme": "P2 / ML plan track F",
+   "stage": "idea",
+   "stage_label": "idea (not yet authored)",
+   "stage_reason": "waiting on build row ML-DATA-OFF-TRAINER",
+   "latest_result": null,
+   "counts": {
+    "units": 0,
+    "passed": 0,
+    "failed": 0,
+    "indeterminate": 0,
+    "open": 0,
+    "blocked": 0
+   },
+   "counts_read_state": "read",
+   "open_units": null,
+   "survivors": {
+    "count": 0,
+    "units": null,
+    "by_class": {}
+   },
+   "next_step": "build row ML-DATA-OFF-TRAINER",
+   "owner_rows": [
+    "ML-DATA-OFF-TRAINER"
+   ],
+   "last_activity": null,
+   "links": {
+    "plan": "https://github.com/benbaichmankass/JTA-Trader/blob/main/docs/plans/ml-plan-items.yaml"
+   },
+   "plan_state": "open",
+   "ref": "ML-DATA-OFF-TRAINER",
+   "family": "none"
+  },
+  {
+   "id": "mlplan:ML-F24",
+   "name": "Frontier infra: RunPod GPU-fallback runs land an E5 result record",
+   "track": "ML",
+   "kind": "ml_plan_item",
+   "programme": "P2 / ML plan track F",
+   "stage": "idea",
+   "stage_label": "idea (not yet authored)",
+   "stage_reason": "waiting on build row ML-RUNPOD-RESULT-LANDING",
+   "latest_result": null,
+   "counts": {
+    "units": 0,
+    "passed": 0,
+    "failed": 0,
+    "indeterminate": 0,
+    "open": 0,
+    "blocked": 0
+   },
+   "counts_read_state": "read",
+   "open_units": null,
+   "survivors": {
+    "count": 0,
+    "units": null,
+    "by_class": {}
+   },
+   "next_step": "build row ML-RUNPOD-RESULT-LANDING",
+   "owner_rows": [
+    "ML-RUNPOD-RESULT-LANDING"
+   ],
+   "last_activity": null,
+   "links": {
+    "plan": "https://github.com/benbaichmankass/JTA-Trader/blob/main/docs/plans/ml-plan-items.yaml"
+   },
+   "plan_state": "open",
+   "ref": "ML-RUNPOD-RESULT-LANDING",
+   "family": "none"
+  },
+  {
+   "id": "mlplan:ML-F25",
+   "name": "W42 walk-through decisions (TTM arms, 9da8 blockers, 1414-02 re-run, TABPFN_TOKEN wiring)",
+   "track": "ML",
+   "kind": "ml_plan_item",
+   "programme": "P2 / ML plan track F",
+   "stage": "idea",
+   "stage_label": "idea (not yet authored)",
+   "stage_reason": "waiting on build row ML-FRONTIER-W42",
+   "latest_result": null,
+   "counts": {
+    "units": 0,
+    "passed": 0,
+    "failed": 0,
+    "indeterminate": 0,
+    "open": 0,
+    "blocked": 0
+   },
+   "counts_read_state": "read",
+   "open_units": null,
+   "survivors": {
+    "count": 0,
+    "units": null,
+    "by_class": {}
+   },
+   "next_step": "build row ML-FRONTIER-W42",
+   "owner_rows": [
+    "ML-FRONTIER-W42"
+   ],
+   "last_activity": null,
+   "links": {
+    "plan": "https://github.com/benbaichmankass/JTA-Trader/blob/main/docs/plans/ml-plan-items.yaml"
+   },
+   "plan_state": "open",
+   "ref": "ML-FRONTIER-W42",
+   "family": "none"
+  }
+ ],
+ "servedFrom": "built",
+ "present": true,
+ "readState": "read",
+ "matched": 360,
+ "changed": {
+  "since": "2026-11-06T01:54:22Z",
+  "basis": "default window: 7 days; idea's newest attributed-unit activity (result, dispatch or grading) on/after `since`, over the whole registry",
+  "count": 77,
+  "items": [
+   {
+    "id": "strategy:ict_scalp_mgc_15m",
+    "name": "ict_scalp_mgc_15m",
+    "track": "STRATEGY",
+    "stage": "testing_book",
+    "verdict": "fail",
+    "last_activity": "2026-11-13T01:12:21Z"
+   },
+   {
+    "id": "strategy:slv_trend_1h",
+    "name": "slv_trend_1h",
+    "track": "STRATEGY",
+    "stage": "production",
+    "verdict": "indeterminate",
+    "last_activity": "2026-11-12T22:39:29Z"
+   }
+  ]
+ },
+ "freshness": "built from the VM working tree (ict-git-sync pulls main ~every 5 min); cached 5 min",
+ "_fixture_note": "REAL capture of GET /api/bot/research/registry (2026-11-13), ideas trimmed to 3 and changed.items to 2, rows with no account, IP or dollar amount; gates/stage_rules/attribution/cross_check blocks dropped (not read by the SPA).",
+ "cache": "built"
+}
