@@ -619,6 +619,18 @@ export const api = {
     u.set("offset", String(f.offset ?? 0));
     return statusGet(`/api/bot/research/runs?${u.toString()}`, signal);
   },
+  // Idea-level R&D registry (bot #25561): ideas[] with the registry's computed stage,
+  // summary.per_stage_per_track, stages[], and `changed` over a server-side window.
+  // Status-returning so the tab can say "not available yet" on a 404.
+  researchRegistry: (f: { track?: string; stage?: string; q?: string; since?: string } = {}, signal?: AbortSignal) => {
+    const u = new URLSearchParams();
+    if (f.track) u.set("track", f.track);
+    if (f.stage) u.set("stage", f.stage);
+    if (f.q) u.set("q", f.q);
+    if (f.since) u.set("since", f.since);
+    const qs = u.toString();
+    return statusGet(`/api/bot/research/registry${qs ? `?${qs}` : ""}`, signal);
+  },
   // The alerts ledger (ungated read). `since` keeps the payload small — the
   // whole 500-row default window is ~330 KB.
   alerts: (opts: { since?: string; kind?: string; limit?: number } = {}, signal?: AbortSignal) => {
