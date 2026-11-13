@@ -12,7 +12,10 @@
   import EntryWhy from "./EntryWhy.svelte";
   import SnapshotChart from "./SnapshotChart.svelte";
 
-  let { t }: { t: ClosedTrade } = $props();
+  // `propFillId` set → a PROP trade (prop journal fill): the snapshot is
+  // /prop-trades/{fill}/snapshot and the bracket history is keyed by prop_fill_id;
+  // prop trades have tickets, not order packages, so there is no package join.
+  let { t, propFillId = null }: { t: ClosedTrade; propFillId?: number | null } = $props();
   const a = $derived(t as any);
 
   let pkg = $state<any>(null);
@@ -35,8 +38,9 @@
 
   onMount(() => {
     let alive = true;
-    if (t.id != null) {
-      api.tradeSnapshot(t.id as any).then((r) => {
+    const snapId = propFillId ?? t.id;
+    if (snapId != null) {
+      (propFillId != null ? api.propTradeSnapshot(propFillId) : api.tradeSnapshot(t.id as any)).then((r) => {
         if (!alive) return;
         if (r.status === 200 && r.body?.snapshot) { snap = r.body.snapshot; snapState = "drawn"; snapNote = (r.body.partial_reasons ?? []).join(", ") || null; }
         else if (r.status === 200 && r.body?.read_state === "no_record") { snapState = "no_record"; snapNote = (r.body?.partial_reasons ?? []).join(", ") || r.body?.detail || null; }
@@ -45,6 +49,14 @@
         else { snapState = "error"; snapNote = `${r.status}`; }
       }).catch((e) => { if (alive) { snapState = "error"; snapNote = e instanceof Error ? e.message : String(e); } });
     } else snapState = "missing";
+    if (propFillId != null) {
+      pkgState = "prop trade: no order package (prop tickets are journalled on the Prop tab)";
+      bracketState = "loading";
+      api.bracketsHistory({ propFillId }, "15m")
+        .then((b) => { if (alive) { brackets = b; bracketState = b?.read_state ?? "—"; } })
+        .catch((e) => { if (alive) bracketState = `could not look (${e instanceof Error ? e.message : String(e)})`; });
+      return () => { alive = false; };
+    }
     packageForClosedTrade(t)
       .then(async (x) => {
         if (!alive) return;

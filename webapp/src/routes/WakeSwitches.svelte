@@ -5,11 +5,11 @@
   //
   // FLIP (addendum 4: "view + flip, same backend as set_wake_toggle"): one press POSTs
   // /api/bot/wake-toggles {key, on} with the SESSION bearer (no confirm step);
-  // the bot's answer is shown verbatim and the page re-reads. ⚠️ As of 2026-11-12 the
-  // bot gates that POST with its static service token (prop.py::_require_write_token),
-  // so a flip from here is refused with 401 until the bot also accepts require_session.
-  // That 401 does NOT sign the operator out (api.flipWakeToggle keepSessionOn401).
-  // The service token itself never comes to the browser.
+  // the bot's answer is shown verbatim and the page re-reads. Since bot #25245
+  // (deployed 2026-11-13) the route accepts the operator's SPA session and records
+  // the flip as "operator-spa"; anonymous → 401. A 401 here does NOT sign the
+  // operator out (api.flipWakeToggle keepSessionOn401) — the page says to sign in.
+  // The bot's service token never comes to the browser.
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { DASH, agoFromIso } from "../lib/format";
@@ -36,7 +36,7 @@
       const why = typeof r.body?.detail === "string" ? r.body.detail : r.body?.detail ? JSON.stringify(r.body.detail) : null;
       result = r.status === 200
         ? { ok: true, text: `${c.label} is now ${c.to ? "ON" : "OFF"} (bot confirmed).` }
-        : { ok: false, text: `${r.status}${why ? `: ${why}` : ""} — nothing changed.${r.status === 401 ? " The bot accepts flips only with its service token today; flipping from the dashboard needs the bot to accept the session sign-in on this route." : ""}` };
+        : { ok: false, text: `${r.status}${why ? `: ${why}` : ""} — nothing changed.${r.status === 401 ? " The bot needs the operator session for this — sign in under Settings → Session and press again." : ""}` };
       if (r.status === 200 && r.body?.rows) data = r.body;
     } catch (e) {
       result = { ok: false, text: e instanceof Error ? e.message : String(e) };

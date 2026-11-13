@@ -38,13 +38,18 @@
  *
  * Usage:  node webapp/tests/api-contract.mjs [--self-test]
  */
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROUTES = join(HERE, "..", "src", "routes");
 const FIXTURES = join(HERE, "fixtures");
+const SRC = join(HERE, "..", "src");
+/** A bare key is a file in src/routes (every original binding); a key with a
+ *  slash is relative to src/ — so the Work tabs, which live in src/components,
+ *  can be bound too (2026-11-13). */
+const srcFile = (key) => (key.includes("/") ? join(SRC, key) : join(ROUTES, key));
 
 /**
  * route file -> { rootVar: fixture, derivedVar: "path.inside.fixture" }
@@ -54,6 +59,17 @@ const FIXTURES = join(HERE, "fixtures");
  * off the alias is checked against the right sub-object.
  */
 const BINDINGS = {
+  // GATE-REGISTRY (2026-11-12): Admin -> Gates. The fixture is a REAL captured
+  // GET /api/bot/gates (rows trimmed to one per decision/state/drift combination,
+  // and only rows with no IP, dollar amount or account id; the repo is public).
+  // `g` is the each-block row; a renamed row key bot-side fails here instead of
+  // rendering a quiet em-dash.
+  "Gates.svelte": {
+    fixture: "gates.json",
+    root: "resp",
+    paths: { resp: "" },
+    rowPaths: { g: "gates" },
+  },
   "Prop.svelte": {
     fixture: "prop_status.json",
     root: "status",
@@ -193,6 +209,41 @@ const BINDINGS = {
   // untrimmed originals, so len(items) deliberately does not equal
   // summary.total — see each file's `_fixture_note`. That does not weaken the
   // check: this guard asks whether a key EXISTS, never how many rows carry it.
+  // ---- Work tabs in src/components (2026-11-13, UI overnight queue) ----
+  // Each fixture is a REAL capture, trimmed, keeping only rows that name no
+  // account, IP or dollar amount — see each `_fixture_note`. (ml_plan.json is
+  // the one exception, and says so in its own note: GET /api/bot/ml/plan is not
+  // deployed yet, so it is bot PR #25554's own build_plan() run over its own YAML.)
+  // This week: TWO payloads — the lane cards (/work/lanes) and the rows
+  // (/work/items with counts + latest_note).
+  "components/WorkThisWeek.svelte": [
+    { fixture: "work_lanes.json", root: "lanes", paths: { lanes: "" }, rowPaths: { l: "lanes" },
+      errorBranch: { error: "bot src/web/api/routers/work_items.py:309, 503 read_state could_not_look" } },
+    { fixture: "work_items_filtered.json", root: "data", paths: { data: "" }, rowPaths: { it: "items" },
+      errorBranch: { error: "bot src/web/api/routers/work_items.py:277, 503 readState could_not_look" } },
+  ],
+  // R&D registry: the idea cards and the server-side `changed` window.
+  "components/WorkRD.svelte": {
+    fixture: "research_registry.json",
+    root: "data",
+    paths: { data: "", changed: "changed" },
+    rowPaths: { i: "ideas" },
+    errorBranch: { reason: "bot src/web/api/routers/research_catalog.py:180, readState unreadable" },
+  },
+  // Plans: the ML plan payload and its dev-plan lines.
+  "components/WorkPlans.svelte": {
+    fixture: "ml_plan.json",
+    root: "plan",
+    paths: { plan: "" },
+    rowPaths: { ln: "dev_plan.lines" },
+  },
+  // Work → Gates summary card: the same GET /api/bot/gates payload as Admin → Gates.
+  "components/WorkGates.svelte": {
+    fixture: "gates.json",
+    root: "resp",
+    paths: { resp: "", c: "counts" },
+    errorBranch: { error: "bot src/web/api/routers/gates.py:100, readState unreadable" },
+  },
 };
 
 function dig(obj, path) {
@@ -235,7 +286,7 @@ function readsByAlias(rawSrc, aliases) {
 }
 
 function checkRoute(routeFile, binding, srcOverride) {
-  const src = srcOverride ?? readFileSync(join(ROUTES, routeFile), "utf8");
+  const src = srcOverride ?? readFileSync(srcFile(routeFile), "utf8");
   const payload = JSON.parse(readFileSync(join(FIXTURES, binding.fixture), "utf8"));
   const reads = readsByAlias(src, Object.keys(binding.paths ?? {}));
   const problems = [];
@@ -254,6 +305,15 @@ function checkRoute(routeFile, binding, srcOverride) {
     }
     for (const f of [...fields].sort()) {
       if (!(f in target)) {
+        // A key the bot writes ONLY on its failure branch (e.g. `error` on a 503
+        // could_not_look) cannot appear in a success capture. It is accepted only
+        // when the binding names it in `errorBranch` WITH the bot source line
+        // that writes it, and is still printed, so it never becomes a silence.
+        const cite = alias === binding.root ? binding.errorBranch?.[f] : undefined;
+        if (cite) {
+          console.log(`  note: ${routeFile}: ${alias}?.${f} is failure-branch only (${cite})`);
+          continue;
+        }
         problems.push(
           `${routeFile}: reads '${alias}?.${f}' — absent from ` +
             `${binding.fixture}${binding.paths[alias] ? ` .${binding.paths[alias]}` : ""}. ` +
@@ -367,9 +427,20 @@ function selfTest() {
     return 1;
   }
 
-  console.log("SELF-TEST PASS  (7/7: prop defect caught · prop fix accepted · " +
+  // A failure-branch key is accepted only when cited in `errorBranch` — and an
+  // uncited one beside it is still caught.
+  const pb = BINDINGS["Prop.svelte"];
+  const i = checkRoute("Prop.svelte", { ...pb, errorBranch: { error: "test citation" } },
+    `const x = $derived(status?.error ?? null); const y = $derived(status?.reason ?? null);`);
+  if (i.problems.length !== 1 || !i.problems[0].includes("status?.reason")) {
+    console.error("SELF-TEST FAIL: errorBranch accepted the wrong set:", i.problems);
+    return 1;
+  }
+
+  console.log("SELF-TEST PASS  (8/8: prop defect caught · prop fix accepted · " +
     "empty binding refused · F-111 caught · stage fix accepted · " +
-    "empty row population refused · comments stripped without hiding real reads)");
+    "empty row population refused · comments stripped without hiding real reads · " +
+    "failure-branch keys accepted only when cited)");
   return 0;
 }
 
@@ -380,7 +451,7 @@ function main() {
   let problems = [];
   let checked = 0;
   for (const [routeFile, declared] of Object.entries(BINDINGS)) {
-    if (!present.has(routeFile)) {
+    if (!(routeFile.includes("/") ? existsSync(srcFile(routeFile)) : present.has(routeFile))) {
       problems.push(`binding declared for ${routeFile}, which does not exist`);
       continue;
     }
