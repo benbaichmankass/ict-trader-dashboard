@@ -116,13 +116,12 @@
       {:else if r.route === "error"}
         <div class="err small">Switch route error: <span class="mono">{r.err}</span>. State above is the bot's /config reading.</div>
       {/if}
-      {#if r.route === "live"}
-        <!-- One press POSTs the override (operator: no gates not asked for). Enabled exactly
+      {#if canOverride(r)}
+        <!-- One press POSTs the override (operator: no gates not asked for). Shown only
              when the bot says tripped AND override_available — the server's own state. -->
         <div class="btns">
           <input class="reason" placeholder="Reason (optional)" bind:value={reasons[r.id]} maxlength="200" />
-          <button class="go" disabled={!canOverride(r) || busy === r.id} onclick={() => doOverride(r)}
-            title={canOverride(r) ? "" : "The bot reports the switch is not tripped, or today's override is used"}>{busy === r.id ? "Sending…" : "Override once today"}</button>
+          <button class="go" disabled={busy === r.id} onclick={() => doOverride(r)}>{busy === r.id ? "Sending…" : "Override once today"}</button>
         </div>
       {/if}
       {#if results[r.id]}<div class="small" class:okmsg={results[r.id].ok} class:err={!results[r.id].ok}>{results[r.id].text}</div>{/if}
