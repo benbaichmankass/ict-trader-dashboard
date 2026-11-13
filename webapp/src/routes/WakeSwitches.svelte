@@ -3,11 +3,13 @@
   // switch page — which events wake a Claude session. Source: GET
   // /api/bot/wake-toggles (ungated). Every flip is logged bot-side with who/when.
   //
-  // ⚠️ VIEW ONLY for now. The bot's POST /api/bot/wake-toggles is gated by the static
-  // DASHBOARD_API_TOKEN bearer, NOT by the SPA's session login. Putting that token in
-  // the browser would be a new credential surface, and a 401 from it would sign the
-  // operator out (the SPA clears its session on any 401). Flipping needs the bot to
-  // accept require_session on that POST — the same pattern as /trade-approvals.
+  // FLIP (addendum 4: "view + flip, same backend as set_wake_toggle"): one press POSTs
+  // /api/bot/wake-toggles {key, on} with the SESSION bearer (no confirm step);
+  // the bot's answer is shown verbatim and the page re-reads. Since bot #25245
+  // (deployed 2026-11-13) the route accepts the operator's SPA session and records
+  // the flip as "operator-spa"; anonymous → 401. A 401 here does NOT sign the
+  // operator out (api.flipWakeToggle keepSessionOn401) — the page says to sign in.
+  // The bot's service token never comes to the browser.
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { DASH, agoFromIso } from "../lib/format";
@@ -20,6 +22,29 @@
     catch (e) { error = e instanceof Error ? e.message : String(e); }
   }
   onMount(load);
+
+  let busy = $state(false);
+  let result = $state<{ ok: boolean; text: string } | null>(null);
+  // One press flips (operator 2026-11-12: "no more gates that I don't explicitly give
+  // you permission for") — no confirm step, no signed-out disable; the bot decides and
+  // its answer is shown verbatim.
+  async function flip(c: { key: string; label: string; to: boolean }) {
+    busy = true;
+    result = null;
+    try {
+      const r = await api.flipWakeToggle(c.key, c.to);
+      const why = typeof r.body?.detail === "string" ? r.body.detail : r.body?.detail ? JSON.stringify(r.body.detail) : null;
+      result = r.status === 200
+        ? { ok: true, text: `${c.label} is now ${c.to ? "ON" : "OFF"} (bot confirmed).` }
+        : { ok: false, text: `${r.status}${why ? `: ${why}` : ""} — nothing changed.${r.status === 401 ? " The bot needs the operator session for this — sign in under Settings → Session and press again." : ""}` };
+      if (r.status === 200 && r.body?.rows) data = r.body;
+    } catch (e) {
+      result = { ok: false, text: e instanceof Error ? e.message : String(e) };
+    } finally {
+      busy = false;
+      await load();
+    }
+  }
 
   const groups = $derived.by(() => {
     const m = new Map<string, any[]>();
@@ -35,7 +60,7 @@
 <section>
   <div class="head"><h2>Wake switches</h2><button class="refresh" onclick={load}>↻ Refresh</button></div>
   <div class="muted small">Which events wake a Claude session. Source: /api/bot/wake-toggles{data?.population ? ` · ${data.population}` : ""}{data?.read_state ? ` · read_state ${data.read_state}` : ""}.</div>
-  <div class="note panel">Flipping from this dashboard is not wired yet: the bot accepts flips only with its service token, not your session sign-in. Flip from the console for now.</div>
+  {#if result}<div class="panel res" class:okmsg={result.ok} class:err={!result.ok}>{result.text}</div>{/if}
 
   {#if error}
     <div class="err panel">Couldn't load wake switches: <span class="mono">{error}</span></div>
@@ -49,7 +74,7 @@
       <div class="panel grp">
         <div class="ph">{g}</div>
         <table>
-          <thead><tr><th>Switch</th><th>State</th><th>Default</th><th>Last changed</th><th>By</th></tr></thead>
+          <thead><tr><th>Switch</th><th>State</th><th>Default</th><th>Last changed</th><th>By</th><th></th></tr></thead>
           <tbody>
             {#each rows as r (r.key)}
               <tr>
@@ -58,6 +83,7 @@
                 <td class="muted">{stateText(r.default)}</td>
                 <td class="muted">{r.changed_at ? agoFromIso(r.changed_at) : DASH}</td>
                 <td class="muted">{r.changed_by ?? DASH}</td>
+                <td>{#if r.on === true || r.on === false}<button class="flip" disabled={busy} onclick={() => flip({ key: r.key, label: r.label ?? r.key, to: !r.on })}>{busy ? "Sending…" : `Turn ${r.on ? "off" : "on"}`}</button>{/if}</td>
               </tr>
             {/each}
           </tbody>
@@ -85,7 +111,10 @@
   .head { display: flex; align-items: center; justify-content: space-between; }
   h2 { margin: 0; font-size: 18px; }
   .refresh { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 5px 12px; cursor: pointer; font-size: 13px; }
-  .note { padding: 8px 12px; font-size: 12.5px; color: var(--muted); }
+  .flip { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12.5px; }
+  .flip:disabled { opacity: 0.5; cursor: not-allowed; }
+  .res { padding: 8px 12px; font-size: 13px; }
+  .okmsg { color: var(--pos); }
   .warn { padding: 8px 12px; color: #d4a017; }
   .grp { padding: 4px 4px 8px; overflow-x: auto; }
   .ph { padding: 10px 10px 6px; font-weight: 600; text-transform: capitalize; }

@@ -160,7 +160,7 @@ export interface Strategy {
 // the trade-approval decision (session-gated, `require_session`).
 async function rawFetch(
   path: string,
-  init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+  init: { method?: string; body?: unknown; signal?: AbortSignal; keepSessionOn401?: boolean } = {},
 ): Promise<Response> {
   const url = `${getBotApiUrl()}${path}`;
   const hasBody = init.body !== undefined;
@@ -170,7 +170,7 @@ async function rawFetch(
     headers: authHeaders(hasBody ? { "Content-Type": "application/json" } : undefined),
     body: hasBody ? JSON.stringify(init.body) : undefined,
   });
-  if (res.status === 401 || res.status === 403) {
+  if ((res.status === 401 || res.status === 403) && !init.keepSessionOn401) {
     // Drop the dead session and surface the form. Throwing a distinct type
     // lets the route render a sign-in affordance instead of a status line.
     handleUnauthorized(res.status, path);
@@ -686,8 +686,17 @@ export const api = {
 
   // Admin — health / logs / data explorer.
   healthServices: (signal?: AbortSignal) => get<any>("/api/bot/health/services", signal),
-  // Wake-notification switches (ungated read; the POST is service-token gated bot-side).
+  // Wake-notification switches (ungated read; the POST takes the operator session, bot #25245).
   wakeToggles: (signal?: AbortSignal) => get<any>("/api/bot/wake-toggles", signal),
+  // Flip one wake switch: POST {key, on, by} with the session bearer. Since bot
+  // #25245 the route takes the operator session (recorded as "operator-spa"; the
+  // body's `by` is ignored for a session) or the service token; anonymous → 401.
+  // A 401 does not sign the operator out here (keepSessionOn401): the caller shows
+  // the bot's answer verbatim and asks for a sign-in.
+  flipWakeToggle: async (key: string, on: boolean): Promise<{ status: number; body: any }> => {
+    const res = await rawFetch("/api/bot/wake-toggles", { method: "POST", body: { key, on, by: "dashboard (operator session)" }, keepSessionOn401: true });
+    return { status: res.status, body: await res.json().catch(() => null) };
+  },
   // ── Backend routes from JTA-Trader #25216 / #25231 (held at the time of writing).
   // Each returns { status, body } and does NOT throw on 404/4xx, so a page can say
   // "not available yet" / "could not look" instead of inventing a state.
