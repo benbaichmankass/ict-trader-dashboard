@@ -606,6 +606,19 @@ export const api = {
   // roll-up of every work row, and pipeline items with kind:"insight".
   workTopics: (signal?: AbortSignal) => get<any>("/api/bot/work/topics", signal),
   workLedger: (signal?: AbortSignal) => get<any>("/api/bot/work/ledger", signal),
+  // Backtest / research run log (bot #25562): runs[] newest first, each with a computed
+  // what_we_did {state acted|recorded|none_recorded, follow_ups[], disposition, retired_reason};
+  // counts over the whole log; trainer_sweeps age. 404 until that PR deploys.
+  researchRuns: (f: { verdict?: string; what?: string; q?: string; since?: string; limit?: number; offset?: number } = {}, signal?: AbortSignal) => {
+    const u = new URLSearchParams();
+    if (f.verdict) u.set("verdict", f.verdict);
+    if (f.what) u.set("what", f.what);
+    if (f.q) u.set("q", f.q);
+    if (f.since) u.set("since", f.since);
+    u.set("limit", String(f.limit ?? 50));
+    u.set("offset", String(f.offset ?? 0));
+    return statusGet(`/api/bot/research/runs?${u.toString()}`, signal);
+  },
   // The alerts ledger (ungated read). `since` keeps the payload small — the
   // whole 500-row default window is ~330 KB.
   alerts: (opts: { since?: string; kind?: string; limit?: number } = {}, signal?: AbortSignal) => {
