@@ -491,6 +491,22 @@ export const api = {
     }
     return { ...body, status: res.status };
   },
+  // DD-SWITCH-OVERRIDE (bot #25181). GET is an open read; a 404 (route not deployed,
+  // or unknown account) comes back as { status: 404 } — NOT thrown — so the control
+  // can say "not available yet" instead of inventing a state.
+  dailyDdSwitch: async (account: string): Promise<{ status: number; body: any }> => {
+    const res = await rawFetch(`/api/bot/accounts/${encodeURIComponent(account)}/daily-dd-switch`);
+    return { status: res.status, body: await res.json().catch(() => null) };
+  },
+  // POST behind require_session. Every non-auth status (200 / 400 / 404 / 409 / 503)
+  // is returned with its body so the operator sees the bot's reason verbatim.
+  overrideDdSwitch: async (account: string, reason?: string): Promise<{ status: number; body: any }> => {
+    const res = await rawFetch(`/api/bot/accounts/${encodeURIComponent(account)}/daily-dd-switch/override`, {
+      method: "POST",
+      body: reason ? { reason } : {},
+    });
+    return { status: res.status, body: await res.json().catch(() => null) };
+  },
 
   stats: (signal?: AbortSignal) => get<BotStats>("/api/bot/stats", signal),
   positions: (signal?: AbortSignal) =>

@@ -11,6 +11,7 @@
   import TradeApprovals from "../components/TradeApprovals.svelte";
   import { acquireStream, onStreamFrame, streamStatus, isStreamLive } from "../lib/stream";
   import HealthBar from "../components/HealthBar.svelte";
+  import DdSwitchControl from "../components/DdSwitchControl.svelte";
 
   // One funding toggle per tab — four books, never blended: Live money · Prop ·
   // Paper portfolio · Paper testing (lib/funding.ts) — + the 24h/7d/30d/All
@@ -41,10 +42,11 @@
   let propOverview = $state<any>(null); // /api/bot/prop/overview (Prop book only)
   let workSnap = $state<any>(null); // /api/bot/work/snapshot (UI-UPGRADE-1 item 2)
   let workSnapError = $state<string | null>(null);
-  let ltrPending = $state(0);
+  let ddTripped = $state(0); // armed accounts whose daily drawdown switch is tripped
+  let ltrPending = $state(0); // LTR trade decisions waiting (bound out of TradeApprovals)
   // Work "testing queue" (GET /api/bot/work/testing-queue, bot #25231); null until it answers 200.
   let tq = $state<any>(null);
-  let tqState = $state("loading"); // LTR trade decisions waiting (bound out of TradeApprovals)
+  let tqState = $state("loading");
   let pnl30 = $state<Array<{ date?: string; pnl?: number | null }>>([]);
   let apiError = $state<string | null>(null);
 
@@ -400,8 +402,10 @@
   <div class="panel workq">
     <div class="ph">Work queue <a class="wlink" href="#/Work">open Work →</a></div>
     <div class="wcards">
-      <div class="wcard" class:hotcard={ltrPending > 0 || (workSnap?.waitingOnOperator ?? []).length > 0}>
-        <div class="wh">⏳ Waiting on me · {ltrPending + (workSnap?.waitingOnOperator ?? []).length}</div>
+      <div class="wcard" class:hotcard={ddTripped > 0 || ltrPending > 0 || (workSnap?.waitingOnOperator ?? []).length > 0}>
+        <div class="wh">⏳ Waiting on me · {ddTripped + ltrPending + (workSnap?.waitingOnOperator ?? []).length}</div>
+        <!-- m7: a tripped daily-drawdown switch is a real-money decision (override once a day). -->
+        <DdSwitchControl onlyTripped bind:trippedCount={ddTripped} />
         <TradeApprovals embedded bind:pendingCount={ltrPending} />
         <div class="wsub">Other asks</div>
         {#if workSnap && workSnap.present === false}
