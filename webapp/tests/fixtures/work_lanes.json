@@ -1,0 +1,205 @@
+{
+ "read_state": "read",
+ "as_of": "2026-11-13T01:53:02Z",
+ "moved_since": "2026-11-13T00:00:00Z",
+ "lanes": [
+  {
+   "am": "AM-DEVOPS",
+   "open": 5,
+   "headline": null,
+   "headline_read_state": "absent",
+   "moved_today": {
+    "read_state": "read",
+    "count": 0,
+    "items": []
+   },
+   "working_now": {
+    "read_state": "read",
+    "count": 2,
+    "items": [
+     {
+      "id": "CI-FULL-SUITE-SLOWDOWN-1112",
+      "title": "Full pytest-run suite (27,925 tests) takes 40-53 min per run vs 14.4 min measured at CI-DIET (10-13); each full run holds 1 of the 20 hosted-runner slots 3-4x longer, saturating Actions (MEASURED 2026-11-12: jobs 131070147506 2397s, 131060816113 3209s, image ubuntu-26.04 20261101.186.1; scoped runs ~3.2k tests still 7-12 min). Find the cause with a --durations compare (slow files, xdist worker count, network or sleep in tests); fix it in the tests, never by deselecting.",
+      "state": "in_flight",
+      "updated_at": "2026-11-12T11:32:48Z"
+     }
+    ]
+   },
+   "stuck": {
+    "read_state": "read",
+    "count": 2,
+    "items": [
+     {
+      "id": "GATE-CI-LANDING",
+      "title": "Implement operator gate decisions 2026-11-12 (CI + landing): required checks -> [guards]; 16 run_guards guards report-only; PRL R7/R8/R9/R14 removed, R6 report-only; system-actions concurrency report-only",
+      "state": "blocked",
+      "updated_at": "2026-11-12T13:38:32Z"
+     }
+    ]
+   },
+   "next": {
+    "read_state": "read",
+    "count": 1,
+    "items": [
+     {
+      "id": "CI-API-TIER-COVERAGE-HEADLINE-RACE",
+      "title": "docs/api-tier-policy.md literal route-count headline turns every route-adding PR red after another lands",
+      "state": "queued",
+      "updated_at": "2026-11-12T17:35:09Z"
+     }
+    ]
+   }
+  },
+  {
+   "am": "AM-ML",
+   "open": 218,
+   "headline": null,
+   "headline_read_state": "absent",
+   "moved_today": {
+    "read_state": "read",
+    "count": 3,
+    "items": [
+     {
+      "id": "RESEARCH-DISPATCH-INFRA-STARVE",
+      "title": "Research dispatch fired 0 units 17:43Z..22:33Z on 2026-11-12 (infra yield always met: system-actions + phone-executor-apk kept >= 2 fresh infra runs queued). Manager decision 22:33Z: infra-yield starvation floor (2 h, one fire/cycle), drop phone-executor-apk from infra_workflows, research-queue-health idle page 12 h -> 4 h. PR #25526. Done when the first unit fires after deploy (dispatch run id + unit id recorded). Gates: none.",
+      "state": "done",
+      "updated_at": "2026-11-13T01:23:57Z"
+     }
+    ]
+   },
+   "working_now": {
+    "read_state": "read",
+    "count": 24,
+    "items": [
+     {
+      "id": "ML-ENTRY-HOLE-SAFE-ADOPT",
+      "title": "Adopt build_table(hole_safe=True) (from #25460) in every ml_decision_entry consumer: the grade, the diag and the retrain/dataset scripts. Positional rolling features/ATR spanning a bar hole corrupt 168 bars after it. MEASURED: one 2026-10-28 hole moved a 14-day grade from -0.2127 to -0.1316 (n 373 -> 317). Steps: (1) census the historic bar holes in the crypto 1h lake (count, symbols, dates); (2) switch the default to hole-safe and re-grade the affected committed records, recording old vs new; (3) for training sets, rebuild hole-safe and record the feature diff. A served-model retrain follows the normal evidence path. NOT a refusal: a window with a gap is regridded and graded, never refused (operator 2026-11-12, no new gates). Done when the census is committed and every consumer builds hole-safe by default. Gates: none.",
+      "state": "in_flight",
+      "updated_at": "2026-11-13T01:24:21Z"
+     }
+    ]
+   },
+   "stuck": {
+    "read_state": "read",
+    "count": 22,
+    "items": [
+     {
+      "id": "ML-FS-BRACKETS-HOLD",
+      "title": "BRACKETS and HOLD/ADJUST/CLOSE read the same feature store: BRACKETS re-scored on v2 features 2026-11-02T12:00Z; in-trade path features from the store 2026-11-03T12:00Z",
+      "state": "blocked",
+      "updated_at": "2026-11-12T23:18:29Z"
+     }
+    ]
+   },
+   "next": {
+    "read_state": "read",
+    "count": 169,
+    "items": [
+     {
+      "id": "ML-UNIVERSE-RULE",
+      "title": "System-wide config rule: accounts configure only which strategies/MLs are active; no per-symbol config; an ML's traded symbols are internal to the ML, set by which per-symbol tests passed. Codify in the canonical docs and apply to every ML",
+      "state": "queued",
+      "updated_at": "2026-11-12T09:14:54Z"
+     }
+    ]
+   }
+  },
+  {
+   "am": "AM-OPS",
+   "open": 584,
+   "headline": null,
+   "headline_read_state": "absent",
+   "moved_today": {
+    "read_state": "read",
+    "count": 7,
+    "items": [
+     {
+      "id": "FUT-CME-INTRADAY-HIST",
+      "title": "CME micro intraday history (real contract) for MES/MNQ/MGC 1m-5m, point-in-time with rolls, 2019+: IB historical via ict-ib-gateway or Databento GLBX.MDP3 (spend decision)",
+      "state": "landed_unproven",
+      "updated_at": "2026-11-13T01:45:01Z"
+     }
+    ]
+   },
+   "working_now": {
+    "read_state": "read",
+    "count": 19,
+    "items": [
+     {
+      "id": "HOLD-ALARM-PING-DIRECT",
+      "title": "JC-CA-04 hold-merge alarm: send its ping over the direct ops channel instead of a system-actions issue (option b)",
+      "state": "in_flight",
+      "updated_at": "2026-11-13T01:05:24Z"
+     }
+    ]
+   },
+   "stuck": {
+    "read_state": "read",
+    "count": 9,
+    "items": [
+     {
+      "id": "WSD-DRAIN-W1",
+      "title": "WORK-STORE D2 drain wave 1: every undated open landed_unproven row (255 on 11-04) gets a dated closing observation or is closed with a stated reason",
+      "state": "queued",
+      "updated_at": "2026-11-12T09:20:57Z"
+     }
+    ]
+   },
+   "next": {
+    "read_state": "read",
+    "count": 548,
+    "items": [
+     {
+      "id": "WSD-S6E-OPS-RECORDS",
+      "title": "WORK-STORE S6e: ops records off the repo \u2014 manager handoff docs, merge-slot claims (.github/merge-slots), landing intents (.github/pr-landing, pr-automerge-requests) become work-store notes/fields; docs-only PRs take the data-only CI fast path",
+      "state": "queued",
+      "updated_at": "2026-11-12T09:16:22Z"
+     }
+    ]
+   }
+  }
+ ],
+ "week_lanes": {
+  "surge": {
+   "total": 186,
+   "by_state": {
+    "landed_unproven": 24,
+    "queued": 64,
+    "in_flight": 43,
+    "blocked": 11,
+    "done": 33,
+    "dropped": 11
+   }
+  },
+  "throttle": {
+   "total": 211,
+   "by_state": {
+    "in_flight": 2,
+    "queued": 180,
+    "dropped": 2,
+    "done": 19,
+    "landed_unproven": 5,
+    "blocked": 3
+   }
+  },
+  "standing": {
+   "total": 7,
+   "by_state": {
+    "queued": 6,
+    "blocked": 1
+   }
+  }
+ },
+ "population": {
+  "items": 4573,
+  "lanes": 6,
+  "moved_today": 28,
+  "moved_today_unknown_items": 0
+ },
+ "provenance": {
+  "measure": "MEASURED",
+  "source": "work_store items + events (hash-chained)",
+  "grouping": "owner -> AM-* prefix, else 'other'"
+ },
+ "_fixture_note": "REAL capture of GET /api/bot/work/lanes?next_n=5 (2026-11-13), trimmed to 3 lanes / 1 item per list; rows naming accounts, IPs or dollar amounts dropped (public repo)."
+}
