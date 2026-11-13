@@ -222,6 +222,14 @@ const BINDINGS = {
     { fixture: "work_items_filtered.json", root: "data", paths: { data: "" }, rowPaths: { it: "items" },
       errorBranch: { error: "bot src/web/api/routers/work_items.py:277, 503 readState could_not_look" } },
   ],
+  // R&D registry: the idea cards and the server-side `changed` window.
+  "components/WorkRD.svelte": {
+    fixture: "research_registry.json",
+    root: "data",
+    paths: { data: "", changed: "changed" },
+    rowPaths: { i: "ideas" },
+    errorBranch: { reason: "bot src/web/api/routers/research_catalog.py:180, readState unreadable" },
+  },
   // Plans: the ML plan payload and its dev-plan lines.
   "components/WorkPlans.svelte": {
     fixture: "ml_plan.json",
