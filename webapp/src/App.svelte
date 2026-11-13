@@ -30,6 +30,7 @@
   import WorkTopics from "./routes/WorkTopics.svelte";
   import WorkOverview from "./components/WorkOverview.svelte";
   import WorkDecisions from "./components/WorkDecisions.svelte";
+  import WorkPlans from "./components/WorkPlans.svelte";
   import WorkThisWeek from "./components/WorkThisWeek.svelte";
   import Gates from "./routes/Gates.svelte";
   import SectionLanding from "./components/SectionLanding.svelte";
@@ -58,6 +59,7 @@
     // R&D registry / Plans slot in here as their routes land (Gates is Admin's).
     { value: "decisions", label: "Decisions" },
     { value: "week", label: "This week" },
+    { value: "plans", label: "Plans" },
     { value: "work", label: "Work" },
     { value: "roadmap", label: "Roadmap" },
     { value: "topics", label: "Topics & insights" },
@@ -231,7 +233,7 @@
       {:else if $nav.section === "Work"}
         <!-- UI-UPGRADE-1: Roadmap folded into Work — one tab, two views. -->
         <div class="worktabs"><Segmented options={WORK_VIEWS} bind:value={workView} /></div>
-        {#if workView === "roadmap"}<Roadmap />{:else if workView === "gpu"}<GPUSpend />{:else if workView === "topics"}<WorkTopics />{:else if workView === "overview"}<WorkOverview />{:else if workView === "decisions"}<WorkDecisions />{:else if workView === "week"}<WorkThisWeek />{:else}<Work />{/if}
+        {#if workView === "roadmap"}<Roadmap />{:else if workView === "gpu"}<GPUSpend />{:else if workView === "topics"}<WorkTopics />{:else if workView === "overview"}<WorkOverview />{:else if workView === "decisions"}<WorkDecisions />{:else if workView === "week"}<WorkThisWeek />{:else if workView === "plans"}<WorkPlans />{:else}<Work />{/if}
       {:else if isSpecial($nav.section)}
         <Placeholder page={$nav.section} />
       {:else if $nav.detail == null && (SECTIONS[$nav.section] ?? []).length === 1 && DETAIL[SECTIONS[$nav.section][0]]}
