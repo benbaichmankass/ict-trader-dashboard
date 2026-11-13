@@ -30,6 +30,7 @@
   import WorkTopics from "./routes/WorkTopics.svelte";
   import WorkOverview from "./components/WorkOverview.svelte";
   import WorkDecisions from "./components/WorkDecisions.svelte";
+  import WorkPlans from "./components/WorkPlans.svelte";
   import WorkThisWeek from "./components/WorkThisWeek.svelte";
   import WorkGates from "./components/WorkGates.svelte";
   import WorkRD from "./components/WorkRD.svelte";
@@ -61,6 +62,7 @@
     { value: "decisions", label: "Decisions" },
     { value: "week", label: "This week" },
     { value: "gates", label: "Gates" },
+    { value: "plans", label: "Plans" },
     { value: "rd", label: "R&D registry" },
     { value: "work", label: "Work" },
     { value: "roadmap", label: "Roadmap" },
@@ -235,7 +237,7 @@
       {:else if $nav.section === "Work"}
         <!-- UI-UPGRADE-1: Roadmap folded into Work — one tab, two views. -->
         <div class="worktabs"><Segmented options={WORK_VIEWS} bind:value={workView} /></div>
-        {#if workView === "roadmap"}<Roadmap />{:else if workView === "gpu"}<GPUSpend />{:else if workView === "topics"}<WorkTopics />{:else if workView === "overview"}<WorkOverview />{:else if workView === "decisions"}<WorkDecisions />{:else if workView === "week"}<WorkThisWeek />{:else if workView === "gates"}<WorkGates />{:else if workView === "rd"}<WorkRD />{:else}<Work />{/if}
+        {#if workView === "roadmap"}<Roadmap />{:else if workView === "gpu"}<GPUSpend />{:else if workView === "topics"}<WorkTopics />{:else if workView === "overview"}<WorkOverview />{:else if workView === "decisions"}<WorkDecisions />{:else if workView === "week"}<WorkThisWeek />{:else if workView === "gates"}<WorkGates />{:else if workView === "plans"}<WorkPlans />{:else if workView === "rd"}<WorkRD />{:else}<Work />{/if}
       {:else if isSpecial($nav.section)}
         <Placeholder page={$nav.section} />
       {:else if $nav.detail == null && (SECTIONS[$nav.section] ?? []).length === 1 && DETAIL[SECTIONS[$nav.section][0]]}
