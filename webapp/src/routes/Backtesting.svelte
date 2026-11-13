@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api } from "../lib/api";
   import { agoFromIso, DASH } from "../lib/format";
+  import BacktestRunLog from "../components/BacktestRunLog.svelte";
 
   let present = $state<boolean | null>(null);
   let sweeps = $state<any[]>([]);
@@ -30,7 +31,10 @@
 </script>
 
 <section>
-  <h2>Backtesting <span class="muted sub">· trainer-VM strategy sweeps</span></h2>
+  <h2>Backtesting <span class="muted sub">· the run log, then the trainer-VM strategy sweeps</span></h2>
+  <!-- Queue S4 (bot #25562): every test run, its result and what we did with it. -->
+  <BacktestRunLog />
+  <div class="h3">Trainer-VM strategy sweeps <span class="muted sub">· on-demand, operator-run</span></div>
   {#if error}
     <div class="err panel">Couldn't load sweeps: <span class="mono">{error}</span></div>
   {:else if loading}
@@ -67,6 +71,7 @@
 <style>
   section { display: flex; flex-direction: column; gap: 12px; }
   h2 { margin: 0; font-size: 18px; }
+  .h3 { font-weight: 600; font-size: 14px; margin-top: 4px; }
   .sub { font-size: 12px; font-weight: 400; }
   .pad { padding: 14px; }
   .warn { color: #e0a800; font-size: 13px; }

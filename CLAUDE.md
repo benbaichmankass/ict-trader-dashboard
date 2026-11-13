@@ -9,6 +9,15 @@
 > the **Learning** tab POSTs to `/api/bot/learning/progress` to mark a curriculum
 > resource done — likewise a pure observability write (no order path, no live
 > state). These two are the only writes the dashboard makes.
+> **Operator writes (2026-11-12 onward)**, each sent with the operator session
+> via `api.ts` (same `authHeaders()` bearer as reads), each recording an operator
+> decision on the bot side. The list, not a count, is the record; add yours here:
+> - **Admin → Gates**: `POST /api/bot/gates/{id}/decision` (keep / remove /
+>   report_only / undecided + note). A gate-registry decision record; it places
+>   or modifies no order and changes no code.
+> - The UI-SPA stack adds trade-approvals Approve/Reject (#238), the daily
+>   drawdown-switch override (#244) and the wake-switch flip (#245). Each PR
+>   records its own write here when it lands.
 
 ## Operating rules live in the bot repo
 

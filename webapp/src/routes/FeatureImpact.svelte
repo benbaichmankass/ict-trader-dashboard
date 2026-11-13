@@ -52,6 +52,26 @@
     if (typeof v !== "number" || !Number.isFinite(v) || max <= 0) return "";
     return `rgba(76,141,255,${(0.08 + 0.82 * (v / max)).toFixed(3)})`;
   }
+  // u6 (operator 2026-11-12): the invest ranking is "edge x coverage gap /
+  // collection cost, every factor shown". The bot's item schema is not fixed yet
+  // (the route is not_computed), so the columns are the union of the items' own
+  // fields in first-seen order: every factor gets a column, never one score alone.
+  const investCols = $derived.by(() => {
+    const cols: string[] = [];
+    for (const it of invest?.items ?? []) for (const k of Object.keys(it ?? {})) if (!cols.includes(k)) cols.push(k);
+    return cols;
+  });
+  const investNumeric = $derived.by(() => {
+    const out: Record<string, boolean> = {};
+    for (const c of investCols) out[c] = (invest?.items ?? []).every((it: any) => it?.[c] == null || typeof it[c] === "number");
+    return out;
+  });
+  function cellText(v: unknown): string {
+    if (v == null || (typeof v === "number" && !Number.isFinite(v))) return DASH;
+    if (typeof v === "number") return Number.isInteger(v) ? String(v) : v.toPrecision(4);
+    if (typeof v === "object") return JSON.stringify(v);
+    return String(v);
+  }
   const share = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : DASH);
   function tip(c: any): string {
     if (!c) return "no cell: this family has no importance recorded for this column";
@@ -142,14 +162,32 @@
     {#if !invest}
       <div class="muted">Loading…</div>
     {:else if (invest.items ?? []).length}
-      <ol>{#each invest.items as it, i (i)}<li class="mono small">{JSON.stringify(it)}</li>{/each}</ol>
+      <div class="scroll">
+        <table class="inv">
+          <thead><tr><th>#</th>{#each investCols as c (c)}<th class:r={investNumeric[c]}>{c}</th>{/each}</tr></thead>
+          <tbody>
+            {#each invest.items as it, i (i)}
+              <tr><td class="mono muted">{i + 1}</td>{#each investCols as c (c)}<td class="mono" class:r={investNumeric[c]}>{cellText(it?.[c])}</td>{/each}</tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+      <div class="muted small">Every factor the bot sends is its own column, in the bot's order; nothing is blended or recomputed here.</div>
     {:else}
-      <div class="muted small">Not ranked yet — read_state <b>{invest.read_state ?? DASH}</b>{invest.reason ? `: ${invest.reason}` : ""}.</div>
+      <div class="muted small">
+        Not ranked yet — read_state <b>{invest.read_state ?? DASH}</b>{invest.reason ? `: ${invest.reason}` : ""}.
+        When it is, each factor of the ranking (edge × coverage gap ÷ collection cost) is shown as its own column next to the result, not one blended score.
+      </div>
     {/if}
   </div>
 </section>
 
 <style>
+  .scroll { overflow-x: auto; }
+  table.inv { border-collapse: collapse; font-size: 12px; width: 100%; }
+  table.inv th, table.inv td { padding: 5px 8px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--border); }
+  table.inv th { color: var(--muted); font-weight: 500; }
+  table.inv .r { text-align: right; }
   section { display: flex; flex-direction: column; gap: 12px; }
   .head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
   h2 { margin: 0 auto 0 0; font-size: 18px; }
