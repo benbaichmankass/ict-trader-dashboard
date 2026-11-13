@@ -548,8 +548,12 @@ export const api = {
   // state, due (the due_now view), since (ISO), kind, limit<=1000, offset. NOTE:
   // `total` is the WHOLE store's count (count_items()), not the filtered count, and
   // there is no next_offset — a full page is the only "maybe more" signal.
+  // bot #25542 adds: state=open (every non-terminal state), owner_prefix, week_lane, q,
+  // counts=1 (owner x state over the whole filtered set) and latest_note=1; an extended
+  // read also answers `matched` (the filtered count). An older bot ignores them.
   workItems: (
-    q: { state?: string; due?: boolean; since?: string; kind?: string; limit?: number; offset?: number } = {},
+    q: { state?: string; due?: boolean; since?: string; kind?: string; parent?: string; limit?: number; offset?: number;
+         ownerPrefix?: string; weekLane?: string; q?: string; counts?: boolean; latestNote?: boolean } = {},
     signal?: AbortSignal,
   ) => {
     const u = new URLSearchParams();
@@ -557,10 +561,19 @@ export const api = {
     if (q.due) u.set("due", "1");
     if (q.since) u.set("since", q.since);
     if (q.kind) u.set("kind", q.kind);
+    if (q.parent) u.set("parent", q.parent);
+    if (q.ownerPrefix) u.set("owner_prefix", q.ownerPrefix);
+    if (q.weekLane) u.set("week_lane", q.weekLane);
+    if (q.q) u.set("q", q.q);
+    if (q.counts) u.set("counts", "1");
+    if (q.latestNote) u.set("latest_note", "1");
     u.set("limit", String(q.limit ?? 50));
     u.set("offset", String(q.offset ?? 0));
     return get<any>(`/api/bot/work/items?${u.toString()}`, signal);
   },
+  // Per-AM lane cards (bot #25542): moved_today / working_now / stuck / next, each
+  // {read_state, count, items[]}, plus week_lanes totals. 404 until that PR deploys.
+  workLanes: (nextN = 5, signal?: AbortSignal) => statusGet(`/api/bot/work/lanes?next_n=${nextN}`, signal),
 
   // The manager checklist, graded by the bot. ⚠️ `status.value` and
   // `status.basis` arrive ALREADY RECONCILED — the file carries two competing

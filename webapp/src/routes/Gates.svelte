@@ -25,6 +25,7 @@
     dash,
     realMoneyText,
     decisionLabel,
+    ATTENTION_LABEL,
     prUrl,
     shortSha,
     hitsText,
@@ -75,7 +76,7 @@
     const mine = ++seq;
     if (!quiet) loading = true;
     try {
-      const r = await api.gates({ category, decision, state: gstate, real_money: realMoney });
+      const r = await api.gates({ category, decision, state: gstate, real_money: realMoney, sort: "attention" });
       if (mine !== seq) return; // a newer filter's request superseded this one
       resp = r;
       seenCategories = categoryOptions(seenCategories, r);
@@ -149,6 +150,34 @@
     await loadDetail(g.id);
   }
 
+  // Bulk: accept the audit's recommendation for every WAITING gate shown (design
+  // § Tab 4). One press runs it — no confirm(). A waiting gate with no
+  // recommendation (operator-preference row) is SKIPPED, never guessed. Each POST is
+  // the same session-auth decision route as the per-row buttons; the tally below is
+  // what the server answered, and the first failure messages are shown verbatim.
+  const waitingShown = $derived(rows.filter((g) => g.operator_decision === "undecided" || g.operator_decision == null));
+  const waitingWithRec = $derived(waitingShown.filter((g) => g.recommended_decision != null));
+  let bulk = $state<{ running: boolean; done: number; total: number; set: number; skipped: number; failed: number; errors: string[] } | null>(null);
+  async function acceptRecommendations() {
+    const targets = [...waitingShown];
+    bulk = { running: true, done: 0, total: targets.length, set: 0, skipped: 0, failed: 0, errors: [] };
+    for (const g of targets) {
+      const rec = g.recommended_decision;
+      if (rec == null) { bulk.skipped++; bulk.done++; continue; }
+      try {
+        const r = await api.gateDecision(g.id, rec, "accepted the audit recommendation (bulk)");
+        if (r.ok) bulk.set++;
+        else { bulk.failed++; if (bulk.errors.length < 5) bulk.errors.push(`${g.id}: HTTP ${r.status} ${serverAnswer(r.status, r.body, r.text)}`); }
+      } catch (e) {
+        bulk.failed++;
+        if (bulk.errors.length < 5) bulk.errors.push(`${g.id}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      bulk.done++;
+    }
+    bulk.running = false;
+    await load(true);
+  }
+
   function countList(m: Record<string, number | null> | null | undefined): [string, string][] {
     return Object.entries(m ?? {}).map(([k, v]) => [k.replace(/_/g, " "), dash(v)]);
   }
@@ -215,6 +244,11 @@
           <span class="muted small">{dash(resp.population?.description)}</span>
         </div>
         <div class="stat panel wide">
+          <span class="k">By attention (the route's rank)</span>
+          <span class="chips">{#each Object.entries(resp.counts?.by_attention_rank ?? {}) as [k, v] (k)}<span class="chip" title={ATTENTION_LABEL[k] ?? ""}>{k} · {ATTENTION_LABEL[k] ?? k} <b>{dash(v)}</b></span>{:else}<span class="muted">—</span>{/each}</span>
+        </div>
+        <div class="stat panel"><span class="k">With a recommendation</span><span class="v">{dash(resp.counts?.recommendation_acceptable)}</span><span class="muted small">of {dash(resp.population?.total)}</span></div>
+        <div class="stat panel wide">
           <span class="k">By decision</span>
           <span class="chips">{#each countList(resp.counts?.by_decision) as [k, v] (k)}<span class="chip">{k} <b>{v}</b></span>{:else}<span class="muted">—</span>{/each}</span>
         </div>
@@ -238,6 +272,19 @@
         · read state <span class:neg={resp.refresh?.read_state != null && resp.refresh?.read_state !== "read"}>{dash(resp.refresh?.read_state)}</span>
         {#if resp.refresh?.error}<span class="neg"> · error: {resp.refresh.error}</span>{/if}
         {#if flaggedCount > 0}<span class="neg"> · {flaggedCount} flagged row{flaggedCount === 1 ? "" : "s"} pinned on top</span>{/if}
+      </div>
+
+      <div class="bulk panel">
+        <button class="dbtn bulkbtn" disabled={!!bulk?.running || waitingShown.length === 0} onclick={acceptRecommendations}>
+          Accept the recommendation for every waiting gate shown ({waitingShown.length})
+        </button>
+        <span class="muted small">{waitingWithRec.length} have a recommendation · {waitingShown.length - waitingWithRec.length} would be skipped (no recommendation — operator preference)</span>
+        {#if bulk}
+          <div class="small" class:neg={bulk.failed > 0}>
+            {bulk.running ? `Sending… ${bulk.done}/${bulk.total}` : "Done"} · set <b>{bulk.set}</b> · skipped <b>{bulk.skipped}</b> · failed <b>{bulk.failed}</b>
+            {#each bulk.errors as e, i (i)}<div class="mono">{e}</div>{/each}
+          </div>
+        {/if}
       </div>
 
       {#if rows.length === 0}
@@ -268,11 +315,12 @@
                   </td>
                   <td data-label="Gate" class="id">
                     <span class="mono">{g.id}</span>
+                    {#if g.attention_rank != null}<span class="att att{g.attention_rank}" title={ATTENTION_LABEL[String(g.attention_rank)] ?? ""}>rank {g.attention_rank}</span>{/if}
                     {#if flag}<span class="flag" title={g.drift_detail ?? ""}>⚠ {flag}</span>{/if}
                   </td>
                   <td data-label="Category">{dash(g.category)}</td>
                   <td data-label="Where" class="mono wrap">{dash(g.where)}</td>
-                  <td data-label="Blocks" class="wrap">{dash(g.blocks)}</td>
+                  <td data-label="Blocks" class="wrap">{dash(g.blocks)}{#if g.effect}<span class="tag">{g.effect}</span>{/if}</td>
                   <td data-label="Real money" class:neg={g.real_money === true}>{realMoneyText(g.real_money)}</td>
                   <td data-label="Authorization" class="wrap">
                     {dash(g.authorization)}{#if g.authorization_class}<span class="tag">{g.authorization_class}</span>{/if}
@@ -297,9 +345,11 @@
                         <button
                           class="dbtn"
                           class:current={g.operator_decision === d.value}
+                          class:rec={g.recommended_decision === d.value}
+                          title={g.recommended_decision === d.value ? `audit recommendation: ${g.recommendation ?? d.label}` : ""}
                           disabled={!!busy[g.id]}
                           onclick={() => decide(g, d.value)}
-                        >{d.label}</button>
+                        >{d.label}{#if g.recommended_decision === d.value}<span class="recmark"> · rec.</span>{/if}</button>
                       {/each}
                       <input
                         class="note"
@@ -386,6 +436,14 @@
 </section>
 
 <style>
+  .bulk { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 8px 10px; margin: 6px 0; }
+  .bulkbtn { font-weight: 600; }
+  .dbtn.rec { outline: 1px dashed var(--accent, #4c8dff); outline-offset: 1px; }
+  .recmark { font-size: 11px; color: var(--accent, #4c8dff); }
+  .att { font-size: 10.5px; padding: 0 6px; border-radius: 6px; margin-left: 6px; border: 1px solid var(--border); white-space: nowrap; }
+  .att1 { color: #e5484d; border-color: #e5484d66; }
+  .att2 { color: #d4a017; border-color: #d4a01766; }
+  .att3 { color: var(--muted); }
   section { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
   .head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
   h2 { margin: 0; font-size: 18px; }
