@@ -18,16 +18,51 @@
   import { api } from "../lib/api";
   import { num, DASH } from "../lib/format";
   import { isSettled, isMoot, isWaiting } from "../lib/decisions";
+  import { serverAnswer } from "../lib/gates";
 
   let d = $state<any>(null);
   let err = $state<string | null>(null);
   let view = $state<"waiting" | "answered" | "all">("waiting");
   let open = $state<Record<string, boolean>>({});
 
-  onMount(async () => {
-    try { d = await api.workDecisions(); }
+  async function reload() {
+    try { d = await api.workDecisions(); err = null; }
     catch (e) { err = e instanceof Error ? e.message : String(e); }
-  });
+  }
+  onMount(reload);
+
+  // Answering (bot #25548): enabled only when the route says its SESSION write gate
+  // accepts writes — that mirrors server state, it is not a client-side gate. One press
+  // sends; no confirm(). A 200 is "in transit" (submitted, NOT decided) — the server's
+  // own note says so and is shown verbatim, as is every error's detail.
+  const sessionGate = $derived(d?.writeGate?.session ?? null);
+  const canAnswer = $derived(sessionGate?.acceptsWrites === true);
+  const liveFor = (r: any) => canAnswer && isWaiting(r);
+  let notes = $state<Record<string, string>>({});
+  let other = $state<Record<string, string>>({});
+  let sending = $state<Record<string, boolean>>({});
+  let answers = $state<Record<string, { ok: boolean; status: number | null; text: string }>>({});
+  async function answer(r: any, chosen: string | null, freeText: string | null) {
+    const k = r.id;
+    sending[k] = true;
+    try {
+      const body: { object_id: string; request_id: string; chosen?: string; free_text?: string } = { object_id: r.objectId, request_id: r.id };
+      if (chosen) body.chosen = chosen;
+      if (freeText && freeText.trim()) body.free_text = freeText.trim();
+      const res = await api.decisionSessionAnswer(body);
+      const b = res.body as any;
+      answers[k] = { ok: res.ok, status: res.status,
+        text: res.ok
+          ? (typeof b?.note === "string" ? b.note : `${b?.answerState === "in_transit" ? "In transit — submitted, not decided. " : ""}${serverAnswer(res.status, res.body, res.text)}`)
+          : serverAnswer(res.status, res.body, res.text) };
+      if (res.ok) { notes[k] = ""; other[k] = ""; }
+    } catch (e) {
+      answers[k] = { ok: false, status: null, text: e instanceof Error ? e.message : String(e) };
+    } finally {
+      sending[k] = false;
+    }
+    await reload();
+  }
 
   const sum = $derived(d?.summary ?? null);
   const reqs = $derived<any[]>(Array.isArray(d?.requests) ? d.requests : []);
@@ -101,20 +136,42 @@
           {#if open[r.id]}
             <div class="body">
               <div class="muted mono small">{r.objectId ?? DASH} · {r.id}{r.askedOn ? ` · asked ${r.askedOn}` : ""}</div>
-              {#if r.context}<h4>Evidence</h4><p>{r.context}</p>{/if}
+              {#if r.source}<div class="muted small">source: <span class="mono">{r.source}</span></div>{/if}
+              {#if typeof r.evidence === "string" && r.evidence.trim()}<h4>Evidence <span class="muted small">(the author's prose)</span></h4><p class="pre">{r.evidence}</p>{/if}
+              {#if r.context}<h4>Context</h4><p>{r.context}</p>{/if}
               {#if Array.isArray(r.evidence) && r.evidence.length}
                 <ul class="ev">{#each r.evidence as e, i (i)}<li>{typeof e === "string" ? e : JSON.stringify(e)}</li>{/each}</ul>
               {/if}
               <h4>Options</h4>
               <ul class="opts">
                 {#each orderedOptions(r) as o, i (i)}
-                  <li class:rec={o._rec}><strong>{o.label ?? o.key ?? DASH}</strong>{#if o._rec} <span class="chip rec">recommended</span>{/if}
+                  <li class:rec={o._rec}>
+                    {#if liveFor(r)}
+                      <button class="opt" class:recb={o._rec} disabled={!!sending[r.id]} onclick={() => answer(r, o.key, r.allowsFreeText !== false ? (notes[r.id] ?? "") : null)}>{o.label ?? o.key ?? DASH}</button>
+                    {:else}<strong>{o.label ?? o.key ?? DASH}</strong>{/if}
+                    {#if o._rec} <span class="chip rec">recommended</span>{/if}
                     {#if o.implication}<div class="muted small">{o.implication}</div>{/if}</li>
                 {/each}
                 {#if r.allowsFreeText !== false}
-                  <li class="other"><strong>Other</strong> <span class="muted small">— your own answer, in your words</span></li>
+                  <li class="other">
+                    <strong>Other</strong> <span class="muted small">— your own answer, in your words</span>
+                    {#if liveFor(r)}
+                      <div class="otherbox">
+                        <textarea rows="2" placeholder="Your answer" bind:value={other[r.id]} disabled={!!sending[r.id]}></textarea>
+                        <button class="opt" disabled={!!sending[r.id] || !(other[r.id] ?? "").trim()} onclick={() => answer(r, null, other[r.id] ?? "")}>Send</button>
+                      </div>
+                    {/if}
+                  </li>
                 {/if}
               </ul>
+              {#if liveFor(r) && r.allowsFreeText !== false}
+                <input class="note" type="text" placeholder="Optional note sent with an option (free text)" bind:value={notes[r.id]} disabled={!!sending[r.id]} />
+              {/if}
+              {#if sending[r.id]}<div class="muted small">sending…</div>{/if}
+              {#if answers[r.id]}
+                {@const a = answers[r.id]}
+                <div class="small ans" class:neg={!a.ok} class:pos={a.ok}>{#if a.status != null}<span class="muted">HTTP {a.status}:</span> {/if}{a.text}</div>
+              {/if}
               {#if r.answerStateNote}<p class="muted small">{r.answerStateNote}</p>{/if}
               {#if r.conversationalAnswer}
                 {@const ca = r.conversationalAnswer}
@@ -122,7 +179,11 @@
                 <p><span class="mono">{ca.verdict ?? DASH}</span>{#if ca.chosen} → <strong>{ca.chosen}</strong>{/if}{#if ca.answeredAt}<span class="muted"> · {ca.answeredAt}</span>{/if}</p>
                 {#if ca.condition}<p class="cond">Condition you attached: {ca.condition}</p>{/if}
               {/if}
-              <p class="line">Answering from the dashboard is not wired yet (route missing); answer on the decisions page.</p>
+              {#if !canAnswer}
+                <p class="line">Answering from the dashboard is not wired yet (route missing); answer on the decisions page.</p>
+              {:else if !isWaiting(r)}
+                <p class="line">Not waiting — nothing to answer here.</p>
+              {/if}
             </div>
           {/if}
         </div>
@@ -168,6 +229,16 @@
   .opts li { margin: 3px 0; }
   .opts li.rec strong { color: #30a46c; }
   .cond { color: #d4a017; }
+  .opt { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 13px; cursor: pointer; }
+  .opt.recb { border: 1px dashed #30a46c; }
+  .opt:disabled { opacity: 0.5; cursor: default; }
+  .otherbox { display: flex; gap: 6px; align-items: flex-start; margin-top: 4px; }
+  .otherbox textarea { flex: 1; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 13px; }
+  .note { width: 100%; margin-top: 4px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 13px; }
+  .ans { margin-top: 6px; overflow-wrap: anywhere; }
+  .ans.pos { color: #30a46c; }
+  .ans.neg { color: #e5484d; }
+  .pre { white-space: pre-wrap; }
   .line { margin-top: 10px; padding: 6px 8px; background: var(--panel-2); border-radius: 6px; font-size: 12.5px; }
   .gap { margin-top: 14px; }
   .edges { padding-left: 18px; margin: 4px 0; font-size: 13px; }

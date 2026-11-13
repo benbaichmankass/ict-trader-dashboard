@@ -723,6 +723,11 @@ export const api = {
   },
   gate: (id: string, signal?: AbortSignal) =>
     get<GateDetailResponse>(`/api/bot/gates/${encodeURIComponent(id)}`, signal),
+  // Work → Decisions answer (bot #25548, Tier 2): the operator's session is the
+  // credential. 200 = accepted IN TRANSIT (not decided); 400/401/404/409/503 carry a
+  // detail that is shown verbatim.
+  decisionSessionAnswer: (body: { object_id: string; request_id: string; chosen?: string; free_text?: string }, signal?: AbortSignal) =>
+    post(`/api/bot/work/decision/session`, body, signal),
   gateDecision: (id: string, decision: string, note: string, signal?: AbortSignal) =>
     post(`/api/bot/gates/${encodeURIComponent(id)}/decision`, { decision, note }, signal),
 
