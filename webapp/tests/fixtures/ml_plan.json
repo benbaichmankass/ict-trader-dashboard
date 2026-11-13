@@ -1,0 +1,303 @@
+{
+ "read_state": "partial",
+ "as_of": "2026-11-13T01:18:47Z",
+ "rows_read_state": "absent",
+ "rows_error": null,
+ "items": [
+  {
+   "id": "ML-S2",
+   "track": "S",
+   "title": "Exit line (S2-exit): is there ANY leg family where an exit head beats the baseline net of cost?",
+   "plan_state": "open",
+   "family": "gbdt",
+   "tier": 1,
+   "closes_when": "Three negatives so far: donchian FAIL (RQ-20260927-002, -14.66R OOS), S2-exit INDETERMINATE/REFINE (RQ-20260929-401: SOL -4.30, XRP +0.21, ETH -1.16), XRP multi-fold FAIL (RQ-20261008-900, k=1 of 3, pooled -1.94R). Last registered lever: the pullback-family transfer (this unit, via ML-X3). Line is exhausted on current features if it fails; then S2 reopens only with a new information class (ML-N2/N3).",
+   "ref": "RQ-20261008-901",
+   "ref_kind": "unit",
+   "ref_state": "retired",
+   "ref_read_state": "read",
+   "flags": [
+    "CLOSED-OPEN"
+   ]
+  },
+  {
+   "id": "ML-N1",
+   "track": "R",
+   "title": "NEW IDEA: multi-timeframe regime-head agreement vs best single head",
+   "plan_state": "open",
+   "family": null,
+   "tier": 1,
+   "closes_when": "Joiner (ML-HEAD-AGREEMENT-JOIN) merged; unit graded by its pre-registered rule.",
+   "ref": "RQ-20261011-17f4-03",
+   "ref_kind": "unit",
+   "ref_state": "retired",
+   "ref_read_state": "read",
+   "flags": [
+    "CLOSED-OPEN"
+   ]
+  },
+  {
+   "id": "ML-S1",
+   "track": "S",
+   "title": "Veto line (S1): market-state veto of a leg's own trades",
+   "plan_state": "parked",
+   "family": null,
+   "tier": 3,
+   "closes_when": "Reopen only with a NEW information class (see ML-N2, ML-N3). S1 FAILED twice at declared power (RQ-20260928-002/-003, 2026-09-29): killed S2-sizing and the S3 adapter by their registered rules.",
+   "ref": "M19-S1",
+   "ref_kind": "row",
+   "ref_state": null,
+   "ref_read_state": "absent",
+   "flags": []
+  },
+  {
+   "id": "ML-S3",
+   "track": "S",
+   "title": "Proposer line (S3): a model that proposes trades",
+   "plan_state": "parked",
+   "family": null,
+   "tier": 3,
+   "closes_when": "Gate: S1 or S2 PASS (PI-20260928-VNMMNBJH-0002 killed 2026-10-04, reopen only on a PASS). The staged-path doc is docs/research/M19-ai-trader-postmortem-and-staged-path-2026-09-28.md.",
+   "ref": "R-M19",
+   "ref_kind": "row",
+   "ref_state": null,
+   "ref_read_state": "absent",
+   "flags": []
+  }
+ ],
+ "dev_plan": {
+  "schema": 1,
+  "source": "docs/plans/ml-dev-plan.yaml",
+  "updated": "2026-11-12",
+  "read_state": "absent",
+  "generated_at": "2026-11-13T01:18:47Z",
+  "weeks": {
+   "W47": "2026-11-16",
+   "W48": "2026-11-23",
+   "W49": "2026-11-30",
+   "W50": "2026-12-07"
+  },
+  "population": {
+   "lines": 43,
+   "by_stage": {
+    "idea": 5,
+    "testing_offline": 8,
+    "shadow_advisory": 2,
+    "testing_book": 3,
+    "iterating": 4,
+    "stuck": 8,
+    "production": 4,
+    "failed": 3,
+    "queued": 5,
+    "passed_waiting": 1
+   },
+   "by_slot": {
+    "D1": 1,
+    "D2": 11,
+    "D3": 8,
+    "D4": 5,
+    "D5": 1,
+    "D6": 1,
+    "D7": 3,
+    "D8": 2,
+    "D9": 1,
+    "D10": 1,
+    "-": 9
+   }
+  },
+  "graded_today": [
+   {
+    "unit": "RQ-20261101-b610-01",
+    "verdict": "fail",
+    "record": "research/results/RQ-20261101-b610-01/local-20261112T1107Z.jsonl",
+    "pr": 25278
+   },
+   {
+    "unit": "RQ-20261101-78fc-04",
+    "verdict": "fail",
+    "record": "research/results/RQ-20261101-78fc-04/local-20261112T1014Z.jsonl",
+    "pr": 25250
+   }
+  ],
+  "labelled_gates_not_planned": [
+   {
+    "id": "G1",
+    "from": "docs/research/ml-deep-audit-2026-11-12.md \u00a7 6",
+    "text": "raise the real-money bar for an ML promotion (clustered t >= 2 / fresh window)",
+    "status": "not planned; needs the operator's explicit permission"
+   },
+   {
+    "id": "G2",
+    "from": "docs/research/ml-deep-audit-2026-11-12.md \u00a7 6",
+    "text": "refuse to author a D2/direction bake-off that names no consuming leg",
+    "status": "not planned; the non-gate form is the slot report + MLP-D2-SLOT-MONEY-READ"
+   }
+  ],
+  "lines": [
+   {
+    "id": "MLP-D1-UNIVERSE",
+    "slot": "D1",
+    "track": "S",
+    "kind": "slot",
+    "subject": "no model, on purpose. Which legs sit on which book is decided offline by the ladder (OPERATING-PLAN \u00a7 2).",
+    "consumer": {
+     "class": "none",
+     "note": "no model exists for this slot"
+    },
+    "stage": "idea",
+    "row": "MLP-D1-UNIVERSE",
+    "row_state": null,
+    "row_updated_at": null,
+    "carried_by": {},
+    "owner": "AM-ML",
+    "summary": "Kept as a rule. A model ranking legs from live P&L is the category error the operating plan forbids; cross-sectional n of rostered legs is too small for a learned selector.",
+    "evidence": [
+     {
+      "record": "docs/plans/ML-ROADMAP-MECE-2026-11.md \u00a7 3 D1",
+      "provenance": "QUOTED"
+     }
+    ],
+    "levers_tried": [],
+    "levers_ahead": [
+     {
+      "lever": "leg-selection backtest over the Stage-0 panel",
+      "ref": "needs_authoring (re-entry test below)",
+      "baseline": "the current roster, and 1/N over the same panel, net of the full cost stack",
+      "pass": "a Tier-3 roster proposal to the manager with the record",
+      "fail": "the slot stays a rule; re-check when the panel doubles"
+     }
+    ],
+    "units": {},
+    "next_weeks": {
+     "W47": "none",
+     "W48": "none",
+     "W49": "count legs with committed Stage-0 records on one cost basis (ML-LINE-S1-CORPUS)",
+     "W50": "none"
+    },
+    "exhaustion": "not a model line; reopens when >= 30 legs carry committed Stage-0 records on one cost basis (the ML-LINE-S1-CORPUS panel).",
+    "proposed_disposition": null,
+    "flags": null,
+    "info": []
+   },
+   {
+    "id": "MLP-D2-ADVISORY-NO-CONSUMER",
+    "slot": "D2",
+    "track": "R",
+    "kind": "model",
+    "subject": "sol-regime-15m-lgbm-fc-pcv-v2 (Collie-5b), mes-regime-5m-lgbm-v2 (Chihuahua-1d)",
+    "consumer": {
+     "class": "none",
+     "note": "advisory stage, but no trend_vol cell names a SOL or MES leg (MEASURED config/regime_policy.yaml)"
+    },
+    "stage": "shadow_advisory",
+    "row": "MLP-D2-ADVISORY-NO-CONSUMER",
+    "row_state": null,
+    "row_updated_at": null,
+    "carried_by": {
+     "ML-PROGRAMME-CONSOLIDATION": null
+    },
+    "owner": "AM-ML",
+    "summary": "Advisory with nothing to change. Value added - none measurable.",
+    "evidence": [
+     {
+      "record": "docs/research/ml-deep-audit-2026-11-12.md \u00a7 1.1",
+      "provenance": "QUOTED"
+     }
+    ],
+    "levers_tried": [],
+    "levers_ahead": [
+     {
+      "lever": "a consumer for each head = the bcd2-01 design applied to the SOL / MES leg families",
+      "ref": "needs_authoring (only after bcd2-01 grades; authoring before is a bake-off with no customer)",
+      "baseline": "the leg family ungated, net of cost, matched-random cell control",
+      "pass": "Tier-3 proposal for a first cell naming that leg",
+      "fail": "proposed retirement of the head (manager)"
+     }
+    ],
+    "units": {},
+    "next_weeks": {
+     "W47": "none",
+     "W48": "author the SOL/MES consumer unit iff bcd2-01 PASS",
+     "W49": "run",
+     "W50": "grade"
+    },
+    "exhaustion": "bcd2-01 FAIL (no consumer design worth repeating), or the per-family consumer test FAILs.",
+    "proposed_disposition": null,
+    "flags": null,
+    "info": [
+     "NO-CONSUMER"
+    ]
+   },
+   {
+    "id": "MLP-INFRA-TRAINER-CYCLE",
+    "slot": "-",
+    "track": "infra",
+    "kind": "infra",
+    "subject": "retire waves + point the nightly trainer cycle at models with a consumer or an open unit",
+    "consumer": {
+     "class": "none"
+    },
+    "stage": "testing_offline",
+    "row": "ML-RETIRE-WAVES-20261111",
+    "row_state": null,
+    "row_updated_at": null,
+    "carried_by": {},
+    "owner": "AM-ML",
+    "summary": "Waves 1+2 landed (#25001, #25051); 25 top-level manifests remain; the nightly cycle trains no money model (audit I3).",
+    "evidence": [
+     {
+      "record": "docs/research/ml-deep-audit-2026-11-12.md \u00a7 4 I3",
+      "provenance": "QUOTED"
+     }
+    ],
+    "levers_tried": [],
+    "levers_ahead": [
+     {
+      "lever": "re-point the cycle after bcd2-01 reads",
+      "ref": "ML-PROGRAMME-CONSOLIDATION",
+      "baseline": "n/a",
+      "pass": "trainer time follows the money models",
+      "fail": "n/a"
+     }
+    ],
+    "units": {},
+    "next_weeks": {
+     "W47": "confirm registry archive ran (row done-when)",
+     "W48": "re-point proposal (Tier 2) after bcd2-01",
+     "W49": "none",
+     "W50": "none"
+    },
+    "exhaustion": "infra.",
+    "proposed_disposition": null,
+    "flags": null,
+    "info": []
+   }
+  ]
+ },
+ "population": {
+  "items": 80,
+  "items_by_track": {
+   "S": 3,
+   "R": 10,
+   "X": 4,
+   "P": 5,
+   "D": 6,
+   "N": 5,
+   "F": 33,
+   "M": 7,
+   "V": 7
+  },
+  "dev_plan_lines": 43,
+  "description": "every item in docs/plans/ml-plan-items.yaml and every line in docs/plans/ml-dev-plan.yaml on the VM working tree, joined to the work store's rows"
+ },
+ "sources": {
+  "items": "docs/plans/ml-plan-items.yaml",
+  "dev_plan": "docs/plans/ml-dev-plan.yaml",
+  "reader": "scripts/ops/ml_dev_plan.py"
+ },
+ "frontier": {
+  "route": "/api/bot/work/items?parent=FRONTIER-RESEARCH",
+  "fields": "extra.frontier (why, baseline, family, est_cost, consumer, next_step, ...)"
+ },
+ "_fixture_note": "GET /api/bot/ml/plan as produced by bot PR #25554 build_plan() over its own docs/plans YAML (2026-11-13; work store absent, so rows_read_state=absent and line flags null); items trimmed to 4, lines to 3, graded_today to 2; rows naming accounts, IPs or dollar amounts dropped. Replace with a live capture once the route deploys."
+}

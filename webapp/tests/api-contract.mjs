@@ -211,8 +211,9 @@ const BINDINGS = {
   // check: this guard asks whether a key EXISTS, never how many rows carry it.
   // ---- Work tabs in src/components (2026-11-13, UI overnight queue) ----
   // Each fixture is a REAL capture, trimmed, keeping only rows that name no
-  // account, IP or dollar amount — see each `_fixture_note`. The R&D registry
-  // and Plans tabs get their bindings once their components are on main.
+  // account, IP or dollar amount — see each `_fixture_note`. (ml_plan.json is
+  // the one exception, and says so in its own note: GET /api/bot/ml/plan is not
+  // deployed yet, so it is bot PR #25554's own build_plan() run over its own YAML.)
   // This week: TWO payloads — the lane cards (/work/lanes) and the rows
   // (/work/items with counts + latest_note).
   "components/WorkThisWeek.svelte": [
@@ -221,6 +222,13 @@ const BINDINGS = {
     { fixture: "work_items_filtered.json", root: "data", paths: { data: "" }, rowPaths: { it: "items" },
       errorBranch: { error: "bot src/web/api/routers/work_items.py:277, 503 readState could_not_look" } },
   ],
+  // Plans: the ML plan payload and its dev-plan lines.
+  "components/WorkPlans.svelte": {
+    fixture: "ml_plan.json",
+    root: "plan",
+    paths: { plan: "" },
+    rowPaths: { ln: "dev_plan.lines" },
+  },
   // Work → Gates summary card: the same GET /api/bot/gates payload as Admin → Gates.
   "components/WorkGates.svelte": {
     fixture: "gates.json",
