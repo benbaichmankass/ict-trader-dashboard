@@ -67,20 +67,32 @@
       catErr = e instanceof Error ? e.message : String(e);
     }
   }
-  async function loadSeries(w: string, mo: boolean, sel: string[], ac: string, f: { strategy: string; symbol: string }) {
+  let serSeq = 0;
+  async function loadSeries(w: string, s0: string | null, e0: string | null, mo: boolean, sel: string[], ac: string, f: { strategy: string; symbol: string }) {
+    const my = ++serSeq;
     seriesErr = null;
     if (!sel.length) { series = { series: [] }; return; }
     try {
-      series = await api.pnlSeries({ window: w, measuredOnly: mo, category: sel, assetClass: ac || undefined,
-        strategy: f.strategy || undefined, symbol: f.symbol || undefined });
+      const r = await api.pnlSeries({ window: w, start: s0 ?? undefined, end: e0 ?? undefined, measuredOnly: mo, category: sel,
+        assetClass: ac || undefined, strategy: f.strategy || undefined, symbol: f.symbol || undefined });
+      if (my !== serSeq) return;
+      // u3: an older bot ignores start/end and answers its default window — never
+      // draw that as the asked-for range.
+      if (s0 && e0 && (r?.start !== s0 || r?.end !== e0)) {
+        series = null;
+        seriesErr = `could not look — the bot did not answer ${s0} → ${e0} (it echoed ${r?.start ?? DASH} → ${r?.end ?? DASH})`;
+        return;
+      }
+      series = r;
     } catch (e) {
+      if (my !== serSeq) return;
       series = null;
       seriesErr = e instanceof Error ? e.message : String(e);
     }
   }
   const selected = $derived(Object.keys(picked).filter((k) => picked[k]));
   $effect(() => { loadCats(win, start, end); });
-  $effect(() => { loadSeries(win, measuredOnly, selected, assetClass, applied); });
+  $effect(() => { loadSeries(win, start, end, measuredOnly, selected, assetClass, applied); });
 
   function pnlHead(r: PerfCategoryRow): number | null | undefined {
     return measuredOnly ? r.measured_usd : r.net_pnl_usd;
@@ -90,6 +102,22 @@
   }
   const fx = (v: number | null | undefined, d = 2) => (v == null || Number.isNaN(v) ? DASH : v.toFixed(d));
   const pctOf = (v: number | null | undefined, d = 1) => (v == null || Number.isNaN(v) ? DASH : `${(v * 100).toFixed(d)}%`);
+  // u3: the route's own percentage points (already x100) — formatted, never recomputed.
+  const pts = (v: number | null | undefined, d = 2) => (v == null || Number.isNaN(v) ? DASH : `${v > 0 ? "+" : ""}${v.toFixed(d)}%`);
+  function retPct(r: PerfCategoryRow): number | null | undefined {
+    return measuredOnly ? r.measured_pct : r.pct;
+  }
+  function capTitle(r: PerfCategoryRow): string {
+    const head = r.start_capital_usd == null
+      ? `no start capital (${r.capital_read_state ?? "not provided"})`
+      : `${r.capital_read_state ?? DASH}${r.capital_as_of ? ` · as of ${r.capital_as_of.slice(0, 16).replace("T", " ")}Z` : ""}`;
+    const per = (r.capital_accounts ?? []).map((a) => `${a.account_id ?? DASH}: ${a.balance == null ? DASH : money(a.balance)} (${a.state ?? DASH}${a.ts ? ` @ ${String(a.ts).slice(0, 16).replace("T", " ")}Z` : ""})`);
+    return [head, ...per, r.capital_source ?? ""].filter(Boolean).join("\n");
+  }
+  const lateCapital = $derived(
+    (series?.series ?? []).filter((s) => s.capital_read_state === "first_after_start")
+      .map((s) => `${CAT_LABEL[s.category] ?? s.category}${s.capital_as_of ? ` (read ${s.capital_as_of.slice(0, 10)})` : ""}`),
+  );
   const noCapital = $derived(
     (series?.series ?? []).filter((s) => s.start_capital_usd == null).map((s) => CAT_LABEL[s.category] ?? s.category),
   );
@@ -100,6 +128,8 @@
               <td class="sym">{isTotal ? (r.label ?? "Total") : (CAT_LABEL[r.category] ?? r.category)}{#if r.read_state && r.read_state !== "measured"} <span class="muted small">({r.read_state})</span>{/if}</td>
               <td class="r mono">{num(r.n_closed)}</td>
               <td class="r mono {signClass(pnlHead(r))}">{money(pnlHead(r), { sign: true })}</td>
+              <td class="r mono" title={capTitle(r)}>{money(r.start_capital_usd)}{#if r.capital_read_state === "first_after_start"} <span class="badge" title={`read after the window start${r.capital_as_of ? `, at ${r.capital_as_of}` : ""}`}>after start</span>{/if}</td>
+              <td class="r mono {signClass(retPct(r))}" title={retPct(r) == null ? `no % — ${r.capital_read_state ?? "no start capital"}` : "the route's % of capital at the window start"}>{pts(retPct(r))}</td>
               <td class="r mono muted" title={`${num(r.n_not_measured)} row(s)`}>{money(r.not_measured_usd, { sign: true })}</td>
               <td class="r mono" title={`over ${num(r.n_priced)} priced close(s)`}>{pctOf(r.win_rate)}</td>
               <td class="r mono {signClass(r.avg_realised_r)}" title={`over ${num(r.n_r_graded)} R-graded row(s)`}>
@@ -119,7 +149,7 @@
 <div class="panel card">
   <div class="top">
     <div class="ph">By category</div>
-    {#if start && end}<span class="muted small">table: {start} → {end} · chart window</span>{/if}
+    {#if start && end}<span class="muted small">{start} → {end} (the page's dates; table and chart)</span>{/if}
     <Segmented options={WINDOWS} bind:value={win} />
     <label class="tog"><input type="checkbox" bind:checked={measuredOnly} /> Measured only</label>
   </div>
@@ -138,6 +168,8 @@
             <th>Category</th>
             <th class="r">Closed</th>
             <th class="r" title={measuredOnly ? "Σ pnl over broker-MEASURED rows" : "Σ pnl over all rows with a pnl"}>Net P&L</th>
+            <th class="r" title="Capital at the window start: nearest balance at or before it, else the first after it (badged). Hover a cell for each account's reading.">Start capital</th>
+            <th class="r" title={measuredOnly ? "The route's measured P&L ÷ start capital" : "The route's net P&L ÷ start capital"}>Return %</th>
             <th class="r" title="Σ pnl over ESTIMATED + FABRICATED + UNVERIFIED rows — shown beside, never folded in">Not measured</th>
             <th class="r" title="wins ÷ priced closes">Win rate</th>
             <th class="r" title="mean pnl ÷ entry risk over R-graded rows">Avg R</th>
@@ -204,6 +236,8 @@
         · {num(series.population?.n_rows)} row(s)
         {#if measuredOnly} · dotted line = all rows incl. not-measured{/if}
         {#if unit === "pct" && noCapital.length} · no capital record, shown in $ mode only: {noCapital.join(", ")}{/if}
+        {#if unit === "pct" && lateCapital.length} · capital read after the window start: {lateCapital.join(", ")}{/if}
+        {#if series.start} · {series.start} → {series.end ?? "now"}{/if}
       </div>
     {/if}
   </div>

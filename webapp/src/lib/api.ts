@@ -320,6 +320,17 @@ export interface PerfCategoryRow {
   funding_usd?: number | null;
   n_funding?: number | null;
   n_excluded_null_pnl?: number | null;
+  // u3 (bot #25386): capital at the window start, summed over the category's
+  // accounts (nearest balance at or before start, else the first after it —
+  // capital_read_state "first_after_start", capital_as_of names when). `pct` /
+  // `measured_pct` are the ROUTE's percentage points (x100); never recomputed here.
+  start_capital_usd?: number | null;
+  capital_read_state?: string | null;
+  capital_source?: string | null;
+  capital_as_of?: string | null;
+  capital_accounts?: Array<{ account_id?: string; balance?: number | null; ts?: string | null; state?: string | null }> | null;
+  pct?: number | null;
+  measured_pct?: number | null;
 }
 
 export interface PerfCategories {
@@ -357,6 +368,9 @@ export interface PnlPoint {
 export interface PnlSeries {
   as_of?: string | null;
   window?: string | null;
+  // u3 (bot #25386): echoed range; the caller checks them when it asked for one.
+  start?: string | null;
+  end?: string | null;
   read_state?: string | null;
   measured_only?: boolean | null;
   bucket?: string | null;
@@ -364,6 +378,7 @@ export interface PnlSeries {
     category: string;
     start_capital_usd?: number | null;
     capital_read_state?: string | null;
+    capital_as_of?: string | null;
     n_rows?: number | null;
     read_state?: string | null;
     points?: PnlPoint[];
@@ -408,11 +423,14 @@ export const api = {
   perfCategoriesRange: (start: string, end: string, signal?: AbortSignal) =>
     get<PerfCategories>(`/api/bot/performance/categories?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, signal),
   pnlSeries: (
-    opts: { window?: string; category?: string[]; strategy?: string; symbol?: string; assetClass?: string; measuredOnly?: boolean } = {},
+    opts: { window?: string; start?: string; end?: string; category?: string[]; strategy?: string; symbol?: string; assetClass?: string; measuredOnly?: boolean } = {},
     signal?: AbortSignal,
   ) => {
     const q = new URLSearchParams();
-    q.set("window", opts.window ?? "30d");
+    // u3 (bot #25386): an exact inclusive UTC-day range wins over the window. The
+    // caller must check the echoed start/end — an older bot ignores them.
+    if (opts.start && opts.end) { q.set("start", opts.start); q.set("end", opts.end); }
+    else q.set("window", opts.window ?? "30d");
     if (opts.category && opts.category.length) q.set("category", opts.category.join(","));
     if (opts.strategy) q.set("strategy", opts.strategy);
     if (opts.symbol) q.set("symbol", opts.symbol);
