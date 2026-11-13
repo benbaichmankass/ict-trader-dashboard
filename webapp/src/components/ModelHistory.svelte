@@ -13,6 +13,11 @@
 
   const stages = $derived<any[]>(Array.isArray(row?.stage_history) ? row.stage_history : []);
   const log = $derived<any[]>(Array.isArray(row?.history) ? row.history : []);
+  // The registry is read with ?runs_tail=5 (bot #25557): `history` may be only the
+  // newest entries, with the full count in `history_total`. Say so, never imply
+  // the tail is the whole log. stage_history is sent in full.
+  const histTotal = $derived<number | null>(typeof row?.history_total === "number" ? row.history_total : null);
+  const tailOnly = $derived(histTotal != null && histTotal > log.length);
   // Status CHANGES from the history log (from ≠ to, not the initial registration).
   const statusMoves = $derived(log.filter((h) => h?.from_status != null && h.from_status !== h.to_status));
   const latest = $derived(log.length ? [...log].sort((a, b) => String(b.at).localeCompare(String(a.at)))[0] : null);
@@ -31,6 +36,7 @@
   <button class="link" onclick={() => (open = !open)}>
     {open ? "▾" : "▸"} Promotion history ({moves.length})
   </button>
+  {#if tailOnly}<span class="muted" title="The registry route sends each model's newest history entries only (runs_tail); stage changes are complete.">· history: newest {log.length} of {histTotal}</span>{/if}
   {#if open}
     {#if moves.length}
       <table>
@@ -47,7 +53,7 @@
         </tbody>
       </table>
     {:else}
-      <div class="muted">No stage or status change recorded for this model ({log.length} history entr{log.length === 1 ? "y" : "ies"}, none a move).</div>
+      <div class="muted">No stage or status change recorded for this model ({log.length} history entr{log.length === 1 ? "y" : "ies"}{tailOnly ? ` read, of ${histTotal}` : ""}, none a move).</div>
     {/if}
   {/if}
 </div>

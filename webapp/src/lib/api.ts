@@ -763,7 +763,12 @@ export const api = {
 
   // Strategies & Models.
   gpuSpend: (signal?: AbortSignal) => get<any>("/api/bot/gpu/spend", signal),
-  mlRegistry: (signal?: AbortSignal) => get<any>("/api/bot/ml/registry", signal),
+  // ?runs_tail=5 (bot #25557): each row keeps only its last 5 `runs` / `history`
+  // entries plus `runs_total` / `history_total` (~0.9 MB vs 8.9 MB measured
+  // 2026-11-13). Nothing here reads `runs`; ModelHistory reads `history` and says
+  // when it holds only the tail. stage_history is not trimmed. An older bot
+  // ignores the param and sends the full shape, which renders the same.
+  mlRegistry: (signal?: AbortSignal) => get<any>("/api/bot/ml/registry?runs_tail=5", signal),
   mlStatus: (signal?: AbortSignal) => get<any>("/api/bot/ml/status", signal),
   exitLadderSoak: (limit = 100, signal?: AbortSignal) =>
     get<any>(`/api/bot/exit-ladder/soak?limit=${limit}`, signal),
