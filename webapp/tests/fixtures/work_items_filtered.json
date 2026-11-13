@@ -1,0 +1,218 @@
+{
+ "readState": "read",
+ "items": [
+  {
+   "id": "WORK-ROW-AGE-STALE",
+   "kind": "build",
+   "parent_id": null,
+   "title": "Served checklist rows carry a stale updated_at: work.py/store writes do not refresh the row's own updated_at, so /api/bot/work/checklist (SPA Work page) and every staleness reader show ages days too old",
+   "state": "landed_unproven",
+   "owner": "AM-OPS (session_01AFoLuJUGfpon2bNgwFbFmx)",
+   "lane": "session_01AFoLuJUGfpon2bNgwFbFmx",
+   "model": null,
+   "tier": 2,
+   "roadmap": [
+    "L-OPS"
+   ],
+   "roadmap_unmapped_reason": null,
+   "due_rule": {
+    "due_date": "2026-11-14",
+    "kind": "date"
+   },
+   "due_at": "2026-11-14T00:00:00Z",
+   "origin": null,
+   "next_action": "check_observation",
+   "priority_rank": 15,
+   "severity": null,
+   "ceiling_usd": null,
+   "spend_usd": null,
+   "prs": [],
+   "blocked_on": [],
+   "summary": null,
+   "terminal_reason": null,
+   "created_at": "2026-11-12T07:56:10Z",
+   "updated_at": "2026-11-13T01:23:39Z",
+   "updated_by": "AM-OPS (session_01AFoLuJUGfpon2bNgwFbFmx)",
+   "version": 8,
+   "extra": {
+    "_absent": [
+     "roadmap_unmapped_reason",
+     "priority_rank",
+     "next_action"
+    ],
+    "_source": "checklist",
+    "note": "Found 2026-11-12 ~08:00Z by UI lane p2. EVIDENCE: MANAGER-VM-DIRECT-OPS: store item updated_at 2026-11-12T01:16:46Z (Lane MANAGER-VM-DIRECT-OPS); GET /api/bot/work/checklist fields.updated_at 2026-11-05T00:46:28Z. Cause: work_store_import.to_row projects extra.updated_at (the row's own field), which only changes when the writer sets it; the store's item-level updated_at moves on every write. Effect: the SPA Work page's 'updated' ages, and any reader through work_read.checklist_rows (attention_watch, blocker_watch, work_digest, staleness checks), see rows days older than they are. FIX (5 lines, Tier 2 runtime read path): in work_read.checklist_rows (or to_row), take max(item.updated_at, extra.updated_at) and the matching updated_by. The console connector already does this client-side (PR #25164 data._fresh). CLOSES WHEN GET /api/bot/work/checklist shows MANAGER-VM-DIRECT-OPS updated_at equal to the store item's.",
+    "phase": null,
+    "updated_at": "2026-11-12T07:56:10Z",
+    "updated_by": "UI lane p2 (session_01AFoLuMw1bWyUmi4HkqYBX8)",
+    "week_lane": "surge"
+   },
+   "latest_note": {
+    "at": "2026-11-13T01:23:39Z",
+    "by": "AM-OPS (session_01AFoLuJUGfpon2bNgwFbFmx)",
+    "note": "#25569 merged 9cf7794c at ~01:25Z 2026-11-13 (Tier 2, manager standing OK, guards green). Write side: work_store._update stamps extra.updated_at/updated_by when the item carries one. Merged, not yet observed deployed. Closing observation: once ict-git-sync has the web-api on 9cf7794c or later, the next work.py write to any row shows the write time as that row's updated_at in GET /api/bot/work/checklist."
+   }
+  },
+  {
+   "id": "FRONTIER-RESEARCH",
+   "kind": "build",
+   "parent_id": null,
+   "title": "Frontier research: recurring weekly scan for BETTER models/methods (ML) and strategy ideas, not variations of the first good thing",
+   "state": "done",
+   "owner": "manager",
+   "lane": null,
+   "model": null,
+   "tier": 1,
+   "roadmap": [
+    "M25"
+   ],
+   "roadmap_unmapped_reason": null,
+   "due_rule": {},
+   "due_at": null,
+   "origin": null,
+   "next_action": null,
+   "priority_rank": null,
+   "severity": null,
+   "ceiling_usd": null,
+   "spend_usd": null,
+   "prs": [
+    17600
+   ],
+   "blocked_on": [],
+   "summary": null,
+   "terminal_reason": "[2026-10-11 ~14:25Z operator directive, voice, close paraphrase] The ML research mandate must not be limited to new training runs, datasets or variations of models we already chose. Do deep research on BETTER MODELS: there is a vast and growing set of open-source models, methods and resources; stay on top of them, test whether they are relevant, and apply them. Do not let early, somewhat arbitrary choices dictate the scope and potential of the project; do not lazily keep the first good thing; do not spend capacity on 100 variations of the same model that is not going anywhere. Use capacity wisely to test genuinely different things. Same for strategies, but especially ML. RECURRING part of the workflow, alongside the work already under way. [lane] Built: .claude/skills/frontier-research/SKILL.md (weekly scan), ml_plan_status.py --diversity (family concentration/fail-streak), docs/research/frontier-scan-2026-10-11.md (first scan, ranked shortlist), units RQ-20261011-9da8-01..07 (blocked/, pre-registered), lever rows FRONTIER-LEVER-*. NOT done until observed: the 2026-10-18 Sunday ml-review runs the frontier scan unprompted and writes a second comms/ml-plan record with a frontier block. [2026-10-12T06:00Z manager session_01G16FfyYSmDPQuuW55BuTmK] Stale block cleared (blocker_watch STALE_BLOCK): #17600 merged 2026-10-11T15:48Z. Weekly scan is bound to the Sunday ml-review; observation due 2026-10-20 stands. FRONTIER-LEVER-TRAINER-DEPS dispatched this review; the other levers are dispatched by capacity. | [BACKLOG-DRAIN 2026-11-01] DONE: The weekly mechanism ran: comms/ml-plan/20261028T2000Z-ML-FRONTIER-PREP.json carries sources_checked, candidates, strategy_ideas and a diversity block; python3 scripts/ops/ml_plan_status.py --diversity renders the table. The named 2026-10-18 file (20261018T0700Z.json) is labelled 'ML-UNBLOCK-1018 (not a full scan)', so the exact run in the observation did not scan; a later week did.",
+   "created_at": "2026-11-05T11:42:21Z",
+   "updated_at": "2026-11-13T01:22:40Z",
+   "updated_by": "session_01AFoLuMfGoUaVmVtfzXaKEK",
+   "version": 2,
+   "extra": {
+    "_absent": [
+     "roadmap_unmapped_reason",
+     "priority_rank",
+     "next_action",
+     "due_by"
+    ],
+    "_seq": 411,
+    "_source": "checklist",
+    "note": "[2026-10-11 ~14:25Z operator directive, voice, close paraphrase] The ML research mandate must not be limited to new training runs, datasets or variations of models we already chose. Do deep research on BETTER MODELS: there is a vast and growing set of open-source models, methods and resources; stay on top of them, test whether they are relevant, and apply them. Do not let early, somewhat arbitrary choices dictate the scope and potential of the project; do not lazily keep the first good thing; do not spend capacity on 100 variations of the same model that is not going anywhere. Use capacity wisely to test genuinely different things. Same for strategies, but especially ML. RECURRING part of the workflow, alongside the work already under way. [lane] Built: .claude/skills/frontier-research/SKILL.md (weekly scan), ml_plan_status.py --diversity (family concentration/fail-streak), docs/research/frontier-scan-2026-10-11.md (first scan, ranked shortlist), units RQ-20261011-9da8-01..07 (blocked/, pre-registered), lever rows FRONTIER-LEVER-*. NOT done until observed: the 2026-10-18 Sunday ml-review runs the frontier scan unprompted and writes a second comms/ml-plan record with a frontier block. [2026-10-12T06:00Z manager session_01G16FfyYSmDPQuuW55BuTmK] Stale block cleared (blocker_watch STALE_BLOCK): #17600 merged 2026-10-11T15:48Z. Weekly scan is bound to the Sunday ml-review; observation due 2026-10-20 stands. FRONTIER-LEVER-TRAINER-DEPS dispatched this review; the other levers are dispatched by capacity. | [BACKLOG-DRAIN 2026-11-01] DONE: The weekly mechanism ran: comms/ml-plan/20261028T2000Z-ML-FRONTIER-PREP.json carries sources_checked, candidates, strategy_ideas and a diversity block; python3 scripts/ops/ml_plan_status.py --diversity renders the table. The named 2026-10-18 file (20261018T0700Z.json) is labelled 'ML-UNBLOCK-1018 (not a full scan)', so the exact run in the observation did not scan; a later week did.",
+    "observation": {
+     "due_by": "2026-10-31",
+     "how_to_check": "ls comms/ml-plan/ (a 2026-10-18 file); jq .frontier on it; python3 scripts/ops/ml_plan_status.py --diversity",
+     "redated": {
+      "by": "REGISTER-SWEEP-W43",
+      "from": "2026-10-20",
+      "on": "2026-10-24",
+      "reason": "not observed yet: the closing observation needs a live VM/diag read, a deploy, a human, or a future event that this register lane cannot take (repo-only, no VM egress); re-checked for repo-visible evidence this session (research/results, PR state) and none closes it; date moved one week for the daily-review pull"
+     },
+     "what": "The 2026-10-18 weekly ml-review ran the frontier scan (frontier-research skill) unprompted; its comms/ml-plan record has a frontier block with sources checked, >=1 kept idea as a unit/row or a none-because, and the --diversity table"
+    },
+    "phase": "W41",
+    "priority": "high",
+    "updated_at": "2026-11-01T11:43:33Z",
+    "updated_by": "BACKLOG-DRAIN-20261101",
+    "writeback": {
+     "arch": "none: owed at close by the same lane, if the frontier scan changes an ML contract",
+     "roadmap": "none: owed at close; the 2026-10-18 ml-review lane updates M25 when the observation lands (manager-scope R2 bars the manager from roadmap edits)"
+    }
+   },
+   "latest_note": {
+    "at": "2026-11-13T01:22:40Z",
+    "by": "session_01AFoLuMfGoUaVmVtfzXaKEK",
+    "note": "2026-11-13 01:2xZ pass 4 scan slice (quant practitioner literature, web search 'crypto perp OI liquidation cascade return predictability 2026'): (a) PRIMARY constraint, arXiv 2607.27070 (title + abstract snippet): Binance per-event liquidation dumps are discontinued, so intraday liquidation features need a paid source; free route = OI + aggressor flow (data.binance.vision metrics). (b) OI-shock signal (12.46% one-day perp OI drop -> ~-10% mean 30d, 7 long-squeeze events, K33 via a secondary blog): NOT carried, n=7 and secondary; the data route already sits with lever FUNDING-OI-DATASETS-ETH-SOL. (c) Hyperliquid liquidity after 2025-10-10 (JFDA, Lim 2026): spread-only metrics understate impairment; secondary for our cost stack, not carried. (d) 'funding-arb Sharpe > 2.5' (secondary, source paper not located): not carried. No new FRONTIER-Q item from this slice."
+   }
+  },
+  {
+   "id": "RESEARCH-DISPATCH-INFRA-STARVE",
+   "kind": "build",
+   "parent_id": null,
+   "title": "Research dispatch fired 0 units 17:43Z..22:33Z on 2026-11-12 (infra yield always met: system-actions + phone-executor-apk kept >= 2 fresh infra runs queued). Manager decision 22:33Z: infra-yield starvation floor (2 h, one fire/cycle), drop phone-executor-apk from infra_workflows, research-queue-health idle page 12 h -> 4 h. PR #25526. Done when the first unit fires after deploy (dispatch run id + unit id recorded). Gates: none.",
+   "state": "done",
+   "owner": "AM-ML (session_01AFoLuJkXEM1EigH9mSfz1F)",
+   "lane": "session_01AFoLuJkXEM1EigH9mSfz1F",
+   "model": null,
+   "tier": 1,
+   "roadmap": [
+    "unmapped"
+   ],
+   "roadmap_unmapped_reason": "research pipeline health",
+   "due_rule": {
+    "due_date": "2026-11-14",
+    "kind": "date"
+   },
+   "due_at": null,
+   "origin": null,
+   "next_action": null,
+   "priority_rank": null,
+   "severity": null,
+   "ceiling_usd": null,
+   "spend_usd": null,
+   "prs": [
+    25526
+   ],
+   "blocked_on": [],
+   "summary": null,
+   "terminal_reason": "2026-11-12 23:58Z AM-ML: dispatch run 43321043706 (created 22:33Z on pre-merge sha 8b5f1094) started late in the saturated queue and finished 23:51Z: it deferred every fire on 3 fresh infra runs (system-actions, system-actions-cancel-guard). That run did NOT have #25526. Queued run 43324373219 is also pre-merge (d72d920). The first run carrying the floor is the 00:20Z hourly slot or later; observation still open.",
+   "created_at": "2026-11-12T22:43:42Z",
+   "updated_at": "2026-11-13T01:23:57Z",
+   "updated_by": "session_01AFoLuJkXEM1EigH9mSfz1F",
+   "version": 4,
+   "extra": {
+    "_absent": [
+     "priority_rank",
+     "next_action"
+    ],
+    "_source": "checklist",
+    "note": "2026-11-12 23:58Z AM-ML: dispatch run 43321043706 (created 22:33Z on pre-merge sha 8b5f1094) started late in the saturated queue and finished 23:51Z: it deferred every fire on 3 fresh infra runs (system-actions, system-actions-cancel-guard). That run did NOT have #25526. Queued run 43324373219 is also pre-merge (d72d920). The first run carrying the floor is the 00:20Z hourly slot or later; observation still open.",
+    "phase": "build",
+    "terminal_reason": "OBSERVED 2026-11-13 00:27:42Z: research-queue-dispatch run 43333749697 (post-#25526 sha a2a9ee0) logged 'starvation floor: nothing dispatched for 3.8 h (>= 2 h) -- lifting the infra block (2 infra run(s) queued (system-actions))' and dispatched RQ-20261101-78fc-13 (research-script-run.yml, route=runner, pick=starved) at 00:27:47Z -- first research fire since 17:45Z. #25526 merged efcef05b.",
+    "updated_at": "2026-11-13T01:23:56Z",
+    "updated_by": "session_01AFoLuJkXEM1EigH9mSfz1F"
+   },
+   "latest_note": null
+  }
+ ],
+ "returned": 3,
+ "total": 4573,
+ "canonical": false,
+ "note": "S1: the checklist + pipeline files stay canonical until S2 parity and the S4 reader flip",
+ "matched": 4573,
+ "counts": {
+  "by_owner_state": {
+   "AM-OPS": {
+    "landed_unproven": 16,
+    "in_flight": 19,
+    "queued": 548,
+    "done": 9,
+    "dropped": 14,
+    "blocked": 1
+   },
+   "other": {
+    "landed_unproven": 277,
+    "done": 1306,
+    "queued": 76,
+    "dropped": 1646,
+    "blocked": 2,
+    "in_flight": 8
+   },
+   "AM-TRADING": {
+    "queued": 278,
+    "in_flight": 10,
+    "done": 18,
+    "landed_unproven": 9,
+    "blocked": 23,
+    "dropped": 13
+   },
+   "AM-ML": {
+    "in_flight": 24,
+    "done": 15,
+    "queued": 169,
+    "landed_unproven": 10,
+    "dropped": 8,
+    "blocked": 15
+   }
+  },
+  "basis": "owner grouped to its AM-* prefix, else 'other'",
+  "matched": 4573
+ },
+ "_fixture_note": "REAL capture of GET /api/bot/work/items?counts=1&latest_note=1 (2026-11-13), items trimmed to 3 (two with latest_note), by_owner_state to 4 AMs; rows naming accounts, IPs or dollar amounts dropped."
+}

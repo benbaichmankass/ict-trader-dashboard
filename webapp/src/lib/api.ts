@@ -7,7 +7,9 @@
 import { getBotApiUrl } from "./config";
 import { authHeaders, handleUnauthorized } from "./auth";
 import type { DbOverview } from "./dbOverview";
+import { buildSignalsCatalogQuery, type SignalsCatalogQuery } from "./signalsCatalog";
 import { buildCatalogQuery, type CatalogQuery, type CatalogResponse, type CatalogDetail } from "./catalog";
+import { buildGatesQuery, type GateFilters, type GatesResponse, type GateDetailResponse } from "./gates";
 
 /**
  * A read the bot refused for want of a session. Thrown instead of the generic
@@ -158,7 +160,7 @@ export interface Strategy {
 // the trade-approval decision (session-gated, `require_session`).
 async function rawFetch(
   path: string,
-  init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+  init: { method?: string; body?: unknown; signal?: AbortSignal; keepSessionOn401?: boolean } = {},
 ): Promise<Response> {
   const url = `${getBotApiUrl()}${path}`;
   const hasBody = init.body !== undefined;
@@ -168,7 +170,7 @@ async function rawFetch(
     headers: authHeaders(hasBody ? { "Content-Type": "application/json" } : undefined),
     body: hasBody ? JSON.stringify(init.body) : undefined,
   });
-  if (res.status === 401 || res.status === 403) {
+  if ((res.status === 401 || res.status === 403) && !init.keepSessionOn401) {
     // Drop the dead session and surface the form. Throwing a distinct type
     // lets the route render a sign-in affordance instead of a status line.
     handleUnauthorized(res.status, path);
@@ -191,6 +193,41 @@ async function statusGet(path: string, signal?: AbortSignal): Promise<{ status: 
 
 async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   return (await getRaw(path, signal)).json() as Promise<T>;
+}
+
+/** The bot's raw answer to a write: status + parsed JSON (or null) + raw text. Never thrown on a 4xx/5xx. */
+export interface PostResult {
+  ok: boolean;
+  status: number;
+  body: unknown;
+  text: string;
+}
+
+// The SPA's one authenticated WRITE path to /api/bot/*. Same bearer as `getRaw`
+// (`authHeaders()` — the device session, else the password JWT), so a route
+// gated by `require_session` sees exactly the session the reads carry.
+//
+// Unlike `get`, it does NOT throw on a non-2xx: a write's refusal is an answer
+// the operator must see verbatim (the gate registry shows the server's
+// `detail` next to the row). A 401/403 still drops the dead session and puts
+// the sign-in form up, as for reads. Only a network failure throws.
+async function post(path: string, body: unknown, signal?: AbortSignal): Promise<PostResult> {
+  const url = `${getBotApiUrl()}${path}`;
+  const res = await fetch(url, {
+    method: "POST",
+    signal,
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(body),
+  });
+  if (res.status === 401 || res.status === 403) handleUnauthorized(res.status, path);
+  const text = await res.text().catch(() => "");
+  let parsed: unknown = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = null;
+  }
+  return { ok: res.ok, status: res.status, body: parsed, text };
 }
 
 function normalizeClosedTrade(r: ClosedTrade): ClosedTrade {
@@ -283,13 +320,31 @@ export interface PerfCategoryRow {
   funding_usd?: number | null;
   n_funding?: number | null;
   n_excluded_null_pnl?: number | null;
+  // u3 (bot #25386): capital at the window start, summed over the category's
+  // accounts (nearest balance at or before start, else the first after it —
+  // capital_read_state "first_after_start", capital_as_of names when). `pct` /
+  // `measured_pct` are the ROUTE's percentage points (x100); never recomputed here.
+  start_capital_usd?: number | null;
+  capital_read_state?: string | null;
+  capital_source?: string | null;
+  capital_as_of?: string | null;
+  capital_accounts?: Array<{ account_id?: string; balance?: number | null; ts?: string | null; state?: string | null }> | null;
+  pct?: number | null;
+  measured_pct?: number | null;
 }
 
 export interface PerfCategories {
   as_of?: string | null;
   window?: string | null;
+  // bot #25241: start/end (inclusive UTC days) are echoed when asked for; `total`
+  // is the bot's own roll-up of the four rows (additive fields summed, ratios
+  // recomputed, max DD null + max_drawdown_read_state "not_additive").
+  start?: string | null;
+  end?: string | null;
   read_state?: string | null;
   categories?: PerfCategoryRow[];
+  total?: (PerfCategoryRow & { max_drawdown_read_state?: string | null; label?: string | null; provenance?: Record<string, string> | null }) | null;
+  capital_flows?: { read_state?: string | null; reason?: string | null; effect?: string | null } | null;
   excluded?: Array<{ account_id?: string; reason?: string }>;
   population?: {
     window?: string;
@@ -313,6 +368,9 @@ export interface PnlPoint {
 export interface PnlSeries {
   as_of?: string | null;
   window?: string | null;
+  // u3 (bot #25386): echoed range; the caller checks them when it asked for one.
+  start?: string | null;
+  end?: string | null;
   read_state?: string | null;
   measured_only?: boolean | null;
   bucket?: string | null;
@@ -320,6 +378,7 @@ export interface PnlSeries {
     category: string;
     start_capital_usd?: number | null;
     capital_read_state?: string | null;
+    capital_as_of?: string | null;
     n_rows?: number | null;
     read_state?: string | null;
     points?: PnlPoint[];
@@ -359,12 +418,19 @@ export const api = {
   // 7d|30d|90d|all — the bot answers 400 for anything else (24h included).
   perfCategories: (window = "30d", signal?: AbortSignal) =>
     get<PerfCategories>(`/api/bot/performance/categories?window=${encodeURIComponent(window)}`, signal),
+  // Exact inclusive UTC-day range (bot #25241). The caller must check the echoed
+  // start/end: an older bot ignores the params and answers its default window.
+  perfCategoriesRange: (start: string, end: string, signal?: AbortSignal) =>
+    get<PerfCategories>(`/api/bot/performance/categories?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`, signal),
   pnlSeries: (
-    opts: { window?: string; category?: string[]; strategy?: string; symbol?: string; assetClass?: string; measuredOnly?: boolean } = {},
+    opts: { window?: string; start?: string; end?: string; category?: string[]; strategy?: string; symbol?: string; assetClass?: string; measuredOnly?: boolean } = {},
     signal?: AbortSignal,
   ) => {
     const q = new URLSearchParams();
-    q.set("window", opts.window ?? "30d");
+    // u3 (bot #25386): an exact inclusive UTC-day range wins over the window. The
+    // caller must check the echoed start/end — an older bot ignores them.
+    if (opts.start && opts.end) { q.set("start", opts.start); q.set("end", opts.end); }
+    else q.set("window", opts.window ?? "30d");
     if (opts.category && opts.category.length) q.set("category", opts.category.join(","));
     if (opts.strategy) q.set("strategy", opts.strategy);
     if (opts.symbol) q.set("symbol", opts.symbol);
@@ -400,6 +466,12 @@ export const api = {
     return get<any>(`/api/bot/feature-impact/detail?${q.toString()}`, signal);
   },
   featureImpactInvest: (signal?: AbortSignal) => get<any>("/api/bot/feature-impact/invest", signal),
+
+  // SIGNALS-CATALOG (bot #25199, UI-UPGRADE-1 item 8). Filters are server-side:
+  // limit/offset/family/kind/q/consumer(any|with|without). Uncached ~2-3 s.
+  // Returns the raw Response so the route can show the HTTP status on a non-200.
+  signalsCatalog: (o: SignalsCatalogQuery = {}, signal?: AbortSignal) =>
+    rawFetch(`/api/bot/signals/catalog?${buildSignalsCatalogQuery(o)}`, { signal }),
 
   // Trade approvals (TRADE-ACTION-DIRECT-PATH phase 1b, bot #25046) — both
   // routes are behind `require_session`; a 401 surfaces the sign-in form.
@@ -506,6 +578,36 @@ export const api = {
   insight: (endpoint: string, signal?: AbortSignal) => get<any>(`/api/bot/insights/${endpoint}`, signal),
   roadmap: (signal?: AbortSignal) => get<any>("/api/bot/roadmap", signal),
   work: (signal?: AbortSignal) => get<any>("/api/bot/work", signal),
+  // The work store's item list (WSD-S1, ungated read). Filters are the route's own:
+  // state, due (the due_now view), since (ISO), kind, limit<=1000, offset. NOTE:
+  // `total` is the WHOLE store's count (count_items()), not the filtered count, and
+  // there is no next_offset — a full page is the only "maybe more" signal.
+  // bot #25542 adds: state=open (every non-terminal state), owner_prefix, week_lane, q,
+  // counts=1 (owner x state over the whole filtered set) and latest_note=1; an extended
+  // read also answers `matched` (the filtered count). An older bot ignores them.
+  workItems: (
+    q: { state?: string; due?: boolean; since?: string; kind?: string; parent?: string; limit?: number; offset?: number;
+         ownerPrefix?: string; weekLane?: string; q?: string; counts?: boolean; latestNote?: boolean } = {},
+    signal?: AbortSignal,
+  ) => {
+    const u = new URLSearchParams();
+    if (q.state) u.set("state", q.state);
+    if (q.due) u.set("due", "1");
+    if (q.since) u.set("since", q.since);
+    if (q.kind) u.set("kind", q.kind);
+    if (q.parent) u.set("parent", q.parent);
+    if (q.ownerPrefix) u.set("owner_prefix", q.ownerPrefix);
+    if (q.weekLane) u.set("week_lane", q.weekLane);
+    if (q.q) u.set("q", q.q);
+    if (q.counts) u.set("counts", "1");
+    if (q.latestNote) u.set("latest_note", "1");
+    u.set("limit", String(q.limit ?? 50));
+    u.set("offset", String(q.offset ?? 0));
+    return get<any>(`/api/bot/work/items?${u.toString()}`, signal);
+  },
+  // Per-AM lane cards (bot #25542): moved_today / working_now / stuck / next, each
+  // {read_state, count, items[]}, plus week_lanes totals. 404 until that PR deploys.
+  workLanes: (nextN = 5, signal?: AbortSignal) => statusGet(`/api/bot/work/lanes?next_n=${nextN}`, signal),
 
   // The manager checklist, graded by the bot. ⚠️ `status.value` and
   // `status.basis` arrive ALREADY RECONCILED — the file carries two competing
@@ -538,6 +640,44 @@ export const api = {
   // roll-up of every work row, and pipeline items with kind:"insight".
   workTopics: (signal?: AbortSignal) => get<any>("/api/bot/work/topics", signal),
   workLedger: (signal?: AbortSignal) => get<any>("/api/bot/work/ledger", signal),
+  // Backtest / research run log (bot #25562): runs[] newest first, each with a computed
+  // what_we_did {state acted|recorded|none_recorded, follow_ups[], disposition, retired_reason};
+  // counts over the whole log; trainer_sweeps age. 404 until that PR deploys.
+  researchRuns: (f: { verdict?: string; what?: string; q?: string; since?: string; limit?: number; offset?: number } = {}, signal?: AbortSignal) => {
+    const u = new URLSearchParams();
+    if (f.verdict) u.set("verdict", f.verdict);
+    if (f.what) u.set("what", f.what);
+    if (f.q) u.set("q", f.q);
+    if (f.since) u.set("since", f.since);
+    u.set("limit", String(f.limit ?? 50));
+    u.set("offset", String(f.offset ?? 0));
+    return statusGet(`/api/bot/research/runs?${u.toString()}`, signal);
+  },
+  // Idea-level R&D registry (bot #25561): ideas[] with the registry's computed stage,
+  // summary.per_stage_per_track, stages[], and `changed` over a server-side window.
+  // Status-returning so the tab can say "not available yet" on a 404.
+  researchRegistry: (f: { track?: string; stage?: string; q?: string; since?: string } = {}, signal?: AbortSignal) => {
+    const u = new URLSearchParams();
+    if (f.track) u.set("track", f.track);
+    if (f.stage) u.set("stage", f.stage);
+    if (f.q) u.set("q", f.q);
+    if (f.since) u.set("since", f.since);
+    const qs = u.toString();
+    return statusGet(`/api/bot/research/registry${qs ? `?${qs}` : ""}`, signal);
+  },
+  // The alerts ledger (ungated read). `since` keeps the payload small — the
+  // whole 500-row default window is ~330 KB.
+  alerts: (opts: { since?: string; kind?: string; limit?: number } = {}, signal?: AbortSignal) => {
+    const q = new URLSearchParams();
+    if (opts.since) q.set("since", opts.since);
+    if (opts.kind) q.set("kind", opts.kind);
+    q.set("limit", String(opts.limit ?? 200));
+    return get<any>(`/api/bot/alerts?${q.toString()}`, signal);
+  },
+  // Features catalog (docs/reference/signal-catalog.yaml joined with the served +
+  // candidate model.json feature lists; ungated, ~220 KB). `coverage` carries the
+  // bot's own counts, incl. n_models_missing_from_catalog (operator u8).
+  catalogFeatures: (signal?: AbortSignal) => get<any>("/api/bot/catalog/features", signal),
 
   // The work schedule (A9) — cadenced sessions (the daily sync, the three
   // project-level reviews) · decisions owed · monitoring coming due · cron
@@ -562,8 +702,17 @@ export const api = {
 
   // Admin — health / logs / data explorer.
   healthServices: (signal?: AbortSignal) => get<any>("/api/bot/health/services", signal),
-  // Wake-notification switches (ungated read; the POST is service-token gated bot-side).
+  // Wake-notification switches (ungated read; the POST takes the operator session, bot #25245).
   wakeToggles: (signal?: AbortSignal) => get<any>("/api/bot/wake-toggles", signal),
+  // Flip one wake switch: POST {key, on, by} with the session bearer. Since bot
+  // #25245 the route takes the operator session (recorded as "operator-spa"; the
+  // body's `by` is ignored for a session) or the service token; anonymous → 401.
+  // A 401 does not sign the operator out here (keepSessionOn401): the caller shows
+  // the bot's answer verbatim and asks for a sign-in.
+  flipWakeToggle: async (key: string, on: boolean): Promise<{ status: number; body: any }> => {
+    const res = await rawFetch("/api/bot/wake-toggles", { method: "POST", body: { key, on, by: "dashboard (operator session)" }, keepSessionOn401: true });
+    return { status: res.status, body: await res.json().catch(() => null) };
+  },
   // ── Backend routes from JTA-Trader #25216 / #25231 (held at the time of writing).
   // Each returns { status, body } and does NOT throw on 404/4xx, so a page can say
   // "not available yet" / "could not look" instead of inventing a state.
@@ -621,9 +770,48 @@ export const api = {
   researchUnit: (id: string, signal?: AbortSignal) =>
     get<CatalogDetail>(`/api/bot/research/catalog/${encodeURIComponent(id)}`, signal),
 
+  // Admin → Gates: the gate registry (operator ask 2026-11-12). Reads go
+  // through `get` like every other route; the decision is the one write.
+  gates: (f: GateFilters = {}, signal?: AbortSignal) => {
+    const q = buildGatesQuery(f);
+    return get<GatesResponse>(`/api/bot/gates${q ? `?${q}` : ""}`, signal);
+  },
+  gate: (id: string, signal?: AbortSignal) =>
+    get<GateDetailResponse>(`/api/bot/gates/${encodeURIComponent(id)}`, signal),
+  // Work → Decisions answer (bot #25548, Tier 2): the operator's session is the
+  // credential. 200 = accepted IN TRANSIT (not decided); 400/401/404/409/503 carry a
+  // detail that is shown verbatim.
+  decisionSessionAnswer: (body: { object_id: string; request_id: string; chosen?: string; free_text?: string }, signal?: AbortSignal) =>
+    post(`/api/bot/work/decision/session`, body, signal),
+  gateDecision: (id: string, decision: string, note: string, signal?: AbortSignal) =>
+    post(`/api/bot/gates/${encodeURIComponent(id)}/decision`, { decision, note }, signal),
+
+  // Work → Plans (bot #25554, design § "Tab 5: Plans"). All reads are statusGet so a
+  // 404 (route not deployed) renders "not available yet", never an empty list.
+  //  - the frontier sub-queue: FRONTIER-Q-* rows are children of FRONTIER-RESEARCH
+  //  - the ML development plan: plan items joined to their carrying rows + the dev plan
+  //  - plan edits read back: observation rows, newest first (the route orders by
+  //    updated_at DESC); the component keeps the ones carrying extra.plan_edit
+  frontierQueue: (signal?: AbortSignal) =>
+    statusGet("/api/bot/work/items?parent=FRONTIER-RESEARCH&limit=200&offset=0", signal),
+  mlPlan: (signal?: AbortSignal) => statusGet("/api/bot/ml/plan", signal),
+  planEditRows: (signal?: AbortSignal) =>
+    statusGet("/api/bot/work/items?kind=observation&limit=1000&offset=0", signal),
+  // Tier 2, operator session: file one add or suggested edit. 200 {accepted, status,
+  // item, read_back}; 400 bad body; 401 no session; 404 unknown target row; 503 not persisted.
+  planEdit: (
+    body: { section: "frontier" | "ml_plan"; kind: "add" | "edit"; text: string; item_id?: string },
+    signal?: AbortSignal,
+  ) => post("/api/bot/work/plan-edits", body, signal),
+
   // Strategies & Models.
   gpuSpend: (signal?: AbortSignal) => get<any>("/api/bot/gpu/spend", signal),
-  mlRegistry: (signal?: AbortSignal) => get<any>("/api/bot/ml/registry", signal),
+  // ?runs_tail=5 (bot #25557): each row keeps only its last 5 `runs` / `history`
+  // entries plus `runs_total` / `history_total` (~0.9 MB vs 8.9 MB measured
+  // 2026-11-13). Nothing here reads `runs`; ModelHistory reads `history` and says
+  // when it holds only the tail. stage_history is not trimmed. An older bot
+  // ignores the param and sends the full shape, which renders the same.
+  mlRegistry: (signal?: AbortSignal) => get<any>("/api/bot/ml/registry?runs_tail=5", signal),
   mlStatus: (signal?: AbortSignal) => get<any>("/api/bot/ml/status", signal),
   exitLadderSoak: (limit = 100, signal?: AbortSignal) =>
     get<any>(`/api/bot/exit-ladder/soak?limit=${limit}`, signal),

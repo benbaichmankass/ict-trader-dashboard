@@ -3,6 +3,7 @@
   import { api } from "../lib/api";
   import { money, signClass, agoFromIso, num, DASH } from "../lib/format";
   import { closedFills, fillBasis, fillBasisText, fillClosedAt, fillProvenance, shortUtc } from "../lib/propPnl";
+  import ClosedTradeCard from "../components/ClosedTradeCard.svelte";
 
   // One cushion/reconcile per LIVE prop account. Until 2026-10-15 this page
   // read status/reconcile for a hardcoded `breakout_1` — an account retired
@@ -52,6 +53,18 @@
   onMount(load);
 
   const closed = $derived(closedFills(fills));
+  // Closed rows expand into the shared closed-trade card (UI-REDESIGN-2026-11
+  // addenda 2/3/5), reading the prop snapshot + prop-keyed bracket history.
+  // Several can be open at once.
+  let openFills = $state<Record<string, boolean>>({});
+  function asClosedTrade(f: any): any {
+    return {
+      id: f.id, symbol: f.symbol, direction: f.direction, qty: f.qty,
+      entryPrice: f.entry_price, exitPrice: f.exit_price, pnl: f.pnl,
+      openedAt: f.opened_at, closedAt: fillClosedAt(f), account: f.account_id,
+      closeReason: f.reason, pnlProvenance: fillProvenance(f), strategy: null,
+    };
+  }
   // PROP-UI-BRACKETS-CLOSED (UI workplan §2, bot #24873): `/prop/fills` rows carry a
   // `bracket` block {final_sl, final_tp, entry_sl, entry_tp, amendments, n_amendments,
   // read_state}. `no_record` means the journal holds no levels — rendered "—", not 0.
@@ -141,7 +154,8 @@
             {#each closed as f, i (f.id ?? i)}
               {@const prov = fillProvenance(f)}
               {@const basis = fillBasis(f)}
-              <tr>
+              {@const key = String(f.id ?? i)}
+              <tr class="clickrow" class:openrow={openFills[key]} onclick={() => (openFills[key] = !openFills[key])} title="Open the trade card (chart snapshot, brackets)">
                 <td class="muted" title={fillClosedAt(f) ?? ""}>{shortUtc(fillClosedAt(f))} <span class="small">· {agoFromIso(fillClosedAt(f))}</span></td>
                 <td class="mono">{f.account_id ?? DASH}</td>
                 <td class="sym">{f.symbol ?? DASH}</td>
@@ -156,6 +170,9 @@
                 <td><span class="badge {prov.toLowerCase()}">{prov === "UNKNOWN" ? DASH : prov}</span></td>
                 <td class="muted reason" title={f.reason ?? ""}>{f.reason == null ? DASH : String(f.reason).split(" ")[0]}</td>
               </tr>
+              {#if openFills[key]}
+                <tr class="cardrow"><td colspan="13">{#if typeof f.id === "number"}<ClosedTradeCard t={asClosedTrade(f)} propFillId={f.id} />{:else}<div class="muted small">No fill id on this row, so there is no snapshot to look up.</div>{/if}</td></tr>
+              {/if}
             {/each}
           </tbody>
         </table>
@@ -292,6 +309,9 @@
 </section>
 
 <style>
+  .clickrow { cursor: pointer; }
+  .clickrow:hover, .openrow { background: var(--panel-2); }
+  .cardrow > td { padding: 0 8px 10px; background: var(--panel-2); }
   section { display: flex; flex-direction: column; gap: 14px; }
   h2 { margin: 0; font-size: 18px; }
   .sub { font-size: 12px; font-weight: 400; }

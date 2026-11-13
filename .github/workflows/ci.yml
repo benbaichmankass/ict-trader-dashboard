@@ -132,6 +132,13 @@ jobs:
         run: node webapp/tests/ws-frame-scope.mjs --self-test
       - name: A symbol-scoped WS frame must never define row membership
         run: node webapp/tests/ws-frame-scope.mjs
+      # Same push-transport family, so it rides this job rather than adding one:
+      # two same-tick acquireStream() calls must open exactly ONE EventSource
+      # (lib/stream.ts connect race, AM-UI review of #246, 2026-11-13).
+      - name: Prove the stream-connect check can fail
+        run: node webapp/tests/stream-connect.mjs --self-test
+      - name: The SSE push stream opens one EventSource per tab
+        run: node webapp/tests/stream-connect.mjs
 
   webapp-auth-bearer:
     # Third sibling of webapp-api-contract / webapp-ws-frame-scope, and the same

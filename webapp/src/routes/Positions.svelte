@@ -3,6 +3,8 @@
   import { api, type Position } from "../lib/api";
   import { money, signClass } from "../lib/format";
   import PositionsTable from "../components/PositionsTable.svelte";
+  import { acquireStream, onStreamFrame, streamStatus, isStreamLive } from "../lib/stream";
+  import { agoFromIso, DASH } from "../lib/format";
 
   let positions = $state<Position[]>([]);
   let error = $state<string | null>(null);
@@ -16,8 +18,26 @@
       error = e instanceof Error ? e.message : String(e);
     }
   }
-  onMount(() => { load(); timer = setInterval(load, 30000); });
-  onDestroy(() => { if (timer) clearInterval(timer); });
+  // T2 (UI-TRADING-PUSH): re-read on the push stream's frames (resnapshot / position /
+  // a trade close; bracket frames move SL/TP in place). The 30 s poll runs ONLY while
+  // the stream is down, and the page says which is in effect.
+  let loadedAt = $state<number | null>(null);
+  let release: (() => void) | null = null;
+  let off: (() => void) | null = null;
+  async function loadStamped() { await load(); loadedAt = Date.now(); }
+  onMount(() => {
+    release = acquireStream();
+    off = onStreamFrame((f) => {
+      if (f.type === "resnapshot" || f.type === "position" || (f.type === "trade" && f.payload?.exit_price != null)) loadStamped();
+      else if (f.type === "bracket" && f.payload?.trade_id != null) {
+        const id = String(f.payload.trade_id);
+        positions = positions.map((p) => String(p.id) === id ? { ...p, stopLoss: f.payload.stop_loss ?? p.stopLoss, takeProfit: f.payload.take_profit_1 ?? p.takeProfit } : p);
+      }
+    });
+    loadStamped();
+    timer = setInterval(() => { if (!isStreamLive()) loadStamped(); }, 30000);
+  });
+  onDestroy(() => { if (timer) clearInterval(timer); off?.(); release?.(); });
 
   // uPnL sum excludes legs with no measurement (null), never summed as 0.
   const upnl = $derived(
@@ -34,6 +54,7 @@
       <b class="mono {signClass(measured ? upnl : null)}">{measured ? money(upnl, { sign: true }) : "—"}</b>
     </div>
   </div>
+  <div class="muted small feedline">{$streamStatus === "live" ? "Pushed (live stream)" : "Polling every 30 s (live stream down)"} · read {loadedAt ? agoFromIso(new Date(loadedAt).toISOString()) : DASH}</div>
 
   {#if error}
     <div class="err panel">Couldn't load positions: <span class="mono">{error}</span></div>
@@ -45,6 +66,7 @@
 </section>
 
 <style>
+  .small { font-size: 12px; }
   section { display: flex; flex-direction: column; gap: 14px; }
   .head { display: flex; align-items: center; justify-content: space-between; }
   h2 { margin: 0; font-size: 18px; }

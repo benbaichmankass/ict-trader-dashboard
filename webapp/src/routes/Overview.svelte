@@ -4,10 +4,12 @@
   import { FUNDING_OPTIONS, DAY_SNAPS, sinceDays, perfWindowFor, gotoDetail } from "../lib/nav";
   import { accountBooks, bookOfRow, isPaperBook, normalizeFunding, countUnassigned, FUNDING_BOOKS, FUNDING_LABEL, type FundingBook } from "../lib/funding";
   import ClosedTradeCard from "../components/ClosedTradeCard.svelte";
+  import { closedFills, fillClosedAt, fillProvenance } from "../lib/propPnl";
   import { money, signClass, DASH, agoFromIso } from "../lib/format";
   import ExecSummary from "../components/ExecSummary.svelte";
   import EquityChart from "../components/EquityChart.svelte";
   import TradeApprovals from "../components/TradeApprovals.svelte";
+  import { acquireStream, onStreamFrame, streamStatus, isStreamLive } from "../lib/stream";
   import HealthBar from "../components/HealthBar.svelte";
   import DdSwitchControl from "../components/DdSwitchControl.svelte";
 
@@ -71,6 +73,18 @@
   });
 
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  // T2 (UI-TRADING-PUSH): positions follow the bot's push stream. positionsAt = when the
+  // REST /positions snapshot (incl. broker uPnL) was last read, shown on the page so a
+  // pushed view never looks fresher than it is.
+  let positionsAt = $state<number | null>(null);
+  let posTimer: ReturnType<typeof setTimeout> | null = null;
+  function refreshPositionsSoon() {
+    if (posTimer) return;
+    posTimer = setTimeout(() => {
+      posTimer = null;
+      api.positions().then((v) => { positions = v; positionsAt = Date.now(); }).catch(() => {});
+    }, 400);
+  }
   let refreshing = $state(false);
   let lastUpdated = $state<number | null>(null);
 
@@ -94,8 +108,9 @@
     const slices: Array<Promise<unknown>> = [
       api.stats().then((v) => { stats = v; }),
       (() => { const w = win; return api.performance(w).then((v) => { if (w === win) perf = v; }); })(),
-      // REST is authoritative for the row SET — the WS only refreshes uPnL below
-      api.positions().then((v) => { positions = v; }),
+      // T2: while the push stream is live, /positions is re-read ONLY on its frames
+      // (see onStreamFrame below) — this poll reads it only as the labelled fallback.
+      isStreamLive() ? Promise.resolve() : api.positions().then((v) => { positions = v; positionsAt = Date.now(); }),
       api.balances().then((v) => { balances = v; }),
       api.config().then((v) => { config = v; }),
       api.strategies().then((v) => { strategies = v; }),
@@ -245,6 +260,37 @@
     }
   }
 
+  // Prop closed trades (spec: the Last-closed filter covers live / prop / paper
+  // portfolio / paper testing). Prop is not in /trades/closed — it lives in the
+  // prop journal — so when Prop is ticked a separate sub-list reads /prop/fills
+  // (the same closedFills / fillClosedAt / fillProvenance helpers as the Prop
+  // tab), keeps the days-back window, newest first, 10 at a time.
+  const PROP_FILLS_LIMIT = 200;
+  const PROP_BATCH = 10;
+  let propFillsRaw = $state<any[] | null>(null);
+  let propClosedErr = $state<string | null>(null);
+  let propShown = $state(PROP_BATCH);
+  $effect(() => {
+    const on = closedBooks.includes("prop");
+    days;
+    propShown = PROP_BATCH;
+    if (!on) return;
+    propClosedErr = null;
+    api.propFills(PROP_FILLS_LIMIT)
+      .then((r) => { propFillsRaw = r?.fills ?? []; })
+      .catch((e) => { propFillsRaw = null; propClosedErr = e instanceof Error ? e.message : String(e); });
+  });
+  const propClosedRows = $derived.by(() => {
+    if (!propFillsRaw) return [];
+    const cut = sinceDays(days);
+    return closedFills(propFillsRaw)
+      .filter((f) => { const at = fillClosedAt(f); return at != null && at >= cut; })
+      .sort((a, b) => String(fillClosedAt(b)).localeCompare(String(fillClosedAt(a))));
+  });
+  // The journal read is the newest PROP_FILLS_LIMIT fills; if it came back full,
+  // older closes inside the window may not have been read — say so.
+  const propReadFull = $derived((propFillsRaw?.length ?? 0) >= PROP_FILLS_LIMIT);
+
   // Reset to the first batch whenever the book filter or days-back changes.
   $effect(() => {
     closedBooks;
@@ -280,7 +326,20 @@
     }).catch(() => { if (w === win) testingPerf = null; });
   });
 
+  let releaseStream: (() => void) | null = null;
+  let offFrames: (() => void) | null = null;
   onMount(() => {
+    releaseStream = acquireStream();
+    offFrames = onStreamFrame((f) => {
+      if (f.type === "resnapshot" || f.type === "position") refreshPositionsSoon();
+      else if (f.type === "trade" && f.payload?.exit_price != null) refreshPositionsSoon(); // a close
+      else if (f.type === "bracket" && f.payload?.trade_id != null) {
+        // SL/TP moved: update that row in place (the chart's price lines follow).
+        const id = String(f.payload.trade_id);
+        positions = positions.map((p) => String(p.id) === id
+          ? { ...p, stopLoss: f.payload.stop_loss ?? p.stopLoss, takeProfit: f.payload.take_profit_1 ?? p.takeProfit } : p);
+      }
+    });
     poll();
     // 15 s (was 30 s): /positions is now a server-side snapshot, so a poll is
     // cheap. Skipped while the tab is hidden; refreshed at once when it returns.
@@ -292,6 +351,8 @@
   }
   onDestroy(() => {
     if (pollTimer) clearInterval(pollTimer);
+    if (posTimer) clearTimeout(posTimer);
+    offFrames?.(); releaseStream?.();
     if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible);
   });
 
@@ -318,6 +379,10 @@
   {#if lastUpdated}
     <div class="muted small">Updated {agoFromIso(new Date(lastUpdated).toISOString())}</div>
   {/if}
+  <div class="muted small streamline">
+    Open positions: {$streamStatus === "live" ? "pushed (live stream)" : $streamStatus === "connecting" ? "connecting to the live stream…" : "polling every 15 s (live stream down)"}
+    · broker uPnL as of {positionsAt ? agoFromIso(new Date(positionsAt).toISOString()) : DASH}{$streamStatus === "live" ? " (re-read when the open set changes; crypto rows tick live from Bybit)" : ""}
+  </div>
 
   {#if unassignedPaper > 0}
     <div class="muted small">{unassignedPaper} open paper position(s) can't be placed in either paper book (no account recorded, or /config unreadable) and are hidden.</div>
@@ -415,12 +480,52 @@
       {/each}
     </div>
     {#if closedBooks.includes("prop")}
-      <div class="muted pad small">Prop closed trades come from the prop journal (Prop tab) — not included here yet.</div>
+      <div class="subh">Prop <span class="muted small">· from the prop journal (P&amp;L provenance per row; never blended with the other books)</span></div>
+      {#if propClosedErr}
+        <div class="err pad small">Couldn't load prop closed trades: <span class="mono">{propClosedErr}</span></div>
+      {:else if propFillsRaw == null}
+        <div class="muted pad small">Loading…</div>
+      {:else if propClosedRows.length === 0}
+        <div class="muted pad small">No prop trades closed in the last {days}d{propReadFull ? ` (only the newest ${PROP_FILLS_LIMIT} journal fills were read)` : ""}.</div>
+      {:else}
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Symbol</th><th>Dir</th><th>Account</th><th class="r">P&amp;L</th><th>Provenance</th><th>Closed</th></tr></thead>
+            <tbody>
+              {#each propClosedRows.slice(0, propShown) as f, i (f.id ?? i)}
+                {@const prov = fillProvenance(f)}
+                {@const pk = `prop:${f.id ?? i}`}
+                <tr class="click" class:openrow={openClosed.has(pk)} onclick={() => toggleClosed(pk)} tabindex="0" role="button" aria-expanded={openClosed.has(pk)}
+                  onkeydown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleClosed(pk); } }}>
+                  <td class="sym">{openClosed.has(pk) ? "▾" : "▸"} {f.symbol ?? DASH}</td>
+                  <td class={/^(s|short)/i.test(String(f.direction ?? "")) ? "neg" : "pos"}>{String(f.direction ?? DASH).toUpperCase()}</td>
+                  <td class="muted">{f.account_id ?? DASH}</td>
+                  <td class="r mono {prov === 'MEASURED' ? signClass(f.pnl) : 'muted'}">{f.pnl == null ? DASH : money(f.pnl, { sign: true })}</td>
+                  <td class="muted small">{prov === "UNKNOWN" ? DASH : prov}</td>
+                  <td class="muted">{agoFromIso(fillClosedAt(f))}</td>
+                </tr>
+                {#if openClosed.has(pk)}
+                  <tr class="cardrow"><td colspan="6">{#if typeof f.id === "number"}<ClosedTradeCard t={{ id: f.id, symbol: f.symbol, direction: f.direction, qty: f.qty, entryPrice: f.entry_price, exitPrice: f.exit_price, pnl: f.pnl, openedAt: f.opened_at, closedAt: fillClosedAt(f), account: f.account_id, closeReason: f.reason, pnlProvenance: prov } as any} propFillId={f.id} />{:else}<div class="muted small">No fill id on this row, so there is no snapshot to look up.</div>{/if}</td></tr>
+                {/if}
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        {#if propClosedRows.length > propShown}
+          <button class="more" onclick={() => (propShown += PROP_BATCH)}>Show more ({propClosedRows.length - propShown} more)</button>
+        {/if}
+        <div class="muted pad small">
+          {propClosedRows.length} prop close(s) in the last {days}d{propReadFull ? ` · only the newest ${PROP_FILLS_LIMIT} journal fills were read, so older closes in this window may be missing` : ""} · click a row for its trade card.
+        </div>
+      {/if}
+      {#if closedBooks.some((b) => b !== "prop")}<div class="subh">Other books</div>{/if}
     {/if}
     {#if recentClosedError}
       <div class="err pad">Couldn't load closed trades: <span class="mono">{recentClosedError}</span></div>
     {:else if closedBooks.length === 0}
       <div class="muted pad">Tick at least one book above.</div>
+    {:else if !closedBooks.some((b) => b !== "prop")}
+      <!-- only Prop ticked: the prop sub-list above is the whole answer -->
     {:else if recentClosedLoading}
       <div class="muted pad">Loading…</div>
     {:else if recentClosedRows.length === 0}
@@ -502,6 +607,7 @@
   .ticks .cur { color: var(--text); font-weight: 700; }
   .chkrow { display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0 12px 6px; font-size: 12.5px; }
   .chk { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+  .subh { font-weight: 600; font-size: 13px; margin: 10px 12px 4px; }
   .newsbar { display: flex; gap: 10px; align-items: baseline; padding: 8px 12px; font-size: 12.5px; white-space: nowrap; overflow: hidden; }
   .nb-k { font-weight: 600; }
   .nb-s { font-weight: 600; }

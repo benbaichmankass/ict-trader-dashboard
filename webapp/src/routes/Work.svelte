@@ -22,6 +22,7 @@
   // READ-ONLY BY DESIGN. Answering a decision from here is Phase H, together
   // with the read gate — that split is what keeps this half cheap.
   import { onMount } from "svelte";
+  import { isSettled, isMoot } from "../lib/decisions";
   import { api } from "../lib/api";
   import { num } from "../lib/format";
 
@@ -234,8 +235,8 @@
   // as populated while the inbox was silently empty. That is the exact
   // collapsed-state failure this page exists to prevent, committed by the
   // page itself. `ungraded` is "WE COULD NOT TELL", never "answered".
-  const isSettled = (r: any) =>
-    r?.settled === true ? "yes" : r?.settled === false ? "no" : "ungraded";
+  // isSettled / isActionable / isMoot live in lib/decisions.ts (one owner, shared
+  // with the Decisions tab); the reasoning stays in the comments above and there.
   // Ungraded rows ride WITH the waiting ones, deliberately: showing a
   // possibly-answered decision costs the operator a glance, hiding a
   // genuinely-waiting one is the defect MI-254 exists to fix. Fail toward
@@ -252,13 +253,10 @@
   // up. `actionable` is ABSENT on a bot that predates MI-258, and a strict
   // true/false pair would send every row on an older bot to NEITHER bucket.
   // `ungraded` is "WE COULD NOT TELL", and it rides WITH the waiting rows.
-  const isActionable = (r: any) =>
-    r?.actionable === true ? "yes" : r?.actionable === false ? "no" : "ungraded";
   // MOOT: the bot says NOT settled AND NOT actionable — nobody answered, and
   // there is nothing left to answer about. Composed from two facts the bot
   // owns rather than from `subjectState`, so this page never becomes a second
   // definition of "gone".
-  const isMoot = (r: any) => isSettled(r) === "no" && isActionable(r) === "no";
   const waiting = $derived<any[]>(
     (decisions?.requests ?? []).filter((r: any) => isSettled(r) !== "yes" && !isMoot(r)),
   );
