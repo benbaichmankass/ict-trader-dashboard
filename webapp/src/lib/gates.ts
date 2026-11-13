@@ -67,6 +67,10 @@ export interface GateRow {
   recommendation?: string | null;
   effect?: string | null;
   updated_at?: string | null;
+  // bot #25551 (sort=attention): the route's own rank and the audit recommendation
+  // mapped onto a decision value (null = operator-preference row, no recommendation).
+  attention_rank?: 1 | 2 | 3 | null;
+  recommended_decision?: Decision | null;
 }
 
 export interface GatesResponse {
@@ -82,7 +86,10 @@ export interface GatesResponse {
     real_money?: number | null;
     drift?: number | null;
     unregistered?: number | null;
+    by_attention_rank?: Record<string, number | null> | null;
+    recommendation_acceptable?: number | null;
   } | null;
+  sort?: string | null;
   refresh?: { at?: string | null; head_sha?: string | null; read_state?: string | null; error?: string | null } | null;
   gates?: GateRow[] | null;
 }
@@ -107,12 +114,13 @@ export interface GateFilters {
   decision?: string;
   state?: string;
   real_money?: string; // "true" | "false" | "" (any)
+  sort?: string; // "attention" = the route's attention order (bot #25551)
 }
 
 /** Query string for GET /api/bot/gates — empty filters are omitted, never sent blank. */
 export function buildGatesQuery(f: GateFilters): string {
   const q = new URLSearchParams();
-  for (const k of ["category", "decision", "state", "real_money"] as const) {
+  for (const k of ["category", "decision", "state", "real_money", "sort"] as const) {
     const v = f[k];
     if (v != null && v !== "") q.set(k, v);
   }
@@ -197,3 +205,10 @@ export function categoryOptions(seen: Iterable<string>, resp: GatesResponse | nu
   for (const g of resp?.gates ?? []) if (g.category) s.add(g.category);
   return [...s].sort();
 }
+
+/** The route's attention ranks (bot #25551), in the design's words. */
+export const ATTENTION_LABEL: Record<string, string> = {
+  "1": "real money · no authorization on record",
+  "2": "other real money",
+  "3": "the rest",
+};
