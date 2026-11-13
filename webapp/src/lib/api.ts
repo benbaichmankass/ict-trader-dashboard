@@ -731,6 +731,24 @@ export const api = {
   gateDecision: (id: string, decision: string, note: string, signal?: AbortSignal) =>
     post(`/api/bot/gates/${encodeURIComponent(id)}/decision`, { decision, note }, signal),
 
+  // Work → Plans (bot #25554, design § "Tab 5: Plans"). All reads are statusGet so a
+  // 404 (route not deployed) renders "not available yet", never an empty list.
+  //  - the frontier sub-queue: FRONTIER-Q-* rows are children of FRONTIER-RESEARCH
+  //  - the ML development plan: plan items joined to their carrying rows + the dev plan
+  //  - plan edits read back: observation rows, newest first (the route orders by
+  //    updated_at DESC); the component keeps the ones carrying extra.plan_edit
+  frontierQueue: (signal?: AbortSignal) =>
+    statusGet("/api/bot/work/items?parent=FRONTIER-RESEARCH&limit=200&offset=0", signal),
+  mlPlan: (signal?: AbortSignal) => statusGet("/api/bot/ml/plan", signal),
+  planEditRows: (signal?: AbortSignal) =>
+    statusGet("/api/bot/work/items?kind=observation&limit=1000&offset=0", signal),
+  // Tier 2, operator session: file one add or suggested edit. 200 {accepted, status,
+  // item, read_back}; 400 bad body; 401 no session; 404 unknown target row; 503 not persisted.
+  planEdit: (
+    body: { section: "frontier" | "ml_plan"; kind: "add" | "edit"; text: string; item_id?: string },
+    signal?: AbortSignal,
+  ) => post("/api/bot/work/plan-edits", body, signal),
+
   // Strategies & Models.
   gpuSpend: (signal?: AbortSignal) => get<any>("/api/bot/gpu/spend", signal),
   mlRegistry: (signal?: AbortSignal) => get<any>("/api/bot/ml/registry", signal),
