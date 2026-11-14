@@ -34,6 +34,7 @@
   import WorkThisWeek from "./components/WorkThisWeek.svelte";
   import WorkGates from "./components/WorkGates.svelte";
   import WorkRD from "./components/WorkRD.svelte";
+  import WorkPipelineMap from "./components/WorkPipelineMap.svelte";
   import Gates from "./routes/Gates.svelte";
   import SectionLanding from "./components/SectionLanding.svelte";
   import Placeholder from "./components/Placeholder.svelte";
@@ -64,6 +65,7 @@
     { value: "gates", label: "Gates" },
     { value: "plans", label: "Plans" },
     { value: "rd", label: "R&D registry" },
+    { value: "pipeline", label: "Pipeline map" },
     { value: "work", label: "Work" },
     { value: "roadmap", label: "Roadmap" },
     { value: "topics", label: "Topics & insights" },
@@ -237,7 +239,7 @@
       {:else if $nav.section === "Work"}
         <!-- UI-UPGRADE-1: Roadmap folded into Work — one tab, two views. -->
         <div class="worktabs"><Segmented options={WORK_VIEWS} bind:value={workView} /></div>
-        {#if workView === "roadmap"}<Roadmap />{:else if workView === "gpu"}<GPUSpend />{:else if workView === "topics"}<WorkTopics />{:else if workView === "overview"}<WorkOverview />{:else if workView === "decisions"}<WorkDecisions />{:else if workView === "week"}<WorkThisWeek />{:else if workView === "gates"}<WorkGates />{:else if workView === "plans"}<WorkPlans />{:else if workView === "rd"}<WorkRD />{:else}<Work />{/if}
+        {#if workView === "roadmap"}<Roadmap />{:else if workView === "gpu"}<GPUSpend />{:else if workView === "topics"}<WorkTopics />{:else if workView === "overview"}<WorkOverview />{:else if workView === "decisions"}<WorkDecisions />{:else if workView === "week"}<WorkThisWeek />{:else if workView === "gates"}<WorkGates />{:else if workView === "plans"}<WorkPlans />{:else if workView === "rd"}<WorkRD />{:else if workView === "pipeline"}<WorkPipelineMap />{:else}<Work />{/if}
       {:else if isSpecial($nav.section)}
         <Placeholder page={$nav.section} />
       {:else if $nav.detail == null && (SECTIONS[$nav.section] ?? []).length === 1 && DETAIL[SECTIONS[$nav.section][0]]}
