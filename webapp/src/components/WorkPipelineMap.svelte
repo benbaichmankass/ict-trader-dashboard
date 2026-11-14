@@ -1,7 +1,10 @@
 <script lang="ts">
   // Work → Pipeline map (bot lane PIPELINE-MAP, 2026-11-14; operator: "a map of the
   // trading pipeline ... displayed on the UI, on the Work tab"). Backend:
-  // GET /api/bot/work/pipeline-map → { path, read_state, markdown, last_commit, file_mtime }.
+  // GET /api/bot/work/pipeline-map → { path, read_state, source: live|snapshot, built_at, markdown,
+  // live_state, last_commit (of the skeleton), file_mtime, build_error, cache_age_s }. The bot BUILDS
+  // the map live from its sources of truth (src/runtime/pipeline_map.py), cached ~10 min; "rebuild"
+  // passes refresh=true.
   // The doc is docs/reference/trading-pipeline-map.md in the bot repo; this view only
   // renders it (HTML-escaped markdown, src/lib/markdown.ts) and draws its mermaid
   // flow diagram. Mermaid loads lazily from jsDelivr; if it cannot load, the diagram's
@@ -20,10 +23,10 @@
 
   const html = $derived(body?.markdown ? renderMarkdown(body.markdown, body.path ?? "") : "");
 
-  async function load() {
+  async function load(refresh = false) {
     err = null;
     try {
-      const r = await api.workPipelineMap();
+      const r = await api.workPipelineMap(refresh);
       status = r.status;
       body = r.body;
     } catch (e: any) {
@@ -58,7 +61,7 @@
     {#if body?.path}
       <a class="small" href={BOT_REPO_BLOB + body.path} target="_blank" rel="noopener noreferrer">open in repo</a>
     {/if}
-    <button class="small" onclick={load}>refresh</button>
+    <button class="small" onclick={() => load(true)}>rebuild</button>
   </div>
   {#if err}
     <div class="na">Could not reach the API: {err}</div>
@@ -70,7 +73,15 @@
     <div class="na">The map could not be read on the bot (read state: {body.read_state ?? DASH}).</div>
   {:else if body}
     <div class="meta small">
-      Last changed {body.last_commit?.date ? agoFromIso(body.last_commit.date) : DASH}
+      {#if body.source === "live"}
+        Built live from the sources of truth {body.built_at ? agoFromIso(body.built_at) : DASH}
+        {#if body.live_state && body.live_state !== "read"}· live results {body.live_state}{/if}
+      {:else}
+        <span class="warn">Showing the committed snapshot — the live build failed ({body.build_error ?? DASH})</span>
+      {/if}
+    </div>
+    <div class="meta small">
+      Skeleton last changed {body.last_commit?.date ? agoFromIso(body.last_commit.date) : DASH}
       {#if body.last_commit?.sha}· commit <code>{String(body.last_commit.sha).slice(0, 10)}</code>{/if}
       {#if body.last_commit?.subject}· {body.last_commit.subject}{/if}
       {#if body.last_commit?.read_state && body.last_commit.read_state !== "read"}· git history {body.last_commit.read_state}{/if}
@@ -88,6 +99,7 @@
   h3 { margin: 0; }
   .small { font-size: 12px; }
   .muted, .meta { color: var(--muted); }
+  .warn { color: var(--warn, #d19a2f); }
   button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
   a { color: var(--accent, #4c8dff); }
   .na { color: var(--muted); border-left: 3px solid var(--border); padding: 6px 10px; font-size: 13px; }
