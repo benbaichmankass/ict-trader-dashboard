@@ -12,7 +12,7 @@
   import { acquireStream, onStreamFrame, streamStatus, isStreamLive } from "../lib/stream";
   import HealthBar from "../components/HealthBar.svelte";
   import DdSwitchControl from "../components/DdSwitchControl.svelte";
-  import { byRank, canMove, refusalText, type ReorderDir } from "../lib/workReorder";
+  import { byRank, neighbourId, refusalText, type ReorderDir } from "../lib/workReorder";
 
   // One funding toggle per tab — four books, never blended: Live money · Prop ·
   // Paper portfolio · Paper testing (lib/funding.ts) — + the 24h/7d/30d/All
@@ -57,17 +57,18 @@
   const inFlight = $derived(byRank(((workSnap?.openNow ?? []) as any[]).filter((r) => r?.state === "in_flight" && r?.lane)));
   const waitingRows = $derived(byRank((workSnap?.waitingOnOperator ?? []) as any[]));
 
-  // Move one queue row up/down: POST /api/bot/work/reorder (session-gated; atomic swap on the bot, which
-  // records the operator). One press, no confirm step; a refusal is shown verbatim; the snapshot is
-  // re-read either way so the list always shows what the bot now holds.
+  // Move one queue row up/down: POST /api/bot/work/reorder {id, direction, over} (session-gated; atomic
+  // swap on the bot, which records the operator). `over` is the visible neighbour in THIS card, so the
+  // swap is within what the operator sees. One press, no confirm step; a refusal is shown verbatim; the
+  // snapshot is re-read either way so the list always shows what the bot now holds.
   let reorderBusy = $state<string | null>(null);
   let reorderMsg = $state<string | null>(null);
-  async function reorder(id: string, dir: ReorderDir) {
-    if (reorderBusy) return;
+  async function reorder(id: string, dir: ReorderDir, over: string | null) {
+    if (reorderBusy || !over) return;
     reorderBusy = id;
     reorderMsg = null;
     try {
-      const r = await api.workReorder(id, dir);
+      const r = await api.workReorder(id, dir, over);
       if (!r.ok) reorderMsg = `${id} not moved — ${refusalText(r)}`;
     } catch (e) {
       reorderMsg = `${id} not moved — could not reach the bot (${e instanceof Error ? e.message : String(e)})`;
@@ -428,10 +429,12 @@
        Addendum 1: "waiting on me" also carries the LTR trade decisions (RED,
        Approve/Reject through the same state machine as Telegram). An unreadable
        source says "could not look", never an empty queue. -->
-  {#snippet mover(id: string, i: number, len: number)}
+  {#snippet mover(id: string, i: number, rows: any[])}
+    {@const up = neighbourId(rows, i, "up")}
+    {@const down = neighbourId(rows, i, "down")}
     <span class="mv">
-      <button class="mvb" disabled={reorderBusy !== null || !canMove(len, i, "up")} onclick={() => reorder(id, "up")} aria-label={`Move ${id} up`} title="Higher priority">▲</button>
-      <button class="mvb" disabled={reorderBusy !== null || !canMove(len, i, "down")} onclick={() => reorder(id, "down")} aria-label={`Move ${id} down`} title="Lower priority">▼</button>
+      <button class="mvb" disabled={reorderBusy !== null || !up} onclick={() => reorder(id, "up", up)} aria-label={`Move ${id} up`} title={up ? `Swap with ${up}` : "Already first"}>▲</button>
+      <button class="mvb" disabled={reorderBusy !== null || !down} onclick={() => reorder(id, "down", down)} aria-label={`Move ${id} down`} title={down ? `Swap with ${down}` : "Already last"}>▼</button>
     </span>
   {/snippet}
   <div class="panel workq">
@@ -452,7 +455,7 @@
           <div class="muted small">Loading…</div>
         {:else}
           {#each waitingRows as r, i (r.id)}
-            <div class="wrow" title={r.title ?? ""}>{@render mover(r.id, i, waitingRows.length)}<span class="mono wid">{r.id}</span> {(r.asks ?? []).map((a: any) => a.what).filter(Boolean).join(" · ") || r.title}</div>
+            <div class="wrow" title={r.title ?? ""}>{@render mover(r.id, i, waitingRows)}<span class="mono wid">{r.id}</span> {(r.asks ?? []).map((a: any) => a.what).filter(Boolean).join(" · ") || r.title}</div>
           {:else}
             <div class="muted small">Nothing else is blocked on you.</div>
           {/each}
@@ -464,7 +467,7 @@
           <div class="muted small">{workSnapError || workSnap?.present === false ? "could not look" : "Loading…"}</div>
         {:else}
           {#each inFlight as r, i (r.id)}
-            <div class="wrow" title={r.title ?? ""}>{@render mover(r.id, i, inFlight.length)}<span class="mono wid">{r.id}</span> <span class="muted">{r.owner ?? r.lane ?? DASH}</span></div>
+            <div class="wrow" title={r.title ?? ""}>{@render mover(r.id, i, inFlight)}<span class="mono wid">{r.id}</span> <span class="muted">{r.owner ?? r.lane ?? DASH}</span></div>
           {:else}
             <div class="muted small">No Claude lane has a row in flight.</div>
           {/each}

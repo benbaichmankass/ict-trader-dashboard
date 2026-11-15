@@ -3,7 +3,8 @@
  * Work-queue reorder helpers (UI-WORK-QUEUE-REORDER). Imports the real src/lib/workReorder.ts
  * (node 22 strips the types). Contract with the bot lane WORK-REORDER-ROUTE: LOWER priority_rank is
  * HIGHER in the list, nulls last. `--self-test` runs the checks against a planted sort that puts
- * nulls FIRST and a refusal formatter that hides the server's detail; both must fail.
+ * nulls FIRST, a refusal formatter that hides the server's detail and a neighbour lookup that picks the
+ * wrong side; all must fail.
  */
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { join, dirname } from "node:path";
@@ -25,6 +26,10 @@ function run(m) {
   t("middle row can move both ways", m.canMove(3, 1, "up") && m.canMove(3, 1, "down"));
   t("out-of-range index cannot move", m.canMove(3, 3, "up") === false && m.canMove(3, -1, "down") === false);
   t("a single row cannot move", m.canMove(1, 0, "up") === false && m.canMove(1, 0, "down") === false);
+  const vis = [{ id: "x" }, { id: "y" }, { id: "z" }];
+  t("neighbour above for up, below for down", m.neighbourId(vis, 1, "up") === "x" && m.neighbourId(vis, 1, "down") === "z");
+  t("no neighbour at the edges", m.neighbourId(vis, 0, "up") === null && m.neighbourId(vis, 2, "down") === null);
+  t("a neighbour without a usable id gives null (never a guessed id)", m.neighbourId([{ id: "x" }, {}], 0, "down") === null && m.neighbourId([{ id: "x" }, { id: "" }], 0, "down") === null);
   t("refusal shows a string detail verbatim", m.refusalText({ status: 409, body: { detail: "rank conflict: retry" } }) === "HTTP 409: rank conflict: retry");
   t("refusal shows an object detail as JSON", m.refusalText({ status: 422, body: { detail: [{ msg: "bad" }] } }) === 'HTTP 422: [{"msg":"bad"}]');
   t("refusal falls back to the raw text", m.refusalText({ status: 502, body: null, text: "Bad Gateway" }) === "HTTP 502: Bad Gateway");
@@ -36,6 +41,7 @@ const broken = {
   ...real,
   byRank: (rows) => [...rows].sort((a, b) => (a.priorityRank ?? -Infinity) - (b.priorityRank ?? -Infinity)),
   refusalText: (r) => `HTTP ${r.status}`,
+  neighbourId: (rows, idx, dir) => rows[dir === "up" ? idx + 1 : idx - 1]?.id ?? null, // the WRONG neighbour
 };
 
 const selfTest = process.argv.includes("--self-test");

@@ -15,9 +15,10 @@
 > - **Admin → Gates**: `POST /api/bot/gates/{id}/decision` (keep / remove /
 >   report_only / undecided + note). A gate-registry decision record; it places
 >   or modifies no order and changes no code.
-> - **Overview → Work queue**: `POST /api/bot/work/reorder` `{id, direction}`
->   (the ▲/▼ on the Waiting-on-me and In-flight rows). The bot swaps two rows'
->   `priority_rank` atomically and records the session's operator; it places or
+> - **Overview → Work queue**: `POST /api/bot/work/reorder` `{id, direction, over}`
+>   (the ▲/▼ on the Waiting-on-me and In-flight rows; `over` is the row's visible
+>   neighbour in its card). The bot swaps the two rows' order atomically and
+>   records the session's operator; it places or
 >   modifies no order and changes no code. One press, no confirm step; a refusal
 >   is shown verbatim and the queue is re-read either way.
 > - The UI-SPA stack adds trade-approvals Approve/Reject (#238), the daily

@@ -1,7 +1,9 @@
 // Overview work-queue reorder (row UI-WORK-QUEUE-REORDER). Contract agreed with the bot lane
-// WORK-REORDER-ROUTE (2026-11-15): POST /api/bot/work/reorder {id, direction: "up"|"down"} —
+// WORK-REORDER-ROUTE (2026-11-15): POST /api/bot/work/reorder {id, direction: "up"|"down", over} —
 // session-gated, the swap is atomic server-side, null ranks are assigned server-side, and a LOWER
-// priority_rank is HIGHER in the list, nulls last. Pure helpers, no DOM: tests/work-reorder.mjs
+// priority_rank is HIGHER in the list, nulls last. `over` is the id of the row's VISIBLE neighbour in
+// the card it is shown in: the swap is within the visible list (the In-flight card is a filter of the
+// open rows), so the server swaps order with that row rather than with its neighbour in the full list. Pure helpers, no DOM: tests/work-reorder.mjs
 // imports this file directly (node 22 strips the types).
 
 export type ReorderDir = "up" | "down";
@@ -20,6 +22,13 @@ export function byRank<T extends Ranked>(rows: readonly T[]): T[] {
 export function canMove(len: number, idx: number, dir: ReorderDir): boolean {
   if (!Number.isInteger(idx) || idx < 0 || idx >= len) return false;
   return dir === "up" ? idx > 0 : idx < len - 1;
+}
+
+/** The id of the visible neighbour a row would swap with (above for "up", below for "down"), or null when it cannot move. */
+export function neighbourId(rows: readonly { id?: unknown }[], idx: number, dir: ReorderDir): string | null {
+  if (!canMove(rows.length, idx, dir)) return null;
+  const id = rows[dir === "up" ? idx - 1 : idx + 1]?.id;
+  return typeof id === "string" && id !== "" ? id : null;
 }
 
 /** The server's refusal, shown verbatim: its `detail` (string as-is, anything else as JSON), else the raw text, else the status. */

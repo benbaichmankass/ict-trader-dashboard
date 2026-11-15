@@ -5,7 +5,7 @@
  * POST /api/bot/work/reorder — it never writes to the bot.
  *
  * Establishes: ▲/▼ on the Waiting-on-me and In-flight rows; the first row's ▲ and the last row's ▼
- * are disabled; one press sends exactly {id, direction}; a 409 refusal's detail is shown verbatim;
+ * are disabled; one press sends exactly {id, direction, over} where `over` is the VISIBLE neighbour in that card; a 409 refusal's detail is shown verbatim;
  * the snapshot is re-read after every press (success or refusal); rows are lowest-rank-first, nulls last.
  *
  * Usage: cd webapp && npm run build && node tests/manual/work-reorder-e2e.mjs [outdir]
@@ -71,7 +71,10 @@ for (const [name, opts] of [["desktop", { viewport: { width: 1280, height: 1000 
   await p.waitForSelector('.workq [role="alert"]', { timeout: 15000 });
   const msg = await p.locator('.workq [role="alert"]').innerText();
   ok(posts.length === 1 && posts[0].method === "POST", "one POST sent");
-  ok(posts[0] && JSON.stringify(JSON.parse(posts[0].body)) === JSON.stringify({ id, direction: "down" }), `body is exactly {id, direction} → ${posts[0]?.body}`);
+  const rowsInCard = await target.locator("xpath=..").locator(".wrow:has(.mv) .wid").allInnerTexts();
+  const idx = rowsInCard.map((x) => x.trim()).indexOf(id);
+  const over = rowsInCard[idx + 1]?.trim();
+  ok(over && posts[0] && JSON.stringify(JSON.parse(posts[0].body)) === JSON.stringify({ id, direction: "down", over }), `body is exactly {id, direction, over: the VISIBLE neighbour below} → ${posts[0]?.body}`);
   ok(msg.includes("HTTP 409: rank conflict: row moved by another session, retry") && msg.includes(id), `refusal shown verbatim: "${msg.replace(/\s+/g, " ").slice(0, 120)}"`);
   await p.waitForTimeout(1500);
   ok(snapshotReads > before, `snapshot re-read after a refusal (${before} → ${snapshotReads})`);
