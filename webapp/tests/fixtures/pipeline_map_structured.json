@@ -39,7 +39,8 @@
     ],
     "trading": [],
     "technical_text": "src/runtime/market.py",
-    "trading_text": null
+    "trading_text": null,
+    "read_state": "read"
    },
    {
     "id": "step-2",
@@ -109,6 +110,146 @@
        "lines": 141,
        "owner": "runtime"
       }
+     },
+     {
+      "id": "t:mod-bulk",
+      "kind": "module",
+      "label": "src/runtime/bulk_0.py",
+      "sub": null,
+      "state": null,
+      "text": null,
+      "path": "src/runtime/bulk_0.py",
+      "details": {}
+     },
+     {
+      "id": "t:mod-bulk",
+      "kind": "module",
+      "label": "src/runtime/bulk_1.py",
+      "sub": null,
+      "state": null,
+      "text": null,
+      "path": "src/runtime/bulk_1.py",
+      "details": {}
+     },
+     {
+      "id": "t:mod-bulk",
+      "kind": "module",
+      "label": "src/runtime/bulk_2.py",
+      "sub": null,
+      "state": null,
+      "text": null,
+      "path": "src/runtime/bulk_2.py",
+      "details": {}
+     },
+     {
+      "id": "t:mod-bulk",
+      "kind": "module",
+      "label": "src/runtime/bulk_3.py",
+      "sub": null,
+      "state": null,
+      "text": null,
+      "path": "src/runtime/bulk_3.py",
+      "details": {}
+     },
+     {
+      "id": "t:mod-bulk",
+      "kind": "module",
+      "label": "src/runtime/bulk_4.py",
+      "sub": null,
+      "state": null,
+      "text": null,
+      "path": "src/runtime/bulk_4.py",
+      "details": {}
+     },
+     {
+      "id": "t:mod-bulk",
+      "kind": "module",
+      "label": "src/runtime/bulk_5.py",
+      "sub": null,
+      "state": null,
+      "text": null,
+      "path": "src/runtime/bulk_5.py",
+      "details": {}
+     },
+     {
+      "id": "t:mod-bulk",
+      "kind": "module",
+      "label": "src/runtime/bulk_6.py",
+      "sub": null,
+      "state": null,
+      "text": null,
+      "path": "src/runtime/bulk_6.py",
+      "details": {}
+     },
+     {
+      "id": "t:mod-bulk",
+      "kind": "module",
+      "label": "src/runtime/bulk_7.py",
+      "sub": null,
+      "state": null,
+      "text": null,
+      "path": "src/runtime/bulk_7.py",
+      "details": {}
+     },
+     {
+      "id": "t:mod-bulk",
+      "kind": "module",
+      "label": "src/runtime/bulk_8.py",
+      "sub": null,
+      "state": null,
+      "text": null,
+      "path": "src/runtime/bulk_8.py",
+      "details": {}
+     },
+     {
+      "id": "t:mod-bulk",
+      "kind": "module",
+      "label": "src/runtime/bulk_9.py",
+      "sub": null,
+      "state": null,
+      "text": null,
+      "path": "src/runtime/bulk_9.py",
+      "details": {}
+     },
+     {
+      "id": "t:mod-bulk",
+      "kind": "module",
+      "label": "src/runtime/bulk_10.py",
+      "sub": null,
+      "state": null,
+      "text": null,
+      "path": "src/runtime/bulk_10.py",
+      "details": {}
+     },
+     {
+      "id": "t:mod-bulk",
+      "kind": "module",
+      "label": "src/runtime/bulk_11.py",
+      "sub": null,
+      "state": null,
+      "text": null,
+      "path": "src/runtime/bulk_11.py",
+      "details": {}
+     },
+     {
+      "id": "t:mod-bulk",
+      "kind": "module",
+      "label": "src/runtime/bulk_12.py",
+      "sub": null,
+      "state": null,
+      "text": null,
+      "path": "src/runtime/bulk_12.py",
+      "details": {}
+     },
+     {
+      "id": "t:mod-bulk",
+      "kind": "module",
+      "label": "src/runtime/bulk_13.py",
+      "sub": null,
+      "state": null,
+      "text": null,
+      "path": "src/runtime/bulk_13.py",
+      "details": {}
      }
     ],
     "trading": [
@@ -126,6 +267,276 @@
         "alpaca_live"
        ]
       }
+     },
+     {
+      "id": "r:note",
+      "kind": "leg",
+      "label": "Strategy leg #0",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "leg",
+      "label": "Strategy leg #3",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "leg",
+      "label": "Strategy leg #6",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "leg",
+      "label": "Strategy leg #9",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "leg",
+      "label": "Strategy leg #12",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "leg",
+      "label": "Strategy leg #15",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "leg",
+      "label": "Strategy leg #18",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "leg",
+      "label": "Strategy leg #21",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "leg",
+      "label": "Strategy leg #24",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "leg",
+      "label": "Strategy leg #27",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
+     },
+     {
+      "id": "r:note",
+      "kind": "rule",
+      "label": "How it works here",
+      "sub": null,
+      "state": null,
+      "text": "Duplicate id on purpose (live payload repeats r:note).",
+      "details": {}
      }
     ],
     "technical_text": "src/runtime/enrichment.py",

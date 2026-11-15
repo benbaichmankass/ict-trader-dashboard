@@ -24,7 +24,8 @@ const DIST = join(HERE, "..", "..", "dist");
 const BASE = "/ict-trader-dashboard/";
 const OUT = process.argv[2] ?? join(HERE, "out");
 mkdirSync(OUT, { recursive: true });
-const fixture = JSON.parse(readFileSync(join(HERE, "..", "fixtures", "pipeline_map_structured.json"), "utf8"));
+// PM_PAYLOAD=/path/to/live.json replays a payload captured from the live route instead of the fixture.
+const fixture = JSON.parse(readFileSync(process.env.PM_PAYLOAD ?? join(HERE, "..", "fixtures", "pipeline_map_structured.json"), "utf8"));
 let withStructured = true;
 
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".json": "application/json" };
@@ -65,7 +66,7 @@ const page = await ctx.newPage();
 await open(page);
 await page.waitForSelector(".band");
 const bands = await page.locator(".band").count();
-ok(bands >= 11, `A. ${bands} step bands rendered (≥11)`);
+ok(bands >= 11 || process.env.PM_PAYLOAD, `A. ${bands} step bands rendered (≥11)`);
 const geo = await page.evaluate(() => {
   const line = document.querySelector(".line").getBoundingClientRect();
   const sx = line.left + line.width / 2;
@@ -86,17 +87,39 @@ const layerLeft = await page.evaluate(() => { const k = parseFloat(document.quer
 ok(geo.laneXs.every((x) => x < layerLeft.gl || x > layerLeft.gl + layerLeft.w), `B. every loop lane x is outside the band block [${layerLeft.gl}, ${layerLeft.gl + layerLeft.w}] → never crosses the spine (lanes at ${geo.laneXs.join(", ")})`);
 await page.screenshot({ path: join(OUT, "pipeline-map-desktop.png") });
 
+// G. a step with dozens of elements is capped, with an expander; the band stays a sane height
+const capped = await page.evaluate(() => {
+  const more = [...document.querySelectorAll(".more")];
+  const tallest = Math.max(...[...document.querySelectorAll(".band")].map((b) => b.offsetHeight));
+  return { n: more.length, tallest, total: document.querySelector(".bands").offsetHeight };
+});
+const bigSteps = fixture.structured.steps.filter((st) => st.technical.length > 9 || st.trading.length > 9).length;
+ok(capped.n >= bigSteps && bigSteps > 0, `G. ${capped.n} "+N more" expanders for ${bigSteps} oversized step-sides`);
+ok(capped.tallest < 700, `G. tallest band is ${capped.tallest}px (<700) with the cap on`);
+const before = await page.locator(".chip").count();
+await page.locator(".more").first().click();
+const after = await page.locator(".chip").count();
+ok(after > before, `G. expanding shows more chips (${before} → ${after})`);
+await page.locator(".more", { hasText: "show fewer" }).first().click();
+ok((await page.locator(".chip").count()) === before, "G. 'show fewer' collapses again");
+
 // C. element click → drawer, null → —
-await page.locator(".chip", { hasText: "Auto-approve" }).first().click();
+await page.locator(".chip").first().click();
 const drawer = await page.locator(".drawer").innerText();
-ok(/Auto-approve/.test(drawer) && /Status\s*—/.test(drawer) && /Summary\s*—/.test(drawer), "C. drawer opens; null status/summary render as —");
-ok(/granted/.test(drawer), "C. generic details key/values listed");
+ok(/Status\s*(—|\S)/.test(drawer) && /Summary/.test(drawer), "C. drawer opens with Status/Summary rows");
+if (!process.env.PM_PAYLOAD) {
+  await page.keyboard.press("Escape");
+  await page.locator(".chip", { hasText: "Auto-approve" }).first().click();
+  const d2 = await page.locator(".drawer").innerText();
+  ok(/Auto-approve/.test(d2) && /Status\s*—/.test(d2) && /Summary\s*—/.test(d2), "C. null status/summary render as —");
+  ok(/granted/.test(d2), "C. generic details key/values listed");
+}
 await page.screenshot({ path: join(OUT, "pipeline-map-desktop-drawer.png") });
 await page.keyboard.press("Escape");
 ok((await page.locator(".drawer").count()) === 0, "C. Escape closes the drawer");
 
 // loop click
-await page.locator(".loop").first().click({ force: true });
+await page.locator(".loop").first().dispatchEvent("click");
 ok(/Loop/.test(await page.locator(".drawer").innerText()), "C. loop opens a drawer");
 await page.keyboard.press("Escape");
 
@@ -123,7 +146,7 @@ await ph.screenshot({ path: join(OUT, "pipeline-map-phone-drawer.png") });
 withStructured = false;
 await open(page);
 await page.waitForSelector(".md");
-ok((await page.locator(".band").count()) === 0 && /fixture markdown/.test(await page.locator(".md").innerText()), "E. no `structured` → markdown render only");
+ok((await page.locator(".band").count()) === 0 && (await page.locator(".md").innerText()).trim().length > 20, "E. no `structured` → markdown render only");
 
 await browser.close();
 srv.close();
