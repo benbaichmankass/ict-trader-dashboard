@@ -12,6 +12,8 @@
   import { api } from "../lib/api";
   import { agoFromIso, DASH } from "../lib/format";
   import { renderMarkdown, BOT_REPO_BLOB } from "../lib/markdown";
+  import { normalizePipeline } from "../lib/pipelineMap";
+  import PipelineSpine from "./PipelineSpine.svelte";
 
   const MERMAID_URL = "https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.esm.min.mjs";
 
@@ -21,6 +23,9 @@
   let diagramNote = $state<string | null>(null);
   let host = $state<HTMLDivElement | null>(null);
 
+  // v2 (bot PR #26250): `structured` drives the spine map. Absent/empty → the markdown render below
+  // is the whole page, exactly as before, so this works before and after the backend lands.
+  const model = $derived(normalizePipeline(body?.structured));
   const html = $derived(body?.markdown ? renderMarkdown(body.markdown, body.path ?? "") : "");
 
   async function load(refresh = false) {
@@ -86,8 +91,19 @@
       {#if body.last_commit?.subject}· {body.last_commit.subject}{/if}
       {#if body.last_commit?.read_state && body.last_commit.read_state !== "read"}· git history {body.last_commit.read_state}{/if}
     </div>
+    {#if model}
+      <PipelineSpine {model} />
+      {#if model.liveState && model.liveState !== "read"}<div class="meta small">Live overlay: {model.liveState}</div>{/if}
+    {/if}
     {#if diagramNote}<div class="na small">{diagramNote}</div>{/if}
-    <div class="md" bind:this={host}>{@html html}</div>
+    {#if model}
+      <details class="doc">
+        <summary class="small">Reference document (markdown)</summary>
+        <div class="md" bind:this={host}>{@html html}</div>
+      </details>
+    {:else}
+      <div class="md" bind:this={host}>{@html html}</div>
+    {/if}
   {:else}
     <div class="small muted">Loading…</div>
   {/if}
@@ -102,6 +118,7 @@
   .warn { color: var(--warn, #d19a2f); }
   button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; cursor: pointer; }
   a { color: var(--accent, #4c8dff); }
+  .doc > summary { cursor: pointer; color: var(--muted); margin: 4px 0; }
   .na { color: var(--muted); border-left: 3px solid var(--border); padding: 6px 10px; font-size: 13px; }
   .md { font-size: 13.5px; line-height: 1.5; max-width: 100%; overflow-wrap: anywhere; }
   .md :global(h1) { font-size: 20px; margin: 4px 0 8px; }
