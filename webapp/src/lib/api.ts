@@ -605,6 +605,9 @@ export const api = {
     u.set("offset", String(q.offset ?? 0));
     return get<any>(`/api/bot/work/items?${u.toString()}`, signal);
   },
+  // One full work row (priority_rank, version, prs, blocked_on, due_rule, extra.note …) — GET, ungated.
+  // The snapshot's rows are a trimmed projection; the Overview cards fetch this on expand.
+  workItem: (id: string, signal?: AbortSignal) => get<any>(`/api/bot/work/items/${encodeURIComponent(id)}`, signal),
   // Per-AM lane cards (bot #25542): moved_today / working_now / stuck / next, each
   // {read_state, count, items[]}, plus week_lanes totals. 404 until that PR deploys.
   workLanes: (nextN = 5, signal?: AbortSignal) => statusGet(`/api/bot/work/lanes?next_n=${nextN}`, signal),

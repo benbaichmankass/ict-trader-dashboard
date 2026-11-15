@@ -13,6 +13,8 @@
   import HealthBar from "../components/HealthBar.svelte";
   import DdSwitchControl from "../components/DdSwitchControl.svelte";
   import { byRank, isRefusal, neighbourId, refusalText, type ReorderDir } from "../lib/workReorder";
+  import { startDrag, type Drop } from "../lib/dragRows";
+  import WorkRowCard from "../components/WorkRowCard.svelte";
 
   // One funding toggle per tab — four books, never blended: Live money · Prop ·
   // Paper portfolio · Paper testing (lib/funding.ts) — + the 24h/7d/30d/All
@@ -63,24 +65,69 @@
   // snapshot is re-read either way so the list always shows what the bot now holds.
   let reorderBusy = $state<string | null>(null);
   let reorderMsg = $state<string | null>(null);
+  let cardRev = $state(0); // bumped after a reorder so open cards re-read their row
   async function reorder(id: string, dir: ReorderDir, over: string | null) {
-    if (reorderBusy || !over) return;
-    reorderBusy = id;
+    if (!over) return;
+    await send({ id, direction: dir, over });
+  }
+  // The POST body is {id, direction, over}; the displayed order is NEVER trusted after a move: the snapshot
+  // (and the queued list, when open) is re-read and rendered as the bot now holds it, a refusal shown verbatim.
+  async function send(d: Drop) {
+    if (reorderBusy) return;
+    reorderBusy = d.id;
     reorderMsg = null;
     try {
-      const r = await api.workReorder(id, dir, over);
-      if (isRefusal(r)) reorderMsg = `${id} not moved — ${refusalText(r)}`;
+      const r = await api.workReorder(d.id, d.direction, d.over);
+      if (isRefusal(r)) reorderMsg = `${d.id} not moved — ${refusalText(r)}`;
     } catch (e) {
-      reorderMsg = `${id} not moved — could not reach the bot (${e instanceof Error ? e.message : String(e)})`;
+      reorderMsg = `${d.id} not moved — could not reach the bot (${e instanceof Error ? e.message : String(e)})`;
     }
     try {
       workSnap = await api.workSnapshot();
       workSnapError = null;
+      if (queuedOpen) await loadQueued();
+      cardRev++;
     } catch (e) {
       reorderMsg = `${reorderMsg ? reorderMsg + " · " : ""}could not re-read the queue (${e instanceof Error ? e.message : String(e)})`;
     } finally {
       reorderBusy = null;
     }
+  }
+  function grip(e: PointerEvent, id: string) {
+    if (reorderBusy) return;
+    startDrag(e, id, (d) => void send(d), () => (reorderMsg = null));
+  }
+  function gripKey(e: KeyboardEvent, id: string, i: number, rows: any[]) {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    e.preventDefault();
+    const dir: ReorderDir = e.key === "ArrowUp" ? "up" : "down";
+    void reorder(id, dir, neighbourId(rows, i, dir));
+  }
+
+  // Cards: a row opens into a detail card (full row fetched on open, see WorkRowCard).
+  let openCards = $state<Record<string, boolean>>({});
+  const toggleCard = (id: string) => (openCards = { ...openCards, [id]: !openCards[id] });
+
+  // The QUEUED list (state=queued) — collapsible, under In flight. GET /api/bot/work/items?state=queued returns full
+  // rows; shown lowest priority_rank first, nulls last (the bot's order), 25 at a time.
+  let queuedOpen = $state(false);
+  let queuedRows = $state<any[] | null>(null);
+  let queuedErr = $state<string | null>(null);
+  let queuedShown = $state(25);
+  async function loadQueued() {
+    try {
+      const r = await api.workItems({ state: "queued", limit: 200 });
+      const items = ((r?.items ?? []) as any[]).map((i) => ({ ...i, priorityRank: i.priority_rank ?? null, queuePos: i.extra?.queue_pos ?? null }));
+      items.sort((a, b) => (a.queuePos ?? Infinity) - (b.queuePos ?? Infinity));
+      queuedRows = byRank(items);
+      queuedErr = null;
+    } catch (e) {
+      queuedErr = e instanceof Error ? e.message : String(e);
+    }
+  }
+  function toggleQueued() {
+    queuedOpen = !queuedOpen;
+    if (queuedOpen && queuedRows === null) void loadQueued();
   }
 
   // News banner: the most recent news-layer decision + its strongest headline.
@@ -429,13 +476,13 @@
        Addendum 1: "waiting on me" also carries the LTR trade decisions (RED,
        Approve/Reject through the same state machine as Telegram). An unreadable
        source says "could not look", never an empty queue. -->
-  {#snippet mover(id: string, i: number, rows: any[])}
-    {@const up = neighbourId(rows, i, "up")}
-    {@const down = neighbourId(rows, i, "down")}
-    <span class="mv">
-      <button class="mvb" disabled={reorderBusy !== null || !up} onclick={() => reorder(id, "up", up)} aria-label={`Move ${id} up`} title={up ? `Swap with ${up}` : "Already first"}>▲</button>
-      <button class="mvb" disabled={reorderBusy !== null || !down} onclick={() => reorder(id, "down", down)} aria-label={`Move ${id} down`} title={down ? `Swap with ${down}` : "Already last"}>▼</button>
-    </span>
+  {#snippet qrow(r: any, i: number, rows: any[], label: string)}
+    <div class="wrow" data-rid={r.id} class:wbusy={reorderBusy === r.id} title={r.title ?? ""}>
+      <button class="grip" type="button" disabled={reorderBusy !== null} onpointerdown={(e) => grip(e, r.id)} onkeydown={(e) => gripKey(e, r.id, i, rows)}
+        aria-label={`Reorder ${r.id}: drag, or use the arrow keys`} title="Drag to reorder (arrow keys also work)">⠿</button>
+      <button class="rowtog" type="button" aria-expanded={!!openCards[r.id]} onclick={() => toggleCard(r.id)}><span class="mono wid">{r.id}</span> {label}</button>
+    </div>
+    {#if openCards[r.id]}<WorkRowCard row={r} rev={cardRev} />{/if}
   {/snippet}
   <div class="panel workq">
     <div class="ph">Work queue <a class="wlink" href="#/Work">open Work →</a></div>
@@ -454,11 +501,13 @@
         {:else if !workSnap}
           <div class="muted small">Loading…</div>
         {:else}
+          <div data-wlist="waiting">
           {#each waitingRows as r, i (r.id)}
-            <div class="wrow" title={r.title ?? ""}>{@render mover(r.id, i, waitingRows)}<span class="mono wid">{r.id}</span> {(r.asks ?? []).map((a: any) => a.what).filter(Boolean).join(" · ") || r.title}</div>
+            {@render qrow(r, i, waitingRows, (r.asks ?? []).map((a: any) => a.what).filter(Boolean).join(" · ") || r.title || DASH)}
           {:else}
             <div class="muted small">Nothing else is blocked on you.</div>
           {/each}
+          </div>
         {/if}
       </div>
       <div class="wcard">
@@ -466,11 +515,33 @@
         {#if !workSnap || workSnap.present === false}
           <div class="muted small">{workSnapError || workSnap?.present === false ? "could not look" : "Loading…"}</div>
         {:else}
+          <div data-wlist="inflight">
           {#each inFlight as r, i (r.id)}
-            <div class="wrow" title={r.title ?? ""}>{@render mover(r.id, i, inFlight)}<span class="mono wid">{r.id}</span> <span class="muted">{r.owner ?? r.lane ?? DASH}</span></div>
+            {@render qrow(r, i, inFlight, r.owner ?? r.lane ?? DASH)}
           {:else}
             <div class="muted small">No Claude lane has a row in flight.</div>
           {/each}
+          </div>
+          <button class="qhead" type="button" aria-expanded={queuedOpen} onclick={toggleQueued}>
+            {queuedOpen ? "▾" : "▸"} 🗂 Queued · {workSnap.counts?.queued ?? DASH}
+          </button>
+          {#if queuedOpen}
+            <div class="muted small">Drag a row up into Waiting or In flight to put it at the front.</div>
+            {#if queuedErr}<div class="err small">could not read the queued list: {queuedErr}</div>
+            {:else if queuedRows === null}<div class="muted small">Loading…</div>
+            {:else}
+              <div data-wlist="queued">
+                {#each queuedRows.slice(0, queuedShown) as r, i (r.id)}
+                  {@render qrow(r, i, queuedRows, r.title ?? DASH)}
+                {:else}
+                  <div class="muted small">Nothing is queued.</div>
+                {/each}
+              </div>
+              {#if queuedRows.length > queuedShown}
+                <button class="more" type="button" onclick={() => (queuedShown += 25)}>Show 25 more ({queuedRows.length - queuedShown} left)</button>
+              {/if}
+            {/if}
+          {/if}
         {/if}
       </div>
       <div class="wcard">
@@ -709,8 +780,15 @@
   .wh { font-weight: 600; font-size: 12.5px; margin-bottom: 4px; }
   .wrow { font-size: 12.5px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wid { font-weight: 600; }
-  .mv { display: inline-flex; gap: 2px; margin-right: 6px; vertical-align: middle; }
-  .mvb { font-size: 10px; line-height: 1; padding: 3px 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; cursor: pointer; }
-  .mvb:disabled { opacity: 0.35; cursor: default; }
-  @media (max-width: 640px) { .mvb { font-size: 12px; padding: 7px 11px; } .mv { gap: 4px; } }
+  .grip { font-size: 15px; line-height: 1; padding: 2px 4px; margin-right: 4px; vertical-align: middle; background: none; color: var(--muted); border: 0; border-radius: 5px; cursor: grab; touch-action: none; user-select: none; }
+  .grip:hover, .grip:focus-visible { color: var(--text); background: var(--panel-2); }
+  .grip:disabled { opacity: 0.35; cursor: default; }
+  .rowtog { display: inline-block; max-width: calc(100% - 30px); vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .wrow.wbusy { opacity: 0.5; }
+  :global(.wrow.dnd-dragging) { opacity: 0.45; }
+  :global(.wrow.dnd-above) { box-shadow: 0 -2px 0 0 var(--accent); }
+  :global(.wrow.dnd-below) { box-shadow: 0 2px 0 0 var(--accent); }
+  .qhead { display: block; width: 100%; margin-top: 8px; padding: 4px 0; text-align: left; background: none; border: 0; border-top: 1px solid var(--border); color: inherit; font: inherit; font-weight: 600; font-size: 12.5px; cursor: pointer; }
+  .more { font-size: 11.5px; background: none; border: 0; color: var(--accent); cursor: pointer; padding: 4px 0; }
+  @media (max-width: 640px) { .grip { font-size: 20px; padding: 6px 10px; } .wrow { line-height: 2; } }
 </style>
