@@ -1,0 +1,51 @@
+#!/usr/bin/env node
+/**
+ * Work-queue reorder helpers (UI-WORK-QUEUE-REORDER). Imports the real src/lib/workReorder.ts
+ * (node 22 strips the types). Contract with the bot lane WORK-REORDER-ROUTE: LOWER priority_rank is
+ * HIGHER in the list, nulls last. `--self-test` runs the checks against a planted sort that puts
+ * nulls FIRST and a refusal formatter that hides the server's detail; both must fail.
+ */
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { join, dirname } from "node:path";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const real = await import(pathToFileURL(join(HERE, "../src/lib/workReorder.ts")).href);
+
+function run(m) {
+  const res = [];
+  const t = (name, ok) => res.push({ name, ok: !!ok });
+  const rows = [{ id: "a", priorityRank: 5 }, { id: "n1", priorityRank: null }, { id: "b", priorityRank: 1 }, { id: "n2" }, { id: "c", priorityRank: 5 }, { id: "d", priorityRank: 0 }];
+  const ids = m.byRank(rows).map((r) => r.id).join(",");
+  t("lower rank first (0 before 1 before 5)", ids.startsWith("d,b,"));
+  t("nulls and absent ranks come last", ids.endsWith("n1,n2"));
+  t("ties keep their incoming order (a before c)", ids.indexOf("a") < ids.indexOf("c"));
+  t("byRank does not mutate its input", rows[0].id === "a" && rows.length === 6);
+  t("first row cannot move up", m.canMove(3, 0, "up") === false);
+  t("last row cannot move down", m.canMove(3, 2, "down") === false);
+  t("middle row can move both ways", m.canMove(3, 1, "up") && m.canMove(3, 1, "down"));
+  t("out-of-range index cannot move", m.canMove(3, 3, "up") === false && m.canMove(3, -1, "down") === false);
+  t("a single row cannot move", m.canMove(1, 0, "up") === false && m.canMove(1, 0, "down") === false);
+  t("refusal shows a string detail verbatim", m.refusalText({ status: 409, body: { detail: "rank conflict: retry" } }) === "HTTP 409: rank conflict: retry");
+  t("refusal shows an object detail as JSON", m.refusalText({ status: 422, body: { detail: [{ msg: "bad" }] } }) === 'HTTP 422: [{"msg":"bad"}]');
+  t("refusal falls back to the raw text", m.refusalText({ status: 502, body: null, text: "Bad Gateway" }) === "HTTP 502: Bad Gateway");
+  t("refusal with nothing says so, never blank", m.refusalText({ status: 500, body: null, text: "" }) === "HTTP 500: no detail");
+  return res;
+}
+
+const broken = {
+  ...real,
+  byRank: (rows) => [...rows].sort((a, b) => (a.priorityRank ?? -Infinity) - (b.priorityRank ?? -Infinity)),
+  refusalText: (r) => `HTTP ${r.status}`,
+};
+
+const selfTest = process.argv.includes("--self-test");
+const results = run(selfTest ? broken : real);
+let bad = 0;
+for (const r of results) { console.log((r.ok ? "PASS " : "FAIL ") + r.name); if (!r.ok) bad++; }
+if (selfTest) {
+  if (!bad) { console.error("SELF-TEST FAILED: the planted helpers passed every check"); process.exit(1); }
+  console.log(`\nself-test ok: the planted helpers failed ${bad} check(s), as they must`);
+  process.exit(0);
+}
+console.log(bad ? `\n${bad} FAILED` : `\nall ${results.length} passed`);
+process.exit(bad ? 1 : 0);

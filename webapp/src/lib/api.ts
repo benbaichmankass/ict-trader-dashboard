@@ -787,6 +787,11 @@ export const api = {
   // detail that is shown verbatim.
   decisionSessionAnswer: (body: { object_id: string; request_id: string; chosen?: string; free_text?: string }, signal?: AbortSignal) =>
     post(`/api/bot/work/decision/session`, body, signal),
+  // Overview work queue: move one row up/down. Session-gated (the SPA's operator session), the
+  // bot does the swap atomically and records the operator. Contract: bot lane WORK-REORDER-ROUTE.
+  // Refusals (400/401/404/409/503…) carry a `detail` the caller shows verbatim.
+  workReorder: (id: string, direction: "up" | "down", signal?: AbortSignal) =>
+    post(`/api/bot/work/reorder`, { id, direction }, signal),
   gateDecision: (id: string, decision: string, note: string, signal?: AbortSignal) =>
     post(`/api/bot/gates/${encodeURIComponent(id)}/decision`, { decision, note }, signal),
 

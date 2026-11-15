@@ -235,6 +235,21 @@ jobs:
       - name: Framing arithmetic
         run: node webapp/tests/chart-frame.mjs
 
+  webapp-work-reorder:
+    # Overview work-queue reorder helpers (lower priority_rank = higher in the list, nulls last;
+    # the server's refusal is shown verbatim). Zero dependencies.
+    name: webapp-work-reorder
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Prove the checker can fail
+        run: node webapp/tests/work-reorder.mjs --self-test
+      - name: Reorder helpers
+        run: node webapp/tests/work-reorder.mjs
+
   webapp-catalog-contract:
     # Data Explorer research catalog: every field the component reads must exist
     # in a REAL captured /api/bot/research/catalog response (fixture committed).

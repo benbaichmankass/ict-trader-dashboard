@@ -12,6 +12,7 @@
   import { acquireStream, onStreamFrame, streamStatus, isStreamLive } from "../lib/stream";
   import HealthBar from "../components/HealthBar.svelte";
   import DdSwitchControl from "../components/DdSwitchControl.svelte";
+  import { byRank, canMove, refusalText, type ReorderDir } from "../lib/workReorder";
 
   // One funding toggle per tab — four books, never blended: Live money · Prop ·
   // Paper portfolio · Paper testing (lib/funding.ts) — + the 24h/7d/30d/All
@@ -51,7 +52,35 @@
   let apiError = $state<string | null>(null);
 
   // "In flight now": open rows a Claude lane is working (state in_flight, lane set).
-  const inFlight = $derived(((workSnap?.openNow ?? []) as any[]).filter((r) => r?.state === "in_flight" && r?.lane));
+  // Both queue cards list rows lowest priority_rank first (nulls last) — the bot's own order
+  // (bot lane WORK-REORDER-ROUTE), re-applied here so the ▲/▼ controls mean the same on any bot build.
+  const inFlight = $derived(byRank(((workSnap?.openNow ?? []) as any[]).filter((r) => r?.state === "in_flight" && r?.lane)));
+  const waitingRows = $derived(byRank((workSnap?.waitingOnOperator ?? []) as any[]));
+
+  // Move one queue row up/down: POST /api/bot/work/reorder (session-gated; atomic swap on the bot, which
+  // records the operator). One press, no confirm step; a refusal is shown verbatim; the snapshot is
+  // re-read either way so the list always shows what the bot now holds.
+  let reorderBusy = $state<string | null>(null);
+  let reorderMsg = $state<string | null>(null);
+  async function reorder(id: string, dir: ReorderDir) {
+    if (reorderBusy) return;
+    reorderBusy = id;
+    reorderMsg = null;
+    try {
+      const r = await api.workReorder(id, dir);
+      if (!r.ok) reorderMsg = `${id} not moved — ${refusalText(r)}`;
+    } catch (e) {
+      reorderMsg = `${id} not moved — could not reach the bot (${e instanceof Error ? e.message : String(e)})`;
+    }
+    try {
+      workSnap = await api.workSnapshot();
+      workSnapError = null;
+    } catch (e) {
+      reorderMsg = `${reorderMsg ? reorderMsg + " · " : ""}could not re-read the queue (${e instanceof Error ? e.message : String(e)})`;
+    } finally {
+      reorderBusy = null;
+    }
+  }
 
   // News banner: the most recent news-layer decision + its strongest headline.
   const latestNews = $derived.by(() => {
@@ -399,8 +428,15 @@
        Addendum 1: "waiting on me" also carries the LTR trade decisions (RED,
        Approve/Reject through the same state machine as Telegram). An unreadable
        source says "could not look", never an empty queue. -->
+  {#snippet mover(id: string, i: number, len: number)}
+    <span class="mv">
+      <button class="mvb" disabled={reorderBusy !== null || !canMove(len, i, "up")} onclick={() => reorder(id, "up")} aria-label={`Move ${id} up`} title="Higher priority">▲</button>
+      <button class="mvb" disabled={reorderBusy !== null || !canMove(len, i, "down")} onclick={() => reorder(id, "down")} aria-label={`Move ${id} down`} title="Lower priority">▼</button>
+    </span>
+  {/snippet}
   <div class="panel workq">
     <div class="ph">Work queue <a class="wlink" href="#/Work">open Work →</a></div>
+    {#if reorderMsg}<div class="err small" role="alert">{reorderMsg}</div>{/if}
     <div class="wcards">
       <div class="wcard" class:hotcard={ddTripped > 0 || ltrPending > 0 || (workSnap?.waitingOnOperator ?? []).length > 0}>
         <div class="wh">⏳ Waiting on me · {ddTripped + ltrPending + (workSnap?.waitingOnOperator ?? []).length}</div>
@@ -415,8 +451,8 @@
         {:else if !workSnap}
           <div class="muted small">Loading…</div>
         {:else}
-          {#each workSnap.waitingOnOperator ?? [] as r (r.id)}
-            <div class="wrow" title={r.title ?? ""}><span class="mono wid">{r.id}</span> {(r.asks ?? []).map((a: any) => a.what).filter(Boolean).join(" · ") || r.title}</div>
+          {#each waitingRows as r, i (r.id)}
+            <div class="wrow" title={r.title ?? ""}>{@render mover(r.id, i, waitingRows.length)}<span class="mono wid">{r.id}</span> {(r.asks ?? []).map((a: any) => a.what).filter(Boolean).join(" · ") || r.title}</div>
           {:else}
             <div class="muted small">Nothing else is blocked on you.</div>
           {/each}
@@ -427,8 +463,8 @@
         {#if !workSnap || workSnap.present === false}
           <div class="muted small">{workSnapError || workSnap?.present === false ? "could not look" : "Loading…"}</div>
         {:else}
-          {#each inFlight as r (r.id)}
-            <div class="wrow" title={r.title ?? ""}><span class="mono wid">{r.id}</span> <span class="muted">{r.owner ?? r.lane ?? DASH}</span></div>
+          {#each inFlight as r, i (r.id)}
+            <div class="wrow" title={r.title ?? ""}>{@render mover(r.id, i, inFlight.length)}<span class="mono wid">{r.id}</span> <span class="muted">{r.owner ?? r.lane ?? DASH}</span></div>
           {:else}
             <div class="muted small">No Claude lane has a row in flight.</div>
           {/each}
@@ -670,4 +706,8 @@
   .wh { font-weight: 600; font-size: 12.5px; margin-bottom: 4px; }
   .wrow { font-size: 12.5px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wid { font-weight: 600; }
+  .mv { display: inline-flex; gap: 2px; margin-right: 6px; vertical-align: middle; }
+  .mvb { font-size: 10px; line-height: 1; padding: 3px 6px; background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 5px; cursor: pointer; }
+  .mvb:disabled { opacity: 0.35; cursor: default; }
+  @media (max-width: 640px) { .mvb { font-size: 12px; padding: 7px 11px; } .mv { gap: 4px; } }
 </style>
