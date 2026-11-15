@@ -219,6 +219,22 @@ jobs:
       - name: Book classification contract
         run: node webapp/tests/funding-books.mjs
 
+  webapp-chart-frame:
+    # Open-trade chart framing (operator rule 2026-11-15): x = trade open -> current bar,
+    # y = first SL -> farthest TP, +5% each side. The card once opened on two huge bars
+    # because the chart framed itself on the first bars to arrive. Zero dependencies.
+    name: webapp-chart-frame
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Prove the checker can fail
+        run: node webapp/tests/chart-frame.mjs --self-test
+      - name: Framing arithmetic
+        run: node webapp/tests/chart-frame.mjs
+
   webapp-catalog-contract:
     # Data Explorer research catalog: every field the component reads must exist
     # in a REAL captured /api/bot/research/catalog response (fixture committed).

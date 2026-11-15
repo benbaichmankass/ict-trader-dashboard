@@ -14,13 +14,14 @@
   } from "lightweight-charts";
   import type { Candle, Position, ClosedTrade, BracketHistory, TradeDecision } from "../lib/api";
   import { dispositionColor } from "../lib/chartTime";
+  import type { Frame } from "../lib/chartFrame";
 
   // Candles + trade context overlaid the way Streamlit's monitor does it:
   // live-position entry/SL/TP price-lines, buy/sell signal markers, and
   // closed-trade exit markers — all scoped to the charted symbol upstream.
   let {
     candles = [], positions = [], signals = [], closedTrades = [], brackets = null, decisions = [],
-    height = 320,
+    height = 320, frame = null,
   }: {
     candles?: Candle[]; positions?: Position[]; signals?: any[];
     closedTrades?: ClosedTrade[]; brackets?: BracketHistory | null;
@@ -29,6 +30,11 @@
     // bot-side (lane CLOSED-TRADE-SNAPSHOT); empty → nothing drawn, never invented.
     decisions?: TradeDecision[];
     height?: number;
+    // UI-LIVE-CHART-FRAMING: when set, the chart opens on the operator's frame (x = trade open →
+    // current bar, y = first SL → farthest TP, +5% each side — lib/chartFrame) instead of fitting
+    // whatever bars arrived first. It re-applies when its inputs change (a new bar, history merged
+    // in, brackets moved) and stops the moment the viewer pans/zooms; "re-frame" brings it back.
+    frame?: Frame | null;
   } = $props();
 
   let el: HTMLDivElement;
@@ -39,6 +45,10 @@
   // set time to its replacement), redrawn when the history or the bars change.
   let historyLines: ISeriesApi<"Line">[] = [];
   let seeded = false;
+  let userMoved = $state(false);
+  let lastFrameKey = "";
+  // Read by the series' autoscaleInfoProvider; a plain variable so changing it needs no re-create.
+  let frameY: { lo: number; hi: number } | null = null;
 
   function isDark(): boolean {
     return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? true;
@@ -96,11 +106,25 @@
       borderVisible: false,
       wickUpColor: "#26a17b",
       wickDownColor: "#e5484d",
+      // The operator's y frame replaces autoscale while one is set; otherwise the library default.
+      autoscaleInfoProvider: (base: () => any) =>
+        frameY ? { priceRange: { minValue: frameY.lo, maxValue: frameY.hi } } : base(),
     });
 
-    const ro = new ResizeObserver(() => chart?.timeScale().fitContent());
+    // Any viewer gesture hands the chart back to them; "re-frame" returns it.
+    const grab = () => { userMoved = true; };
+    el.addEventListener("pointerdown", grab);
+    el.addEventListener("wheel", grab, { passive: true });
+    el.addEventListener("touchstart", grab, { passive: true });
+    const ro = new ResizeObserver(() => {
+      if (frame && !userMoved) applyFrame(true);
+      else if (!frame) chart?.timeScale().fitContent();
+    });
     ro.observe(el);
     return () => {
+      el.removeEventListener("pointerdown", grab);
+      el.removeEventListener("wheel", grab);
+      el.removeEventListener("touchstart", grab);
       ro.disconnect();
       chart?.remove();
       chart = null;
@@ -110,6 +134,36 @@
     };
   });
 
+  // Apply the operator frame. x is set in LOGICAL (bar-index) units so the 5% right padding can
+  // extend past the newest bar; a left edge older than the loaded history is clamped to the first bar.
+  function applyFrame(force = false): void {
+    if (!chart || !series || !frame || candles.length === 0) return;
+    if (userMoved && !force) return;
+    frameY = frame.y;
+    chart.priceScale("right").applyOptions({ autoScale: true }); // re-runs the autoscale provider
+    if (frame.x) {
+      const n = candles.length;
+      const t0 = candles[0].time, tl = candles[n - 1].time;
+      const step = n > 1 && tl > candles[n - 2].time ? tl - candles[n - 2].time : 900;
+      let from = frame.x.from <= t0 ? -0.5 : (frame.x.from - t0) / step;
+      if (n > 2 && frame.x.from > t0) {
+        // bars may have gaps (non-crypto): index of the first bar at/after the left edge, not a time ratio
+        let lo = 0, hi = n - 1;
+        while (lo < hi) { const mid = (lo + hi) >> 1; if (candles[mid].time < frame.x.from) lo = mid + 1; else hi = mid; }
+        from = lo - 0.5;
+      }
+      const to = (n - 1) + Math.max(0, (frame.x.to - tl) / step) + 0.5;
+      try { chart.timeScale().setVisibleLogicalRange({ from, to }); } catch { /* chart torn down */ }
+    } else if (!frame.y) {
+      chart.timeScale().fitContent();
+    }
+  }
+
+  function reframe(): void {
+    userMoved = false;
+    applyFrame(true);
+  }
+
   // Re-seed candles whenever the array identity changes.
   $effect(() => {
     if (!series || candles.length === 0) return;
@@ -117,7 +171,13 @@
       time: c.time as UTCTimestamp,
       open: c.open, high: c.high, low: c.low, close: c.close,
     })));
-    if (!seeded) {
+    if (frame) {
+      // Re-frame only when the frame's INPUTS change (new bar, history merged in, brackets moved),
+      // not on every tick of the live bar — a tick must not nudge the view.
+      const k = `${candles.length}|${candles[0].time}|${frame.x?.from}|${frame.x?.to}|${frame.y?.lo}|${frame.y?.hi}`;
+      if (k !== lastFrameKey) { lastFrameKey = k; applyFrame(); }
+      seeded = true;
+    } else if (!seeded) {
       chart?.timeScale().fitContent();
       seeded = true;
     }
@@ -273,10 +333,21 @@
   });
 </script>
 
-<div class="chart" bind:this={el} style:height={`${height}px`}></div>
+<div class="wrap">
+  <div class="chart" bind:this={el} style:height={`${height}px`}></div>
+  {#if frame && userMoved}
+    <button class="reframe" onclick={reframe} title="Back to trade open → now, stop-loss → take-profit">⟲ re-frame</button>
+  {/if}
+</div>
 
 <style>
+  .wrap { position: relative; }
   .chart {
     width: 100%;
+  }
+  .reframe {
+    position: absolute; top: 6px; left: 6px; z-index: 5; font-size: 11px;
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 2px 8px; cursor: pointer;
   }
 </style>

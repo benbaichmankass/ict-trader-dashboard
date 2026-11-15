@@ -21,6 +21,8 @@ export const cardCandles = writable<Record<string, Candle[]>>({});
 export const cardFeed = writable<Record<string, "bybit" | "ws_market">>({});
 
 const INTERVAL = "15m";
+/** The bot's /candles cap is 1000 bars; never hold more than the card can have asked for. */
+const MAX_BARS = 1000;
 const refs = new Map<string, number>();
 const bybitRelease = new Map<string, () => void>();
 let stream: MarketStream | null = null;
@@ -63,9 +65,17 @@ function sync(): void {
   if (!rest.length) return;
   cardFeed.update((m) => ({ ...m, ...Object.fromEntries(rest.map((s) => [s, "ws_market" as const])) }));
   stream = new MarketStream(rest, INTERVAL, {
-    onCandles: (sym, _iv, cs) => cardCandles.update((m) => ({ ...m, [sym]: cs })),
+    onCandles: (sym, _iv, cs) => cardCandles.update((m) => ({ ...m, [sym]: keepOlder(m[sym], cs) })),
   });
   stream.start();
+}
+
+/** A socket snapshot replaces the live tail but must not drop older bars already loaded back to a trade's open. */
+function keepOlder(cur: Candle[] | undefined, snap: Candle[]): Candle[] {
+  if (!cur || !cur.length || !snap.length) return snap;
+  const first = snap[0].time;
+  const older = cur.filter((c) => c.time < first);
+  return older.length ? [...older, ...snap].slice(-MAX_BARS) : snap;
 }
 
 /** Seed a symbol's history from REST; a live array already held is kept (it is newer). */
@@ -76,7 +86,7 @@ export function seedCandles(symbol: string, candles: Candle[]): void {
     if (!cur || !cur.length) return { ...m, [symbol]: candles };
     // Live bars arrived first: put history in front of them.
     const first = cur[0].time;
-    return { ...m, [symbol]: [...candles.filter((c) => c.time < first), ...cur].slice(-500) };
+    return { ...m, [symbol]: [...candles.filter((c) => c.time < first), ...cur].slice(-MAX_BARS) };
   });
 }
 

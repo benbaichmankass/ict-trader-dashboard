@@ -4,6 +4,8 @@
   import { acquireSymbol, cardCandles, cardFeed, seedCandles } from "../lib/cardStream";
   import { bracketsForPosition, packageForPosition } from "../lib/brackets";
   import { money, num, signClass, agoFromIso, DASH } from "../lib/format";
+  import { barsToLoad, frameFor, intervalSec } from "../lib/chartFrame";
+  import { toSec } from "../lib/chartTime";
   import LiveChart from "./LiveChart.svelte";
   import EntryWhy from "./EntryWhy.svelte";
 
@@ -18,6 +20,10 @@
   const candles = $derived($cardCandles[p.symbol] ?? seeded);
   const feed = $derived($cardFeed[p.symbol]);
   let brackets = $state<BracketHistory | null>(null);
+  // The same bracket history + the entry time as GET /trades/{id}/markers reports them (UI-LIVE-CHART-FRAMING).
+  let markerBrackets = $state<BracketHistory | null>(null);
+  let markerEntryTs = $state<string | null>(null);
+  const bh = $derived(markerBrackets ?? brackets);
   // LTR / Claude decisions on this open trade (GET /trades/{id}/markers, bot #25216;
   // prop rows → /prop-trades/{fill}/markers). 404 = route not deployed → none drawn.
   let decisions = $state<any[]>([]);
@@ -45,9 +51,25 @@
     return [{ timestamp: ts, side: pkg?.direction ?? p.side, pattern: `signal · ${logic?.strategy_name ?? pkg?.strategy ?? "entry"}` }];
   });
 
+  // Operator frame: x = trade open → current bar, y = first SL → farthest TP, +5% each side.
+  const barSec = $derived(intervalSec(interval));
+  const frame = $derived.by(() => {
+    const lv = (kind: string) => (bh?.levels ?? []).filter((l: any) => l.kind === kind && Number.isFinite(l.price)).map((l: any) => ({ price: Number(l.price), fromSec: toSec(l.from_ts) }));
+    return frameFor({
+      openSec: toSec(markerEntryTs ?? p.openedAt),
+      lastBarSec: candles.length ? candles[candles.length - 1].time : null,
+      barSec,
+      side: p.side == null ? null : sell ? "short" : "long",
+      entry: p.entryPrice ?? null,
+      sl: lv("sl"), tp: lv("tp"),
+      currentSl: p.stopLoss ?? null, currentTp: p.takeProfit ?? null,
+    });
+  });
+
   onMount(() => {
     let alive = true;
-    api.candles(p.symbol, interval, 200)
+    // History back to the trade's open (not just the last 200 bars) so the frame has bars to show.
+    api.candles(p.symbol, interval, barsToLoad(toSec(p.openedAt), Math.floor(Date.now() / 1000), intervalSec(interval)))
       .then((r) => { if (alive && r?.candles?.length) { seeded = r.candles; seedCandles(p.symbol, r.candles); } })
       .catch(() => {});
     {
@@ -59,6 +81,8 @@
           const ms = (r.body?.decisions?.markers ?? []) as any[];
           decisions = ms.map((m) => ({ review_id: m.id ?? null, at: m.bar_ts ?? m.ts ?? null, action: m.action ?? null, disposition: m.disposition ?? null }));
           decisionState = r.body?.decisions?.read_state ?? "read";
+          if (r.body?.brackets && Array.isArray(r.body.brackets.levels)) markerBrackets = r.body.brackets as BracketHistory;
+          markerEntryTs = r.body?.entry?.ts ?? null;
         } else decisionState = r.status === 404 ? "route not deployed" : `could not look (${r.status})`;
       }).catch(() => { if (alive) decisionState = "could not look"; });
     }
@@ -97,7 +121,7 @@
     <div><dt>uPnL source</dt><dd>{f(p.unrealizedPnlSource)}</dd></div>
     <div><dt>Confidence</dt><dd class="mono">{(a.confidence ?? pkg?.confidence) == null ? DASH : String(a.confidence ?? pkg?.confidence)}</dd></div>
   </dl>
-  <LiveChart {candles} positions={[p]} signals={entrySignals} {brackets} {decisions} height={narrow ? 220 : 260} />
+  <LiveChart {candles} positions={[p]} signals={entrySignals} brackets={bh} {decisions} {frame} height={narrow ? 220 : 260} />
   <EntryWhy {pkg} {pkgState} modelScores={a.modelScores} />
   <div class="feed">
     {feed === "bybit" ? "● live · Bybit public stream (browser-direct)" : feed === "ws_market" ? "● live · bot /ws/market" : "REST snapshot"}
