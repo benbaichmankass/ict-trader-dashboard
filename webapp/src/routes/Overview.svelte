@@ -96,7 +96,7 @@
   // Owner shortened for the row line ("AM-OPS (session_…)" → "AM-OPS"); the full owner stays on the card.
   function shortOwner(r: any): string {
     const o = String(r.owner ?? r.lane ?? "");
-    return o.replace(/\s*\(session_[^)]*\)\s*$/i, "").trim();
+    return o.replace(/\s*\(session_[^)]*\)/gi, "").replace(/\s+--\s.*$/, "").trim();
   }
   function grip(e: PointerEvent, id: string) {
     if (reorderBusy) return;
@@ -785,7 +785,7 @@
   .wh { font-weight: 600; font-size: 12.5px; margin-bottom: 4px; }
   .wrow { font-size: 12.5px; line-height: 1.4; display: flex; align-items: flex-start; gap: 2px; min-width: 0; padding: 2px 0; }
   .rl1 { display: block; overflow-wrap: anywhere; }
-  .wown { color: var(--muted); }
+  .wown { color: var(--muted); margin-left: 0.5em; }
   .rl2 { display: block; color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wid { font-weight: 600; }
   .grip { flex: none; font-size: 15px; line-height: 1; padding: 2px 4px; margin-right: 4px; background: none; color: var(--muted); border: 0; border-radius: 5px; cursor: grab; touch-action: none; user-select: none; }
