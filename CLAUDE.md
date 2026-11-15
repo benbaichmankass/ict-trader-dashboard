@@ -127,14 +127,23 @@ Streamlit is off the live feed (see the correction at the top).
   (a string that must be absent) so the probe can distinguish present from
   absent. A green deploy job says the upload succeeded, not that the artifact
   contains your commit.
-- **The page renders correctly** — this one does need a human on a real
-  browser. Driving the deployed site headlessly from a sandbox does **not**
-  work: the agent proxy resets the browser's tunnelled connections (measured
-  2026-09-11 — `net::ERR_CONNECTION_RESET` on the Pages URL, with the proxy's
-  own relay log showing `ws_closed_mid_exchange`), even though `curl` through
-  the same proxy is fine. A headless run against a **local** build plus a mock
-  API does work and is worth doing (`webapp/tests/manual/auth-e2e.mjs`), but it
-  is not the same fact — say which one you established.
+- **The page renders correctly** — try it headlessly first; it has gone both
+  ways, so say which result you got. **2026-09-11:** driving the deployed site
+  failed — the agent proxy reset the browser's tunnelled connections
+  (`net::ERR_CONNECTION_RESET` on the Pages URL, with the proxy's own relay log
+  showing `ws_closed_mid_exchange`), even though `curl` through the same proxy
+  was fine. **2026-11-15 (measured, corrects the "does not work" this paragraph
+  used to state flatly):** a pre-installed-Chromium Playwright run loaded
+  `https://benbaichmankass.github.io/ict-trader-dashboard/#/Work`, clicked the
+  Pipeline map tab, and rendered the page from the **live** bot API
+  (`ict-bot.duckdns.org`) at both 1280×900 and a 390px phone viewport — no
+  reset. Whether the 09-11 failure was fixed or is intermittent is not known,
+  so expect it can recur: if it does, a headless run against a **local** build
+  plus a mock API (`webapp/tests/manual/auth-e2e.mjs`,
+  `webapp/tests/manual/pipeline-map-e2e.mjs`, the latter can replay a captured
+  live payload via `PM_PAYLOAD=`) still works, but it is a different fact — say
+  which one you established. A human on a real browser remains the
+  authoritative check of how it *looks*.
 
 Do **not** recreate a preview app or a `claude/web-app-preview` branch. If a
 change is risky enough that you'd want to stage it, gate it behind a feature

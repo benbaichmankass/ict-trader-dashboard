@@ -31,6 +31,12 @@
   type Sel = { kind: "step"; step: PmStep } | { kind: "element"; el: PmElement; step: PmStep; side: "technical" | "trading" } | { kind: "loop"; loop: PmLane };
   let sel = $state<Sel | null>(null);
 
+  // A step can carry dozens of elements (live: 27 technical / 75 trading on one step). Show the first
+  // CAP per side and let the reader expand, so one band never swamps the spine. Keys are step:side.
+  const CAP = 8;
+  let open = $state<Record<string, boolean>>({});
+  const shown = (list: PmElement[], key: string) => (open[key] || list.length <= CAP + 1 ? list : list.slice(0, CAP));
+
   function measure() {
     if (!bandsEl) return;
     mids = bandEls.map((b) => (b ? b.offsetTop + b.offsetHeight / 2 : 0));
@@ -226,7 +232,7 @@
             </button>
             <div class="row">
               <div class="side tech">
-                {#each step.technical as el (el.id)}
+                {#each shown(step.technical, step.id + ":technical") as el, ei (ei)}
                   <button class="chip" data-kind={kindClass(el.kind)} onclick={() => (sel = { kind: "element", el, step, side: "technical" })}>
                     <span class="dot {stateTone(el.state)}"></span>
                     <span class="lbl">{el.label ?? DASH}</span>
@@ -235,10 +241,15 @@
                 {:else}
                   <span class="none">{DASH}</span>
                 {/each}
+                {#if step.technical.length > CAP + 1}
+                  <button class="more" onclick={() => (open[step.id + ":technical"] = !open[step.id + ":technical"])}>
+                    {open[step.id + ":technical"] ? "show fewer" : `+${step.technical.length - CAP} more`}
+                  </button>
+                {/if}
               </div>
               <div class="gap"></div>
               <div class="side trade">
-                {#each step.trading as el (el.id)}
+                {#each shown(step.trading, step.id + ":trading") as el, ei (ei)}
                   <button class="chip" data-kind={kindClass(el.kind)} onclick={() => (sel = { kind: "element", el, step, side: "trading" })}>
                     <span class="dot {stateTone(el.state)}"></span>
                     <span class="lbl">{el.label ?? DASH}</span>
@@ -247,6 +258,11 @@
                 {:else}
                   <span class="none">{DASH}</span>
                 {/each}
+                {#if step.trading.length > CAP + 1}
+                  <button class="more" onclick={() => (open[step.id + ":trading"] = !open[step.id + ":trading"])}>
+                    {open[step.id + ":trading"] ? "show fewer" : `+${step.trading.length - CAP} more`}
+                  </button>
+                {/if}
               </div>
             </div>
           </section>
@@ -347,6 +363,7 @@
   .side.tech { align-items: flex-start; }
   .side.trade { align-items: flex-end; }
   .none { color: var(--muted); padding: 2px 6px; }
+  .more { font-size: 11.5px; background: transparent; border: 1px dashed var(--border); border-radius: 6px; color: var(--accent); padding: 2px 8px; cursor: pointer; }
 
   .chip { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 2px 5px; max-width: 100%; text-align: left; font-size: 12px; line-height: 1.3; padding: 4px 8px; border-radius: 6px; cursor: pointer; background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--kc, var(--muted)); overflow-wrap: anywhere; }
   .chip:hover { background: color-mix(in srgb, var(--kc, var(--accent)) 14%, var(--panel)); }
