@@ -50,3 +50,36 @@ export function refusalText(r: { status: number; body?: unknown; text?: string }
   const msg = error && detail ? `${error}: ${detail}` : error ?? detail ?? (raw !== "" ? raw.slice(0, 400) : "no detail");
   return `HTTP ${r.status}: ${msg}`;
 }
+
+/**
+ * Drag-and-drop (UI-WORK-QUEUE-DND): the POST body for dropping row `id` at insertion slot `slot` of the list
+ * `rows` as it is displayed (slot 0 = above the first row, rows.length = below the last). The dragged row is
+ * ignored if it is in `rows` (a within-list drag), so "drop X directly above Y" is {id: X, direction: "up",
+ * over: Y} and "below Y" is direction "down". Cross-list drops use the same shape (the bot adopts Y's rank).
+ * null when there is no other row to anchor to, or the drop would put X where it already is.
+ */
+export function dropPayload(
+  rows: readonly { id?: unknown }[],
+  id: string,
+  slot: number,
+): { id: string; direction: ReorderDir; over: string } | null {
+  const ids = rows.map((r) => (typeof r?.id === "string" ? r.id : "")).filter((x) => x !== "");
+  const at = ids.indexOf(id);
+  const others = ids.filter((x) => x !== id);
+  if (others.length === 0 || !Number.isFinite(slot)) return null;
+  // slot counts slots of the full list; convert to a slot among the others
+  let s = Math.max(0, Math.min(ids.length, Math.trunc(slot)));
+  if (at >= 0 && s > at) s -= 1;
+  if (at >= 0 && s === at) return null; // dropped back where it was
+  return s >= others.length
+    ? { id, direction: "down", over: others[others.length - 1] }
+    : { id, direction: "up", over: others[s] };
+}
+
+/** Newest-first notes of a full work row: `extra.notes` (array, oldest→newest) when present, else the single `extra.note`. */
+export function rowNotes(row: { extra?: { note?: unknown; notes?: unknown } | null } | null | undefined): string[] {
+  const ex = row?.extra;
+  const asText = (v: unknown) => (typeof v === "string" ? v : v && typeof v === "object" ? JSON.stringify(v) : String(v));
+  if (Array.isArray(ex?.notes) && ex.notes.length) return ex.notes.map(asText).filter((t) => t.trim() !== "").reverse();
+  return typeof ex?.note === "string" && ex.note.trim() !== "" ? [ex.note] : [];
+}

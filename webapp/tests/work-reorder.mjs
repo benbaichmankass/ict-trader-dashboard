@@ -39,6 +39,18 @@ function run(m) {
   t("refusal shows an object detail as JSON", m.refusalText({ status: 422, body: { detail: [{ msg: "bad" }] } }) === 'HTTP 422: [{"msg":"bad"}]');
   t("refusal falls back to the raw text", m.refusalText({ status: 502, body: null, text: "Bad Gateway" }) === "HTTP 502: Bad Gateway");
   t("refusal with nothing says so, never blank", m.refusalText({ status: 500, body: null, text: "" }) === "HTTP 500: no detail");
+  const L = [{ id: "a" }, { id: "b" }, { id: "c" }];
+  const eq = (x, y) => JSON.stringify(x) === JSON.stringify(y);
+  t("drop at slot 0 of another list = up over its first row", eq(m.dropPayload(L, "x", 0), { id: "x", direction: "up", over: "a" }));
+  t("drop at slot 2 of another list = up over the row at that slot", eq(m.dropPayload(L, "x", 2), { id: "x", direction: "up", over: "c" }));
+  t("drop at the end = down over the last row", eq(m.dropPayload(L, "x", 3), { id: "x", direction: "down", over: "c" }));
+  t("within-list: a dragged to slot 3 (after c) = down over c", eq(m.dropPayload(L, "a", 3), { id: "a", direction: "down", over: "c" }));
+  t("within-list: c dragged to slot 0 = up over a", eq(m.dropPayload(L, "c", 0), { id: "c", direction: "up", over: "a" }));
+  t("within-list: b dragged to slot 3 skips itself (down over c)", eq(m.dropPayload(L, "b", 3), { id: "b", direction: "down", over: "c" }));
+  t("dropping back in place is a no-op (null)", m.dropPayload(L, "b", 1) === null && m.dropPayload(L, "b", 2) === null && m.dropPayload(L, "a", 0) === null && m.dropPayload(L, "a", 1) === null);
+  t("no other row to anchor to = null", m.dropPayload([], "x", 0) === null && m.dropPayload([{ id: "x" }], "x", 1) === null);
+  t("notes: newest first from extra.notes", eq(m.rowNotes({ extra: { notes: ["old", "new"] } }), ["new", "old"]));
+  t("notes: falls back to the single extra.note, blank/absent gives []", eq(m.rowNotes({ extra: { note: "n" } }), ["n"]) && eq(m.rowNotes({ extra: { note: " " } }), []) && eq(m.rowNotes(null), []));
   return res;
 }
 
@@ -47,6 +59,8 @@ const broken = {
   byRank: (rows) => [...rows].sort((a, b) => (a.priorityRank ?? -Infinity) - (b.priorityRank ?? -Infinity)),
   refusalText: (r) => `HTTP ${r.status}`,
   isRefusal: (r) => !r.ok, // forgets accepted:false on a 2xx
+  dropPayload: (rows, id, slot) => ({ id, direction: "up", over: rows[slot]?.id ?? null }), // ignores the end slot and the dragged row
+  rowNotes: (row) => (row?.extra?.notes ?? []).slice(),
   neighbourId: (rows, idx, dir) => rows[dir === "up" ? idx + 1 : idx - 1]?.id ?? null, // the WRONG neighbour
 };
 
