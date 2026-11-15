@@ -1,0 +1,499 @@
+{
+ "path": "docs/reference/trading-pipeline-map.md",
+ "skeleton": "fixture",
+ "last_commit": {
+  "sha": "826263c2aa",
+  "date": "2026-11-15T07:00:00Z",
+  "subject": "fixture of PR #26250 schema",
+  "read_state": "read"
+ },
+ "built_at": "2026-11-15T08:00:00Z",
+ "read_state": "read",
+ "source": "live",
+ "markdown": "# Trading pipeline map\n\n(fixture markdown)\n\n## Flow\n\nSee the spine map above.\n",
+ "live_state": "read",
+ "file_mtime": null,
+ "build_error": null,
+ "cache_age_s": 3,
+ "structured": {
+  "steps": [
+   {
+    "id": "step-1",
+    "n": 1,
+    "name": "Market data",
+    "title": "Ingest candles + ticks from exchanges",
+    "technical": [
+     {
+      "id": "t:mod1a",
+      "kind": "module",
+      "label": "src/runtime/market.py",
+      "sub": "module",
+      "state": "ok",
+      "text": "Implements Market data.",
+      "path": "src/runtime/market.py",
+      "details": {
+       "lines": 127,
+       "owner": "runtime"
+      }
+     }
+    ],
+    "trading": [],
+    "technical_text": "src/runtime/market.py",
+    "trading_text": null
+   },
+   {
+    "id": "step-2",
+    "n": 2,
+    "name": "Signal generation",
+    "title": "Strategies scan for ICT setups",
+    "technical": [
+     {
+      "id": "t:mod2a",
+      "kind": "module",
+      "label": "src/runtime/signal.py",
+      "sub": "module",
+      "state": "ok",
+      "text": "Implements Signal generation.",
+      "path": "src/runtime/signal.py",
+      "details": {
+       "lines": 134,
+       "owner": "runtime"
+      }
+     },
+     {
+      "id": "t:svc2",
+      "kind": "service",
+      "label": "ict-signal.service",
+      "sub": "systemd",
+      "state": "active",
+      "text": null,
+      "path": null,
+      "details": {}
+     }
+    ],
+    "trading": [
+     {
+      "id": "leg:s2",
+      "kind": "leg",
+      "label": "Strategy leg: ICT FVG",
+      "sub": "live",
+      "state": "live",
+      "text": "Fair-value-gap entries.",
+      "details": {
+       "status": "live",
+       "books": [
+        "bybit_2",
+        "alpaca_live"
+       ]
+      }
+     }
+    ],
+    "technical_text": "src/runtime/signal.py; ict-signal.service",
+    "trading_text": "Strategy leg: ICT FVG"
+   },
+   {
+    "id": "step-3",
+    "n": 3,
+    "name": "Enrichment",
+    "title": "Context, liquidity maps, news layer",
+    "technical": [
+     {
+      "id": "t:mod3a",
+      "kind": "module",
+      "label": "src/runtime/enrichment.py",
+      "sub": null,
+      "state": "ok",
+      "text": "Implements Enrichment.",
+      "path": "src/runtime/enrichment.py",
+      "details": {
+       "lines": 141,
+       "owner": "runtime"
+      }
+     }
+    ],
+    "trading": [
+     {
+      "id": "leg:s3",
+      "kind": "leg",
+      "label": "Strategy leg: ICT FVG",
+      "sub": "live",
+      "state": "live",
+      "text": "Fair-value-gap entries.",
+      "details": {
+       "status": "live",
+       "books": [
+        "bybit_2",
+        "alpaca_live"
+       ]
+      }
+     }
+    ],
+    "technical_text": "src/runtime/enrichment.py",
+    "trading_text": "Strategy leg: ICT FVG"
+   },
+   {
+    "id": "step-4",
+    "n": 4,
+    "name": "ML scoring",
+    "title": "Shadow/live models score each signal",
+    "technical": [
+     {
+      "id": "t:mod4a",
+      "kind": "module",
+      "label": "src/runtime/ml.py",
+      "sub": "module",
+      "state": null,
+      "text": "Implements ML scoring.",
+      "path": "src/runtime/ml.py",
+      "details": {
+       "lines": 148,
+       "owner": "runtime"
+      }
+     },
+     {
+      "id": "t:svc4",
+      "kind": "service",
+      "label": "ict-ml.service",
+      "sub": "systemd",
+      "state": "active",
+      "text": null,
+      "path": null,
+      "details": {}
+     }
+    ],
+    "trading": [
+     {
+      "id": "ml:m1",
+      "kind": "model",
+      "label": "fvg_quality_v3",
+      "sub": "shadow",
+      "state": "shadow",
+      "text": null,
+      "details": {
+       "stage": "shadow",
+       "metric": "auc",
+       "value": 0.61
+      }
+     }
+    ],
+    "technical_text": "src/runtime/ml.py; ict-ml.service",
+    "trading_text": "fvg_quality_v3"
+   },
+   {
+    "id": "step-5",
+    "n": 5,
+    "name": "Risk gate",
+    "title": "Sizing, daily-DD switch, exposure caps",
+    "technical": [
+     {
+      "id": "t:mod5a",
+      "kind": "module",
+      "label": "src/runtime/risk.py",
+      "sub": "module",
+      "state": "ok",
+      "text": "Implements Risk gate.",
+      "path": "src/runtime/risk.py",
+      "details": {
+       "lines": 155,
+       "owner": "runtime"
+      }
+     }
+    ],
+    "trading": [
+     {
+      "id": "r:dd",
+      "kind": "rule",
+      "label": "Daily drawdown switch",
+      "sub": "armed",
+      "state": "on",
+      "text": "Halts new entries past the daily loss cap.",
+      "details": {
+       "cap_usd": null
+      }
+     },
+     {
+      "id": "mandate:m1",
+      "kind": "mandate",
+      "label": "Auto-approve ≤ $50",
+      "sub": null,
+      "state": null,
+      "text": null,
+      "details": {
+       "kind": "size",
+       "granted": true
+      }
+     }
+    ],
+    "technical_text": "src/runtime/risk.py",
+    "trading_text": "Daily drawdown switch; Auto-approve ≤ $50"
+   },
+   {
+    "id": "step-6",
+    "n": 6,
+    "name": "Approval",
+    "title": "Operator approvals and mandates",
+    "technical": [
+     {
+      "id": "t:mod6a",
+      "kind": "module",
+      "label": "src/runtime/approval.py",
+      "sub": null,
+      "state": "ok",
+      "text": "Implements Approval.",
+      "path": "src/runtime/approval.py",
+      "details": {
+       "lines": 162,
+       "owner": "runtime"
+      }
+     },
+     {
+      "id": "t:svc6",
+      "kind": "service",
+      "label": "ict-approval.service",
+      "sub": "systemd",
+      "state": "active",
+      "text": null,
+      "path": null,
+      "details": {}
+     }
+    ],
+    "trading": [],
+    "technical_text": "src/runtime/approval.py; ict-approval.service",
+    "trading_text": null
+   },
+   {
+    "id": "step-7",
+    "n": 7,
+    "name": "Order build",
+    "title": "Order package with SL/TP ladder",
+    "technical": [
+     {
+      "id": "t:mod7a",
+      "kind": "module",
+      "label": "src/runtime/order.py",
+      "sub": "module",
+      "state": "ok",
+      "text": "Implements Order build.",
+      "path": "src/runtime/order.py",
+      "details": {
+       "lines": 169,
+       "owner": "runtime"
+      }
+     }
+    ],
+    "trading": [],
+    "technical_text": "src/runtime/order.py",
+    "trading_text": null
+   },
+   {
+    "id": "step-8",
+    "n": 8,
+    "name": "Routing",
+    "title": "Account + venue selection",
+    "technical": [
+     {
+      "id": "t:mod8a",
+      "kind": "module",
+      "label": "src/runtime/routing.py",
+      "sub": "module",
+      "state": null,
+      "text": "Implements Routing.",
+      "path": "src/runtime/routing.py",
+      "details": {
+       "lines": 176,
+       "owner": "runtime"
+      }
+     },
+     {
+      "id": "t:svc8",
+      "kind": "service",
+      "label": "ict-routing.service",
+      "sub": "systemd",
+      "state": "failed",
+      "text": null,
+      "path": null,
+      "details": {}
+     }
+    ],
+    "trading": [
+     {
+      "id": "acct:8",
+      "kind": "account",
+      "label": "bybit_2",
+      "sub": "live money",
+      "state": "read",
+      "text": null,
+      "details": {
+       "class": "live",
+       "paper_role": null
+      }
+     }
+    ],
+    "technical_text": "src/runtime/routing.py; ict-routing.service",
+    "trading_text": "bybit_2"
+   },
+   {
+    "id": "step-9",
+    "n": 9,
+    "name": "Execution",
+    "title": "Broker/exchange placement and fills",
+    "technical": [
+     {
+      "id": "t:mod9a",
+      "kind": "module",
+      "label": "src/runtime/execution.py",
+      "sub": null,
+      "state": "ok",
+      "text": "Implements Execution.",
+      "path": "src/runtime/execution.py",
+      "details": {
+       "lines": 183,
+       "owner": "runtime"
+      }
+     }
+    ],
+    "trading": [
+     {
+      "id": "acct:9",
+      "kind": "account",
+      "label": "alpaca_live",
+      "sub": "live money",
+      "state": "read",
+      "text": null,
+      "details": {
+       "class": "live",
+       "paper_role": null
+      }
+     }
+    ],
+    "technical_text": "src/runtime/execution.py",
+    "trading_text": "alpaca_live"
+   },
+   {
+    "id": "step-10",
+    "n": 10,
+    "name": "Position mgmt",
+    "title": "Trailing, partial TPs, exits",
+    "technical": [
+     {
+      "id": "t:mod10a",
+      "kind": "module",
+      "label": "src/runtime/position.py",
+      "sub": "module",
+      "state": "ok",
+      "text": "Implements Position mgmt.",
+      "path": "src/runtime/position.py",
+      "details": {
+       "lines": 190,
+       "owner": "runtime"
+      }
+     },
+     {
+      "id": "t:svc10",
+      "kind": "service",
+      "label": "ict-position.service",
+      "sub": "systemd",
+      "state": "active",
+      "text": null,
+      "path": null,
+      "details": {}
+     }
+    ],
+    "trading": [],
+    "technical_text": "src/runtime/position.py; ict-position.service",
+    "trading_text": null
+   },
+   {
+    "id": "step-11",
+    "n": 11,
+    "name": "Journal",
+    "title": "Closed trades + attribution",
+    "technical": [
+     {
+      "id": "t:mod11a",
+      "kind": "module",
+      "label": "src/runtime/journal.py",
+      "sub": "module",
+      "state": "ok",
+      "text": "Implements Journal.",
+      "path": "src/runtime/journal.py",
+      "details": {
+       "lines": 197,
+       "owner": "runtime"
+      }
+     }
+    ],
+    "trading": [],
+    "technical_text": "src/runtime/journal.py",
+    "trading_text": null
+   },
+   {
+    "id": "step-12",
+    "n": 12,
+    "name": "Review & learning",
+    "title": "Reviews, retrain, gate decisions",
+    "technical": [
+     {
+      "id": "t:mod12a",
+      "kind": "module",
+      "label": "src/runtime/review.py",
+      "sub": null,
+      "state": null,
+      "text": "Implements Review & learning.",
+      "path": "src/runtime/review.py",
+      "details": {
+       "lines": 204,
+       "owner": "runtime"
+      }
+     },
+     {
+      "id": "t:svc12",
+      "kind": "service",
+      "label": "ict-review.service",
+      "sub": "systemd",
+      "state": "active",
+      "text": null,
+      "path": null,
+      "details": {}
+     }
+    ],
+    "trading": [],
+    "technical_text": "src/runtime/review.py; ict-review.service",
+    "trading_text": null
+   }
+  ],
+  "loops": [
+   {
+    "id": "loop:1112:0",
+    "label": "Post-trade review feeds strategy tuning",
+    "from": "step-12",
+    "to": "step-2"
+   },
+   {
+    "id": "loop:109:0",
+    "label": "Exit management re-evaluates open fills",
+    "from": "step-10",
+    "to": "step-9"
+   },
+   {
+    "id": "loop:54:0",
+    "label": "Risk gate rejects → rebuild smaller",
+    "from": "step-5",
+    "to": "step-4"
+   },
+   {
+    "id": "loop:84:0",
+    "label": "Routing retry on venue failure",
+    "from": "step-8",
+    "to": "step-7"
+   },
+   {
+    "id": "loop:122:1",
+    "label": "Retrain loop",
+    "from": "step-12",
+    "to": "step-4"
+   }
+  ],
+  "live_state": "read"
+ }
+}
