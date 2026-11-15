@@ -93,6 +93,11 @@
       reorderBusy = null;
     }
   }
+  // Owner shortened for the row line ("AM-OPS (session_…)" → "AM-OPS"); the full owner stays on the card.
+  function shortOwner(r: any): string {
+    const o = String(r.owner ?? r.lane ?? "");
+    return o.replace(/\s*\(session_[^)]*\)\s*$/i, "").trim();
+  }
   function grip(e: PointerEvent, id: string) {
     if (reorderBusy) return;
     startDrag(e, id, (d) => void send(d), () => (reorderMsg = null));
@@ -480,7 +485,7 @@
     <div class="wrow" data-rid={r.id} class:wbusy={reorderBusy === r.id} title={r.title ?? ""}>
       <button class="grip" type="button" disabled={reorderBusy !== null} onpointerdown={(e) => grip(e, r.id)} onkeydown={(e) => gripKey(e, r.id, i, rows)}
         aria-label={`Reorder ${r.id}: drag, or use the arrow keys`} title="Drag to reorder (arrow keys also work)">⠿</button>
-      <button class="rowtog" type="button" aria-expanded={!!openCards[r.id]} onclick={() => toggleCard(r.id)}><span class="mono wid">{r.id}</span> {label}</button>
+      <button class="rowtog" type="button" aria-expanded={!!openCards[r.id]} onclick={() => toggleCard(r.id)}><span class="rl1"><span class="mono wid">{r.id}</span>{#if shortOwner(r)} <span class="wown">{shortOwner(r)}</span>{/if}</span>{#if label}<span class="rl2">{label}</span>{/if}</button>
     </div>
     {#if openCards[r.id]}<WorkRowCard row={r} rev={cardRev} />{/if}
   {/snippet}
@@ -517,7 +522,7 @@
         {:else}
           <div data-wlist="inflight">
           {#each inFlight as r, i (r.id)}
-            {@render qrow(r, i, inFlight, r.owner ?? r.lane ?? DASH)}
+            {@render qrow(r, i, inFlight, r.title ?? "")}
           {:else}
             <div class="muted small">No Claude lane has a row in flight.</div>
           {/each}
@@ -778,17 +783,20 @@
   .wcard.hotcard { border-color: var(--neg); }
   .wsub { font-size: 11.5px; color: var(--muted); margin: 6px 0 2px; }
   .wh { font-weight: 600; font-size: 12.5px; margin-bottom: 4px; }
-  .wrow { font-size: 12.5px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wrow { font-size: 12.5px; line-height: 1.4; display: flex; align-items: flex-start; gap: 2px; min-width: 0; padding: 2px 0; }
+  .rl1 { display: block; overflow-wrap: anywhere; }
+  .wown { color: var(--muted); }
+  .rl2 { display: block; color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .wid { font-weight: 600; }
-  .grip { font-size: 15px; line-height: 1; padding: 2px 4px; margin-right: 4px; vertical-align: middle; background: none; color: var(--muted); border: 0; border-radius: 5px; cursor: grab; touch-action: none; user-select: none; }
+  .grip { flex: none; font-size: 15px; line-height: 1; padding: 2px 4px; margin-right: 4px; background: none; color: var(--muted); border: 0; border-radius: 5px; cursor: grab; touch-action: none; user-select: none; }
   .grip:hover, .grip:focus-visible { color: var(--text); background: var(--panel-2); }
   .grip:disabled { opacity: 0.35; cursor: default; }
-  .rowtog { display: inline-block; max-width: calc(100% - 30px); vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .rowtog { display: block; flex: 1 1 0; min-width: 0; background: none; border: 0; padding: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; }
   .wrow.wbusy { opacity: 0.5; }
   :global(.wrow.dnd-dragging) { opacity: 0.45; }
   :global(.wrow.dnd-above) { box-shadow: 0 -2px 0 0 var(--accent); }
   :global(.wrow.dnd-below) { box-shadow: 0 2px 0 0 var(--accent); }
   .qhead { display: block; width: 100%; margin-top: 8px; padding: 4px 0; text-align: left; background: none; border: 0; border-top: 1px solid var(--border); color: inherit; font: inherit; font-weight: 600; font-size: 12.5px; cursor: pointer; }
   .more { font-size: 11.5px; background: none; border: 0; color: var(--accent); cursor: pointer; padding: 4px 0; }
-  @media (max-width: 640px) { .grip { font-size: 20px; padding: 6px 10px; } .wrow { line-height: 2; } }
+  @media (max-width: 640px) { .grip { font-size: 20px; padding: 6px 10px; } .wrow { line-height: 1.5; } }
 </style>
