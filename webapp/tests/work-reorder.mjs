@@ -3,7 +3,7 @@
  * Work-queue reorder helpers (UI-WORK-QUEUE-REORDER). Imports the real src/lib/workReorder.ts
  * (node 22 strips the types). Contract with the bot lane WORK-REORDER-ROUTE: LOWER priority_rank is
  * HIGHER in the list, nulls last. `--self-test` runs the checks against a planted sort that puts
- * nulls FIRST, a refusal formatter that hides the server's detail and a neighbour lookup that picks the
+ * nulls FIRST, a refusal formatter that hides the server's detail, a refusal check that ignores accepted:false and a neighbour lookup that picks the
  * wrong side; all must fail.
  */
 import { pathToFileURL, fileURLToPath } from "node:url";
@@ -30,7 +30,12 @@ function run(m) {
   t("neighbour above for up, below for down", m.neighbourId(vis, 1, "up") === "x" && m.neighbourId(vis, 1, "down") === "z");
   t("no neighbour at the edges", m.neighbourId(vis, 0, "up") === null && m.neighbourId(vis, 2, "down") === null);
   t("a neighbour without a usable id gives null (never a guessed id)", m.neighbourId([{ id: "x" }, {}], 0, "down") === null && m.neighbourId([{ id: "x" }, { id: "" }], 0, "down") === null);
-  t("refusal shows a string detail verbatim", m.refusalText({ status: 409, body: { detail: "rank conflict: retry" } }) === "HTTP 409: rank conflict: retry");
+  t("refusal shows the bot's error AND detail", m.refusalText({ status: 409, body: { accepted: false, error: "version_conflict", detail: "row changed, retry" } }) === "HTTP 409: version_conflict: row changed, retry");
+  t("refusal with only a detail shows it verbatim", m.refusalText({ status: 409, body: { detail: "rank conflict: retry" } }) === "HTTP 409: rank conflict: retry");
+  t("refusal with only an error code shows it", m.refusalText({ status: 409, body: { error: "at_top" } }) === "HTTP 409: at_top");
+  t("a 2xx with accepted:false IS a refusal", m.isRefusal({ ok: true, body: { accepted: false, error: "at_top", detail: "x" } }) === true);
+  t("a 2xx accepted answer is not a refusal", m.isRefusal({ ok: true, body: { accepted: true, changed: true } }) === false && m.isRefusal({ ok: true, body: null }) === false);
+  t("a non-2xx is a refusal even with an odd body", m.isRefusal({ ok: false, body: null }) === true);
   t("refusal shows an object detail as JSON", m.refusalText({ status: 422, body: { detail: [{ msg: "bad" }] } }) === 'HTTP 422: [{"msg":"bad"}]');
   t("refusal falls back to the raw text", m.refusalText({ status: 502, body: null, text: "Bad Gateway" }) === "HTTP 502: Bad Gateway");
   t("refusal with nothing says so, never blank", m.refusalText({ status: 500, body: null, text: "" }) === "HTTP 500: no detail");
@@ -41,6 +46,7 @@ const broken = {
   ...real,
   byRank: (rows) => [...rows].sort((a, b) => (a.priorityRank ?? -Infinity) - (b.priorityRank ?? -Infinity)),
   refusalText: (r) => `HTTP ${r.status}`,
+  isRefusal: (r) => !r.ok, // forgets accepted:false on a 2xx
   neighbourId: (rows, idx, dir) => rows[dir === "up" ? idx + 1 : idx - 1]?.id ?? null, // the WRONG neighbour
 };
 

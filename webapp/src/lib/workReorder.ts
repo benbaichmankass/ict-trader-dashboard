@@ -31,10 +31,22 @@ export function neighbourId(rows: readonly { id?: unknown }[], idx: number, dir:
   return typeof id === "string" && id !== "" ? id : null;
 }
 
-/** The server's refusal, shown verbatim: its `detail` (string as-is, anything else as JSON), else the raw text, else the status. */
+/** A reorder answer that is a refusal: a non-2xx, or a 2xx whose body says `accepted: false`. */
+export function isRefusal(r: { ok: boolean; body?: unknown }): boolean {
+  return !r.ok || (r.body as { accepted?: unknown } | null | undefined)?.accepted === false;
+}
+
+/**
+ * The server's refusal, shown verbatim. The bot answers every refusal as JSON `{accepted:false, error, detail}`
+ * (e.g. 409 at_top / at_bottom / version_conflict, 422 finished row): both are shown, `error: detail`; either
+ * alone as-is; a body that is neither (a proxy error page) falls back to its raw text; never blank.
+ */
 export function refusalText(r: { status: number; body?: unknown; text?: string }): string {
-  const d = (r.body as { detail?: unknown } | null | undefined)?.detail;
-  const detail = d == null ? null : typeof d === "string" ? d : JSON.stringify(d);
+  const b = r.body as { error?: unknown; detail?: unknown } | null | undefined;
+  const asText = (v: unknown) => (v == null || v === "" ? null : typeof v === "string" ? v : JSON.stringify(v));
+  const error = asText(b?.error);
+  const detail = asText(b?.detail);
   const raw = (r.text ?? "").trim();
-  return `HTTP ${r.status}: ${detail ?? (raw !== "" ? raw.slice(0, 400) : "no detail")}`;
+  const msg = error && detail ? `${error}: ${detail}` : error ?? detail ?? (raw !== "" ? raw.slice(0, 400) : "no detail");
+  return `HTTP ${r.status}: ${msg}`;
 }

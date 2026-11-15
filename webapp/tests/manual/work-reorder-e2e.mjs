@@ -34,7 +34,7 @@ for (const [name, opts] of [["desktop", { viewport: { width: 1280, height: 1000 
     if (!existsSync(f) || !extname(f)) f = join(DIST, "index.html");
     r.fulfill({ status: 200, contentType: MIME[extname(f)] ?? "application/octet-stream", body: readFileSync(f) });
   });
-  let reorderReply = { status: 409, body: { detail: "rank conflict: row moved by another session, retry" } };
+  let reorderReply = { status: 409, body: { accepted: false, error: "version_conflict", detail: "row changed under you, retry" } };
   const posts = [];
   let snapshotReads = 0;
   const cors = { "access-control-allow-origin": new URL(BASE).origin, "access-control-allow-credentials": "true", "access-control-allow-headers": "Accept, Accept-Language, Authorization, Content-Language, Content-Type", "access-control-allow-methods": "GET, POST" };
@@ -75,13 +75,14 @@ for (const [name, opts] of [["desktop", { viewport: { width: 1280, height: 1000 
   const idx = rowsInCard.map((x) => x.trim()).indexOf(id);
   const over = rowsInCard[idx + 1]?.trim();
   ok(over && posts[0] && JSON.stringify(JSON.parse(posts[0].body)) === JSON.stringify({ id, direction: "down", over }), `body is exactly {id, direction, over: the VISIBLE neighbour below} → ${posts[0]?.body}`);
-  ok(msg.includes("HTTP 409: rank conflict: row moved by another session, retry") && msg.includes(id), `refusal shown verbatim: "${msg.replace(/\s+/g, " ").slice(0, 120)}"`);
+  ok(msg.includes("HTTP 409: version_conflict: row changed under you, retry") && msg.includes(id), `refusal shown verbatim: "${msg.replace(/\s+/g, " ").slice(0, 120)}"`);
   await p.waitForTimeout(1500);
   ok(snapshotReads > before, `snapshot re-read after a refusal (${before} → ${snapshotReads})`);
   await p.locator(".workq").screenshot({ path: join(OUT, `work-reorder-refusal-${name}.png`) });
 
   // a success clears the message
-  reorderReply = { status: 200, body: { ok: true } };
+  // the bot's documented 200: {accepted, item, changed, renumbered, population, order}
+  reorderReply = { status: 200, body: { accepted: true, changed: true, renumbered: false } };
   const before2 = snapshotReads;
   await target.locator('button[aria-label$="down"]').click();
   await p.waitForFunction(() => !document.querySelector('.workq [role="alert"]'), null, { timeout: 15000 });

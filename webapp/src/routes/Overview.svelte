@@ -12,7 +12,7 @@
   import { acquireStream, onStreamFrame, streamStatus, isStreamLive } from "../lib/stream";
   import HealthBar from "../components/HealthBar.svelte";
   import DdSwitchControl from "../components/DdSwitchControl.svelte";
-  import { byRank, neighbourId, refusalText, type ReorderDir } from "../lib/workReorder";
+  import { byRank, isRefusal, neighbourId, refusalText, type ReorderDir } from "../lib/workReorder";
 
   // One funding toggle per tab — four books, never blended: Live money · Prop ·
   // Paper portfolio · Paper testing (lib/funding.ts) — + the 24h/7d/30d/All
@@ -69,7 +69,7 @@
     reorderMsg = null;
     try {
       const r = await api.workReorder(id, dir, over);
-      if (!r.ok) reorderMsg = `${id} not moved — ${refusalText(r)}`;
+      if (isRefusal(r)) reorderMsg = `${id} not moved — ${refusalText(r)}`;
     } catch (e) {
       reorderMsg = `${id} not moved — could not reach the bot (${e instanceof Error ? e.message : String(e)})`;
     }
