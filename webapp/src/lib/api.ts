@@ -653,6 +653,10 @@ export const api = {
     u.set("offset", String(f.offset ?? 0));
     return statusGet(`/api/bot/research/runs?${u.toString()}`, signal);
   },
+  // The trading pipeline map (bot lane PIPELINE-MAP): the committed markdown doc +
+  // its last commit. Status-returning so the Work view can say "not deployed" on a 404.
+  workPipelineMap: (refresh = false, signal?: AbortSignal) =>
+    statusGet(`/api/bot/work/pipeline-map${refresh ? "?refresh=true" : ""}`, signal),
   // Idea-level R&D registry (bot #25561): ideas[] with the registry's computed stage,
   // summary.per_stage_per_track, stages[], and `changed` over a server-side window.
   // Status-returning so the tab can say "not available yet" on a 404.
